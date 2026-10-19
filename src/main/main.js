@@ -1,0 +1,139 @@
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const git = require('./git');
+
+let win;
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+  } catch {
+    return { recent: [], theme: 'dark' };
+  }
+}
+
+function saveSettings(s) {
+  fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+  fs.writeFileSync(settingsFile(), JSON.stringify(s, null, 2), 'utf8');
+}
+
+function createWindow() {
+  const s = loadSettings();
+  win = new BrowserWindow({
+    width: s.bounds?.width || 1400,
+    height: s.bounds?.height || 900,
+    x: s.bounds?.x,
+    y: s.bounds?.y,
+    minWidth: 960,
+    minHeight: 600,
+    title: 'CodeFlow',
+    backgroundColor: s.theme === 'light' ? '#f7f8fa' : '#1e1f22',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  Menu.setApplicationMenu(null);
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  win.on('close', () => {
+    const cur = loadSettings();
+    cur.bounds = win.getBounds();
+    saveSettings(cur);
+  });
+  win.on('focus', () => win.webContents.send('window-focus'));
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools();
+  });
+}
+
+const gitMethods = require('./channels').filter((n) => n !== 'rollback');
+
+for (const name of gitMethods) {
+  ipcMain.handle(`git:${name}`, async (_e, repo, ...args) => {
+    try {
+      return { ok: true, data: await git[name](repo, ...args) };
+    } catch (err) {
+      return { ok: false, error: err.message || String(err) };
+    }
+  });
+}
+
+ipcMain.handle('git:rollback', async (_e, repo, files) => {
+  try {
+    const toTrash = await git.rollback(repo, files);
+    for (const p of toTrash) {
+      if (fs.existsSync(p)) await shell.trashItem(p);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('repo:open', async (_e, dir) => {
+  const top = await git.topLevel(dir);
+  if (!top) return { ok: false, error: '선택한 폴더는 Git 저장소가 아닙니다.', notRepo: true };
+  addRecent(top);
+  return { ok: true, data: top };
+});
+
+ipcMain.handle('repo:init', async (_e, dir) => {
+  try {
+    await git.init(dir);
+    addRecent(dir);
+    return { ok: true, data: dir };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('repo:clone', async (_e, url, dir) => {
+  try {
+    await git.clone(url, dir);
+    addRecent(dir);
+    return { ok: true, data: dir };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+function addRecent(dir) {
+  const s = loadSettings();
+  s.recent = [dir, ...(s.recent || []).filter((d) => d !== dir)].slice(0, 15);
+  s.last = dir;
+  saveSettings(s);
+}
+
+ipcMain.handle('settings:get', () => loadSettings());
+ipcMain.handle('settings:set', (_e, patch) => {
+  const s = { ...loadSettings(), ...patch };
+  saveSettings(s);
+  return s;
+});
+ipcMain.handle('recent:remove', (_e, dir) => {
+  const s = loadSettings();
+  s.recent = (s.recent || []).filter((d) => d !== dir);
+  if (s.last === dir) delete s.last;
+  saveSettings(s);
+  return s;
+});
+
+ipcMain.handle('dialog:folder', async (_e, title) => {
+  const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
+ipcMain.handle('shell:showItem', (_e, p) => shell.showItemInFolder(p));
+ipcMain.handle('shell:openExternal', (_e, url) => {
+  if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+});
+ipcMain.handle('path:join', (_e, ...parts) => path.join(...parts));
+ipcMain.handle('path:exists', (_e, p) => fs.existsSync(p));
+
+app.whenReady().then(createWindow);
+app.on('window-all-closed', () => app.quit());

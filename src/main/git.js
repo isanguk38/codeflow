@@ -1,0 +1,632 @@
+// Git CLI 래퍼. 모든 Git 작업은 사용자 PC에 설치된 git 실행 파일을 호출해서 처리한다.
+// 인증(GitHub 로그인 등)은 git 의 credential helper(Git Credential Manager)가 담당한다.
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const MAX_DIFF_BYTES = 2 * 1024 * 1024;
+
+class GitError extends Error {
+  constructor(message, { stdout = '', stderr = '', code = 1, args = [] } = {}) {
+    super(message);
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.code = code;
+    this.args = args;
+  }
+}
+
+function run(cwd, args, { allowFail = false, input, raw = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const fullArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args];
+    let child;
+    try {
+      child = spawn('git', fullArgs, {
+        cwd,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_EDITOR: 'true',
+          GIT_SEQUENCE_EDITOR: 'true',
+          GIT_MERGE_AUTOEDIT: 'no',
+          LC_ALL: 'C.UTF-8',
+          LANG: 'C.UTF-8',
+        },
+      });
+    } catch (e) {
+      reject(new GitError('git 실행에 실패했습니다. Git이 설치되어 있는지 확인하세요.'));
+      return;
+    }
+    const out = [];
+    const err = [];
+    child.stdout.on('data', (d) => out.push(d));
+    child.stderr.on('data', (d) => err.push(d));
+    child.on('error', (e) => {
+      if (e.code === 'ENOENT') reject(new GitError('git 명령을 찾을 수 없습니다. Git for Windows를 설치하세요.'));
+      else reject(new GitError(e.message));
+    });
+    child.on('close', (code) => {
+      const outBuf = Buffer.concat(out);
+      const stdout = raw ? outBuf : outBuf.toString('utf8');
+      const stderr = Buffer.concat(err).toString('utf8');
+      if (code !== 0 && !allowFail) {
+        const msg = (stderr || (raw ? '' : stdout) || `git ${args.join(' ')} 실패 (code ${code})`).trim();
+        reject(new GitError(msg, { stdout: raw ? '' : stdout, stderr, code, args }));
+      } else {
+        resolve({ stdout, stderr, code });
+      }
+    });
+    if (input !== undefined) child.stdin.end(input);
+    else child.stdin.end();
+  });
+}
+
+async function topLevel(dir) {
+  const r = await run(dir, ['rev-parse', '--show-toplevel'], { allowFail: true });
+  if (r.code !== 0) return null;
+  return path.normalize(r.stdout.trim());
+}
+
+async function gitDir(repo) {
+  const r = await run(repo, ['rev-parse', '--absolute-git-dir']);
+  return r.stdout.trim();
+}
+
+async function hasHead(repo) {
+  const r = await run(repo, ['rev-parse', '--verify', '-q', 'HEAD'], { allowFail: true });
+  return r.code === 0;
+}
+
+// ---------- 상태 ----------
+
+function classify(x, y) {
+  const xy = x + y;
+  if (['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(xy)) return 'conflict';
+  if (xy === '??') return 'untracked';
+  if (x === 'R' || y === 'R') return 'renamed';
+  if (x === 'C') return 'added';
+  if (x === 'A') return y === 'D' ? 'deleted' : 'added';
+  if (x === 'D' || y === 'D') return 'deleted';
+  return 'modified';
+}
+
+async function status(repo) {
+  const r = await run(repo, ['status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']);
+  const parts = r.stdout.split('\0');
+  const result = { branch: null, detached: false, upstream: null, ahead: 0, behind: 0, files: [] };
+  let i = 0;
+  if (parts[0] && parts[0].startsWith('## ')) {
+    const head = parts[0].slice(3);
+    i = 1;
+    let m;
+    if ((m = head.match(/^No commits yet on (.+)$/)) || (m = head.match(/^Initial commit on (.+)$/))) {
+      result.branch = m[1];
+    } else if (head.startsWith('HEAD (no branch)')) {
+      result.detached = true;
+    } else {
+      const [refPart, trackPart] = head.split(' [');
+      const [local, upstream] = refPart.split('...');
+      result.branch = local;
+      result.upstream = upstream || null;
+      if (trackPart) {
+        const a = trackPart.match(/ahead (\d+)/);
+        const b = trackPart.match(/behind (\d+)/);
+        if (a) result.ahead = +a[1];
+        if (b) result.behind = +b[1];
+        if (trackPart.includes('gone')) result.upstreamGone = true;
+      }
+    }
+  }
+  for (; i < parts.length; i++) {
+    const entry = parts[i];
+    if (!entry) continue;
+    const x = entry[0];
+    const y = entry[1];
+    const p = entry.slice(3);
+    const file = { path: p, x, y, status: classify(x, y) };
+    if (x === 'R' || x === 'C') {
+      file.orig = parts[++i];
+    }
+    result.files.push(file);
+  }
+  result.state = await repoState(repo);
+  result.hasHead = await hasHead(repo);
+  if (result.detached) {
+    const h = await run(repo, ['rev-parse', '--short', 'HEAD'], { allowFail: true });
+    result.headShort = h.stdout.trim();
+  }
+  return result;
+}
+
+async function repoState(repo) {
+  const gd = await gitDir(repo);
+  const ex = (f) => fs.existsSync(path.join(gd, f));
+  if (ex('rebase-merge') || ex('rebase-apply')) return 'rebase';
+  if (ex('MERGE_HEAD')) return 'merge';
+  if (ex('CHERRY_PICK_HEAD')) return 'cherry-pick';
+  if (ex('REVERT_HEAD')) return 'revert';
+  return null;
+}
+
+// ---------- 파일 내용 / Diff ----------
+
+function isBinary(buf) {
+  const n = Math.min(buf.length, 8000);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+
+async function showBlob(repo, spec) {
+  const r = await run(repo, ['show', spec], { allowFail: true, raw: true });
+  if (r.code !== 0) return null;
+  return r.stdout;
+}
+
+function pack(buf) {
+  if (buf === null || buf === undefined) return { exists: false, text: '' };
+  if (buf.length > MAX_DIFF_BYTES) return { exists: true, tooLarge: true, text: '' };
+  if (isBinary(buf)) return { exists: true, binary: true, text: '' };
+  return { exists: true, text: buf.toString('utf8') };
+}
+
+// 작업 디렉터리 파일과 HEAD 를 비교하기 위한 양쪽 내용
+async function workingFilePair(repo, file) {
+  const oldPath = file.orig || file.path;
+  const head = await hasHead(repo);
+  const oldBuf = head && file.status !== 'untracked' && file.status !== 'added' ? await showBlob(repo, `HEAD:${oldPath}`) : null;
+  const abs = path.join(repo, file.path);
+  let newBuf = null;
+  if (fs.existsSync(abs) && fs.statSync(abs).isFile()) newBuf = fs.readFileSync(abs);
+  return { left: pack(oldBuf), right: pack(newBuf), leftLabel: oldBuf ? `HEAD: ${oldPath}` : '(없음)', rightLabel: newBuf ? `작업 중: ${file.path}` : '(삭제됨)' };
+}
+
+// 커밋 하나에서 변경된 파일의 이전/이후 내용
+async function commitFilePair(repo, hash, file) {
+  const parents = (await run(repo, ['rev-list', '--parents', '-n', '1', hash])).stdout.trim().split(' ').slice(1);
+  const parent = parents[0];
+  const oldPath = file.orig || file.path;
+  const oldBuf = parent && file.status !== 'added' ? await showBlob(repo, `${parent}:${oldPath}`) : null;
+  const newBuf = file.status !== 'deleted' ? await showBlob(repo, `${hash}:${file.path}`) : null;
+  return {
+    left: pack(oldBuf),
+    right: pack(newBuf),
+    leftLabel: parent ? `${parent.slice(0, 8)}: ${oldPath}` : '(없음)',
+    rightLabel: `${hash.slice(0, 8)}: ${file.path}`,
+  };
+}
+
+// ---------- 커밋 ----------
+
+async function commit(repo, { message, paths, amend }) {
+  if (paths && paths.length) {
+    await run(repo, ['add', '-A', '--', ...paths]);
+  }
+  const args = message ? ['commit', '-F', '-'] : ['commit', '--no-edit'];
+  if (amend) args.push('--amend');
+  // 병합 중에는 일부 파일만 커밋(partial commit)할 수 없으므로 pathspec 을 붙이지 않는다.
+  const partialAllowed = (await hasHead(repo)) && !(await repoState(repo));
+  if (paths && paths.length && partialAllowed) args.push('--', ...paths);
+  await run(repo, args, message ? { input: message } : {});
+}
+
+async function lastCommitMessage(repo) {
+  const r = await run(repo, ['log', '-1', '--format=%B'], { allowFail: true });
+  return r.code === 0 ? r.stdout.trim() : '';
+}
+
+// 변경 내용 되돌리기(IntelliJ 의 Rollback). 새로 추가된 파일은 휴지통으로 보낼 목록으로 돌려준다.
+async function rollback(repo, files) {
+  const head = await hasHead(repo);
+  const restore = [];
+  const unstage = [];
+  const toTrash = [];
+  for (const f of files) {
+    if (f.status === 'untracked') {
+      toTrash.push(f.path);
+    } else if (f.status === 'added' || !head) {
+      unstage.push(f.path);
+      toTrash.push(f.path);
+    } else if (f.status === 'renamed') {
+      unstage.push(f.path);
+      toTrash.push(f.path);
+      restore.push(f.orig);
+    } else {
+      restore.push(f.path);
+    }
+  }
+  if (unstage.length) await run(repo, ['rm', '--cached', '-r', '-f', '-q', '--', ...unstage], { allowFail: true });
+  if (restore.length) await run(repo, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...restore]);
+  return toTrash.map((p) => path.join(repo, p));
+}
+
+// ---------- 로그 ----------
+
+const FS = '\x1f';
+const RS = '\x1e';
+
+async function log(repo, { limit = 500, skip = 0, all = true, ref, file, search } = {}) {
+  if (!(await hasHead(repo))) return [];
+  const args = ['log', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%D${FS}%s${RS}`, `-n`, String(limit), `--skip=${skip}`];
+  if (file) {
+    args.push('--follow');
+  } else {
+    args.push('--topo-order');
+    if (ref) args.push(ref);
+    else if (all) args.push('--branches', '--remotes', '--tags', 'HEAD');
+  }
+  if (search) args.push('-i', `--grep=${search}`);
+  if (file) args.push('--', file);
+  const r = await run(repo, args);
+  return r.stdout
+    .split(RS)
+    .map((s) => s.replace(/^\n/, ''))
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, parents, author, email, time, refs, subject] = line.split(FS);
+      return {
+        hash,
+        parents: parents ? parents.split(' ') : [],
+        author,
+        email,
+        time: +time * 1000,
+        refs: refs ? refs.split(', ').filter(Boolean) : [],
+        subject,
+      };
+    });
+}
+
+function parseNameStatus(out) {
+  const parts = out.split('\0').filter((s, i, a) => !(s === '' && i === a.length - 1));
+  const files = [];
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i];
+    if (!code) continue;
+    const c = code[0];
+    if (c === 'R' || c === 'C') {
+      const orig = parts[++i];
+      const p = parts[++i];
+      files.push({ path: p, orig, status: c === 'R' ? 'renamed' : 'added' });
+    } else {
+      const p = parts[++i];
+      const map = { A: 'added', D: 'deleted', M: 'modified', T: 'modified' };
+      files.push({ path: p, status: map[c] || 'modified' });
+    }
+  }
+  return files;
+}
+
+async function commitDetails(repo, hash) {
+  const r = await run(repo, ['show', '-s', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%cn${FS}%ct${FS}%D${FS}%B`, hash]);
+  const [h, parents, author, email, at, committer, ct, refs, body] = r.stdout.split(FS);
+  const parentList = parents ? parents.split(' ') : [];
+  let files;
+  if (parentList.length) {
+    files = parseNameStatus((await run(repo, ['diff', '--name-status', '-z', '-M', parentList[0], h])).stdout);
+  } else {
+    files = parseNameStatus((await run(repo, ['diff-tree', '--root', '-r', '--no-commit-id', '--name-status', '-z', '-M', h])).stdout);
+  }
+  return {
+    hash: h,
+    parents: parentList,
+    author,
+    email,
+    time: +at * 1000,
+    committer,
+    commitTime: +ct * 1000,
+    refs: refs ? refs.split(', ').filter(Boolean) : [],
+    body: (body || '').trim(),
+    files,
+  };
+}
+
+// ---------- 브랜치 ----------
+
+async function branches(repo) {
+  const r = await run(repo, [
+    'for-each-ref',
+    `--format=%(refname)${FS}%(refname:short)${FS}%(objectname:short)${FS}%(upstream:short)${FS}%(upstream:track)${FS}%(HEAD)${FS}%(committerdate:unix)`,
+    'refs/heads',
+    'refs/remotes',
+    'refs/tags',
+  ]);
+  const local = [];
+  const remote = [];
+  const tags = [];
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const [ref, name, sha, upstream, track, headMark, date] = line.split(FS);
+    const item = { ref, name, sha, upstream: upstream || null, track: track || '', current: headMark === '*', date: +date * 1000 };
+    if (ref.startsWith('refs/heads/')) local.push(item);
+    else if (ref.startsWith('refs/remotes/')) {
+      if (ref.endsWith('/HEAD')) continue;
+      remote.push(item);
+    } else tags.push(item);
+  }
+  return { local, remote, tags };
+}
+
+async function checkout(repo, name) {
+  await run(repo, ['checkout', name]);
+}
+
+async function checkoutRemote(repo, remoteBranch) {
+  const localName = remoteBranch.split('/').slice(1).join('/');
+  const exists = await run(repo, ['rev-parse', '--verify', '-q', `refs/heads/${localName}`], { allowFail: true });
+  if (exists.code === 0) {
+    await run(repo, ['checkout', localName]);
+  } else {
+    await run(repo, ['checkout', '-b', localName, '--track', remoteBranch]);
+  }
+  return localName;
+}
+
+async function createBranch(repo, { name, start, checkout: co }) {
+  if (co) await run(repo, ['checkout', '-b', name, ...(start ? [start] : [])]);
+  else await run(repo, ['branch', name, ...(start ? [start] : [])]);
+}
+
+async function deleteBranch(repo, name, force) {
+  await run(repo, ['branch', force ? '-D' : '-d', name]);
+}
+
+async function deleteRemoteBranch(repo, remoteBranch) {
+  const [remote, ...rest] = remoteBranch.split('/');
+  await run(repo, ['push', remote, '--delete', rest.join('/')]);
+}
+
+async function renameBranch(repo, oldName, newName) {
+  await run(repo, ['branch', '-m', oldName, newName]);
+}
+
+// 병합/리베이스 등은 충돌이 나도 예외 대신 결과를 돌려준다(충돌 해결 화면으로 넘어가기 위함).
+async function mergeLike(repo, args) {
+  const r = await run(repo, args, { allowFail: true });
+  if (r.code === 0) return { ok: true, output: (r.stdout + r.stderr).trim() };
+  const st = await repoState(repo);
+  const s = await status(repo);
+  const conflicts = s.files.filter((f) => f.status === 'conflict');
+  if (st || conflicts.length) return { ok: false, conflict: true, conflicts: conflicts.length, output: (r.stdout + r.stderr).trim() };
+  throw new GitError((r.stderr || r.stdout).trim(), r);
+}
+
+const merge = (repo, branch) => mergeLike(repo, ['merge', '--no-edit', branch]);
+const rebase = (repo, onto) => mergeLike(repo, ['rebase', onto]);
+const cherryPick = (repo, hash) => mergeLike(repo, ['cherry-pick', hash]);
+
+async function revertCommit(repo, hash) {
+  const parents = (await run(repo, ['rev-list', '--parents', '-n', '1', hash])).stdout.trim().split(' ').slice(1);
+  const args = ['revert', '--no-edit'];
+  if (parents.length > 1) args.push('-m', '1');
+  args.push(hash);
+  return mergeLike(repo, args);
+}
+
+async function reset(repo, hash, mode) {
+  if (!['soft', 'mixed', 'hard'].includes(mode)) throw new GitError('잘못된 reset 모드');
+  await run(repo, ['reset', `--${mode}`, hash]);
+}
+
+async function operation(repo, action) {
+  const st = await repoState(repo);
+  if (!st) return;
+  const cmd = st === 'rebase' ? 'rebase' : st;
+  if (action === 'abort') {
+    await run(repo, [cmd, '--abort']);
+  } else if (action === 'continue') {
+    if (st === 'merge') return mergeLike(repo, ['commit', '--no-edit']);
+    return mergeLike(repo, [cmd, '--continue']);
+  }
+}
+
+// ---------- 원격 ----------
+
+async function remotes(repo) {
+  const r = await run(repo, ['remote', '-v']);
+  const map = {};
+  for (const line of r.stdout.split('\n')) {
+    const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)/);
+    if (m) map[m[1]] = map[m[1]] || { name: m[1], url: m[2] };
+  }
+  return Object.values(map);
+}
+
+async function addRemote(repo, name, url) {
+  await run(repo, ['remote', 'add', name, url]);
+}
+
+async function setRemoteUrl(repo, name, url) {
+  await run(repo, ['remote', 'set-url', name, url]);
+}
+
+async function removeRemote(repo, name) {
+  await run(repo, ['remote', 'remove', name]);
+}
+
+async function fetchAll(repo) {
+  const r = await run(repo, ['fetch', '--all', '--prune']);
+  return (r.stdout + r.stderr).trim();
+}
+
+async function pull(repo, { rebase: useRebase } = {}) {
+  return mergeLike(repo, ['pull', useRebase ? '--rebase' : '--no-rebase', '--no-edit']);
+}
+
+async function push(repo, { force, tags } = {}) {
+  const s = await status(repo);
+  if (s.detached) throw new GitError('분리된 HEAD 상태에서는 Push 할 수 없습니다. 브랜치를 체크아웃하세요.');
+  const args = ['push'];
+  if (force) args.push('--force-with-lease');
+  if (tags) args.push('--tags');
+  if (!s.upstream) {
+    const rs = await remotes(repo);
+    if (!rs.length) throw new GitError('원격 저장소(remote)가 없습니다. 설정에서 원격 저장소를 추가하세요.');
+    const remote = rs.find((x) => x.name === 'origin') ? 'origin' : rs[0].name;
+    args.push('-u', remote, s.branch);
+  }
+  const r = await run(repo, args);
+  return (r.stdout + r.stderr).trim();
+}
+
+// Push 될 커밋 목록
+async function outgoing(repo) {
+  if (!(await hasHead(repo))) return { commits: [], newBranch: true };
+  const s = await status(repo);
+  const range = s.upstream && !s.upstreamGone ? [`${s.upstream}..HEAD`] : ['HEAD', '--not', '--remotes'];
+  const r = await run(repo, ['log', `--format=%H${FS}%an${FS}%at${FS}%s`, '-n', '200', ...range]);
+  const commits = r.stdout.split('\n').filter(Boolean).map((l) => {
+    const [hash, author, at, subject] = l.split(FS);
+    return { hash, author, time: +at * 1000, subject };
+  });
+  return { commits, newBranch: !s.upstream, upstream: s.upstream, branch: s.branch };
+}
+
+// ---------- 스태시 (IntelliJ 의 Shelve 와 비슷) ----------
+
+async function stashList(repo) {
+  const r = await run(repo, ['stash', 'list', `--format=%gd${FS}%s${FS}%at`], { allowFail: true });
+  return r.stdout
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [ref, subject, at] = l.split(FS);
+      return { ref, subject, time: +at * 1000 };
+    });
+}
+
+async function stashSave(repo, message) {
+  const args = ['stash', 'push', '-u'];
+  if (message) args.push('-m', message);
+  await run(repo, args);
+}
+
+const stashApply = (repo, ref) => mergeLike(repo, ['stash', 'apply', ref]);
+const stashPop = (repo, ref) => mergeLike(repo, ['stash', 'pop', ref]);
+async function stashDrop(repo, ref) {
+  await run(repo, ['stash', 'drop', ref]);
+}
+
+async function stashFiles(repo, ref) {
+  const r = await run(repo, ['stash', 'show', '--name-status', '-z', '-M', '--include-untracked', ref], { allowFail: true });
+  if (r.code === 0) return parseNameStatus(r.stdout);
+  // 오래된 git 은 --include-untracked 미지원
+  return parseNameStatus((await run(repo, ['stash', 'show', '--name-status', '-z', '-M', ref])).stdout);
+}
+
+// ---------- 충돌 해결 ----------
+
+async function conflictInfo(repo, file) {
+  const abs = path.join(repo, file);
+  const working = fs.existsSync(abs) ? fs.readFileSync(abs) : null;
+  const ours = await showBlob(repo, `:2:${file}`);
+  const theirs = await showBlob(repo, `:3:${file}`);
+  const base = await showBlob(repo, `:1:${file}`);
+  return { working: pack(working), ours: pack(ours), theirs: pack(theirs), base: pack(base) };
+}
+
+async function resolveWithContent(repo, file, content) {
+  fs.writeFileSync(path.join(repo, file), content, 'utf8');
+  await run(repo, ['add', '--', file]);
+}
+
+async function resolveSide(repo, file, side) {
+  const stage = side === 'ours' ? 2 : 3;
+  const exists = await run(repo, ['cat-file', '-e', `:${stage}:${file}`], { allowFail: true });
+  if (exists.code !== 0) {
+    // 선택한 쪽에서 파일이 삭제된 경우
+    await run(repo, ['rm', '-q', '-f', '--', file]);
+    return;
+  }
+  await run(repo, ['checkout', `--${side}`, '--', file]);
+  await run(repo, ['add', '--', file]);
+}
+
+// ---------- 기타 ----------
+
+async function init(dir) {
+  await run(dir, ['init']);
+}
+
+async function clone(url, dir) {
+  const parent = path.dirname(dir);
+  fs.mkdirSync(parent, { recursive: true });
+  await run(parent, ['clone', url, dir]);
+}
+
+async function createTag(repo, name, hash, message) {
+  if (message) await run(repo, ['tag', '-a', name, hash, '-m', message]);
+  else await run(repo, ['tag', name, hash]);
+}
+
+async function deleteTag(repo, name) {
+  await run(repo, ['tag', '-d', name]);
+}
+
+async function config(repo) {
+  const get = async (k) => (await run(repo, ['config', '--get', k], { allowFail: true })).stdout.trim();
+  return { userName: await get('user.name'), userEmail: await get('user.email') };
+}
+
+async function setConfig(repo, { userName, userEmail, global }) {
+  const scope = global ? ['--global'] : [];
+  if (userName !== undefined) await run(repo, ['config', ...scope, 'user.name', userName]);
+  if (userEmail !== undefined) await run(repo, ['config', ...scope, 'user.email', userEmail]);
+}
+
+async function addToGitignore(repo, pattern) {
+  const p = path.join(repo, '.gitignore');
+  let content = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+  if (content && !content.endsWith('\n')) content += '\n';
+  fs.writeFileSync(p, content + pattern + '\n', 'utf8');
+}
+
+module.exports = {
+  GitError,
+  run,
+  topLevel,
+  status,
+  workingFilePair,
+  commitFilePair,
+  commit,
+  lastCommitMessage,
+  rollback,
+  log,
+  commitDetails,
+  branches,
+  checkout,
+  checkoutRemote,
+  createBranch,
+  deleteBranch,
+  deleteRemoteBranch,
+  renameBranch,
+  merge,
+  rebase,
+  cherryPick,
+  revertCommit,
+  reset,
+  operation,
+  remotes,
+  addRemote,
+  setRemoteUrl,
+  removeRemote,
+  fetchAll,
+  pull,
+  push,
+  outgoing,
+  stashList,
+  stashSave,
+  stashApply,
+  stashPop,
+  stashDrop,
+  stashFiles,
+  conflictInfo,
+  resolveWithContent,
+  resolveSide,
+  init,
+  clone,
+  createTag,
+  deleteTag,
+  config,
+  setConfig,
+  addToGitignore,
+};

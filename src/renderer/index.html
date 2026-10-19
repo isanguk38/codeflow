@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>CodeFlow</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <button id="repoBtn" class="tb-btn tb-repo" title="저장소">
+        <span class="ico">▣</span><span id="repoName">저장소 열기</span><span class="caret">▾</span>
+      </button>
+      <button id="branchBtn" class="tb-btn tb-branch" title="브랜치 (Ctrl+Shift+`)">
+        <span class="ico">⑂</span><span id="branchName">-</span><span class="caret">▾</span>
+      </button>
+      <div class="tb-sep"></div>
+      <button id="fetchBtn" class="tb-btn" title="원격 저장소 정보 가져오기 (Fetch)"><span class="ico">⇣</span>Fetch</button>
+      <button id="pullBtn" class="tb-btn" title="업데이트 (Pull) Ctrl+T"><span class="ico">↓</span>Pull<span id="behindBadge" class="badge" hidden></span></button>
+      <button id="pushBtn" class="tb-btn" title="Push Ctrl+Shift+K"><span class="ico">↑</span>Push<span id="aheadBadge" class="badge" hidden></span></button>
+      <div class="tb-spacer"></div>
+      <span id="busy" class="busy" hidden><span class="spinner"></span><span id="busyText"></span></span>
+      <button id="refreshBtn" class="tb-btn icon" title="새로고침 (F5)">⟳</button>
+      <button id="themeBtn" class="tb-btn icon" title="테마 전환">◐</button>
+      <button id="settingsBtn" class="tb-btn icon" title="설정">⚙</button>
+    </header>
+
+    <div id="opBanner" class="op-banner" hidden></div>
+
+    <div id="body">
+      <nav id="rail">
+        <button class="rail-btn active" data-view="changes" title="커밋 (Ctrl+K)"><span class="ico">✎</span><span>커밋</span><span id="changeCount" class="rail-count" hidden></span></button>
+        <button class="rail-btn" data-view="log" title="히스토리 (Alt+9)"><span class="ico">◷</span><span>히스토리</span></button>
+        <button class="rail-btn" data-view="stash" title="스태시"><span class="ico">⧉</span><span>스태시</span></button>
+      </nav>
+
+      <main id="views">
+        <section id="view-changes" class="view active"></section>
+        <section id="view-log" class="view"></section>
+        <section id="view-stash" class="view"></section>
+        <section id="welcome" class="view"></section>
+      </main>
+    </div>
+
+    <footer id="statusbar">
+      <span id="statusPath"></span>
+      <span class="tb-spacer"></span>
+      <span id="statusMsg"></span>
+    </footer>
+  </div>
+  <div id="overlay"></div>
+
+  <script src="../../node_modules/diff/dist/diff.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

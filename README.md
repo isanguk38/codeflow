@@ -1,0 +1,62 @@
+# CodeFlow
+
+보기 쉽고 사용하기 간편한 무료 Git 형상관리 데스크톱 툴 (Electron).
+IntelliJ 에 내장된 Git 도구의 사용감을 참고해서 만들었습니다.
+
+## 실행
+
+필요한 것: [Node.js](https://nodejs.org) 18 이상, [Git for Windows](https://git-scm.com)
+
+```bash
+npm install
+npm start
+```
+
+설치 파일(.exe) 만들기:
+
+```bash
+npm run dist
+```
+
+`release/` 폴더에 설치형(NSIS)과 포터블 exe 가 생성됩니다.
+
+## 주요 기능
+
+| 화면 | 기능 |
+| --- | --- |
+| 커밋 | 변경 파일 목록(체크박스로 커밋 대상 선택), 나란히/통합 Diff, 단어 단위 강조, 커밋 / 커밋 후 Push, Amend, 파일별 되돌리기(Rollback), .gitignore 추가 |
+| 히스토리 | 브랜치 그래프, 브랜치/파일별 필터, 메시지 검색, 커밋 상세와 파일별 Diff, Revert, Reset(Soft/Mixed/Hard), 체리픽, 태그, 여기서 브랜치 만들기 |
+| 브랜치 | 툴바 브랜치 팝업: 검색, 새 브랜치, 체크아웃(원격 브랜치는 자동 추적 브랜치 생성), 병합, 리베이스, 이름 변경, 삭제 |
+| 충돌 | 충돌 파일 목록에서 내 것/상대 것 적용, 3단 병합 도구(내 변경 / 결과 / 상대 변경), 병합·리베이스 계속/중단 |
+| 스태시 | 작업 중인 변경 보관, 적용, 꺼내기, 삭제 |
+| 원격 | Fetch, Pull(병합 또는 리베이스), Push 전 커밋 목록 확인, 강제 Push(--force-with-lease) |
+
+스마트 모드: 로컬 변경 때문에 체크아웃/Pull 이 막히면 변경 사항을 자동으로 보관했다가 작업 후 다시 적용합니다.
+
+## 단축키
+
+| 키 | 동작 |
+| --- | --- |
+| Ctrl+K | 커밋 메시지 입력으로 이동 |
+| Ctrl+Enter | 커밋 (메시지 입력 중) |
+| Ctrl+Shift+K | Push |
+| Ctrl+T | Pull (업데이트) |
+| Ctrl+Alt+N | 새 브랜치 |
+| Ctrl+Shift+` | 브랜치 팝업 |
+| Alt+9 / Alt+0 | 히스토리 / 커밋 화면 |
+| F7 / Shift+F7 | 다음/이전 변경 위치 (Diff) |
+| F5 | 새로고침 |
+| Ctrl+Alt+Z | 선택 파일 되돌리기 |
+
+## 구조
+
+```
+src/
+  main/main.js       Electron 메인 프로세스 (창, IPC)
+  main/git.js        git CLI 래퍼 (모든 Git 작업)
+  main/channels.js   렌더러에서 호출 가능한 Git 함수 목록
+  preload.js         window.api 로 안전하게 노출
+  renderer/          화면 (HTML/CSS/바닐라 JS 모듈)
+```
+
+서버가 필요 없습니다. 모든 작업은 PC 에 설치된 `git` 을 실행해서 처리하고, GitHub 같은 원격 저장소와는 git 이 직접 통신합니다. 로그인은 Git for Windows 에 포함된 Git Credential Manager 가 처리합니다.
