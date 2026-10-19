@@ -1,5 +1,5 @@
 // 히스토리 화면: 브랜치 트리 + 커밋 그래프 + 커밋 상세/Diff
-import { $, h, esc, fmtDate, splitPath, STATUS_LABEL, contextMenu, menuAt, confirmDialog, choiceDialog, promptDialog, splitter, toast } from './ui.js';
+import { $, h, esc, fmtDate, splitPath, STATUS_LABEL, contextMenu, menuAt, confirmDialog, choiceDialog, promptDialog, splitter, toast, modal } from './ui.js';
 import { state, git, op, onRefresh } from './state.js';
 import { renderDiff, emptyDiff } from './diff.js';
 import { branchMenuItems, newBranch, checkout, checkoutRemote } from './branches.js';
@@ -622,7 +622,7 @@ function multiMenu() {
     { header: `${sel.length}개 커밋 선택됨` },
     { label: `현재 브랜치(${cur})에 체리픽 (${sel.length}개, 오래된 순서로)`, disabled: hasMerge, onClick: () => cherryPickMany(sel) },
     { label: `모두 되돌리기 (Revert ${sel.length}개, 최신 순서로)`, disabled: hasMerge, onClick: () => revertMany(sel) },
-    { label: `하나로 합치기 (Squash ${sel.length}개)...`, disabled: hasMerge || !contiguous, onClick: () => squashSelected(sel) },
+    { label: `하나로 합치기 (${sel.length}개)...`, disabled: hasMerge || !contiguous, onClick: () => squashSelected(sel) },
     sel.length === 2 ? { label: '두 커밋 비교', onClick: async () => (await import('./compare.js')).openCompare(sel[1].hash, sel[0].hash) } : null,
     '-',
     { label: '해시 모두 복사', onClick: () => window.api.copy(sel.map((c) => c.hash).join('\n')) },
@@ -641,11 +641,65 @@ async function revertMany(sel) {
   if (ok) op('Revert', () => git('revertMany', sel.map((c) => c.hash)), { success: `${sel.length}개 커밋을 되돌렸습니다.` });
 }
 
+// 여러 커밋을 하나로 합치기: 합칠 커밋 목록 + 메시지 입력만 있는 간단한 창
+// (git 에는 단독 squash 명령이 없어 내부적으로는 리베이스로 처리하지만 화면에는 드러내지 않는다)
 async function squashSelected(sel) {
+  if (state.status?.state) return toast('진행 중인 병합/리베이스를 먼저 끝내세요.', 'warn');
   const oldest = sel[sel.length - 1];
-  const preset = {};
-  sel.slice(0, -1).forEach((c) => (preset[c.hash] = 'squash'));
-  (await import('./rebase.js')).openInteractiveRebase(oldest.hash, preset);
+  let base;
+  let range;
+  try {
+    base = (await git('commitDetails', oldest.hash)).parents[0] || null;
+    range = await git('rebaseCommits', base); // 오래된 순서
+  } catch (e) {
+    return toast(e.message, 'error');
+  }
+  const picked = new Set(sel.map((c) => c.hash));
+  const chosen = range.filter((c) => picked.has(c.hash));
+  if (chosen.length !== sel.length) return toast('현재 브랜치(HEAD)에 있는 커밋만 합칠 수 있습니다. 해당 브랜치를 체크아웃한 뒤 다시 시도하세요.', 'warn', 6000);
+  if (range.some((c) => c.parents.length > 1)) return toast('중간에 병합(Merge) 커밋이 있어 합칠 수 없습니다.', 'warn', 6000);
+
+  const msg = h('textarea', { class: 'rb-msg squash-msg', spellcheck: 'false' });
+  msg.value = chosen.map((c) => c.message).join('\n\n');
+  const list = h(
+    'div',
+    { class: 'push-list' },
+    ...chosen.map((c) => h('div', { class: 'push-item' }, h('span', { class: 'hash', text: c.hash.slice(0, 8) }), h('span', { class: 'subj', text: c.subject }), h('span', { class: 'meta', text: `${c.author} · ${fmtDate(c.time)}` })))
+  );
+  const body = h(
+    'div',
+    { class: 'form' },
+    h('p', { class: 'msg', html: `선택한 <b>${chosen.length}개 커밋</b>을 하나로 합칩니다. 파일 변경 내용은 그대로 유지됩니다.` }),
+    list,
+    h('label', { class: 'form-label', text: '합친 커밋 메시지' }),
+    msg,
+    state.status?.upstream ? h('p', { class: 'fdir', text: '이미 Push 한 커밋이면 다음 Push 때 강제 Push 가 필요합니다.' }) : null
+  );
+  modal({
+    title: `커밋 합치기 (${chosen.length}개 → 1개)`,
+    body,
+    wide: true,
+    buttons: [
+      { label: '취소' },
+      {
+        label: '합치기',
+        primary: true,
+        onClick: () => {
+          const message = msg.value.trim();
+          if (!message) {
+            toast('커밋 메시지를 입력하세요.', 'warn');
+            msg.focus();
+            return false;
+          }
+          // 첫 커밋은 유지(+메시지 변경), 나머지 선택 커밋은 그 커밋에 합치고, 선택 안 한 이후 커밋은 그대로
+          const first = chosen[0].hash;
+          const items = range.map((c) => (c.hash === first ? { hash: c.hash, action: 'pick', message } : picked.has(c.hash) ? { hash: c.hash, action: 'fixup' } : { hash: c.hash, action: 'pick' }));
+          op('커밋 합치기', () => git('interactiveRebase', { base, items }), { success: `${chosen.length}개 커밋을 하나로 합쳤습니다.` });
+        },
+      },
+    ],
+  });
+  setTimeout(() => msg.focus(), 0);
 }
 
 async function revert(c) {
