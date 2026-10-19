@@ -9,19 +9,19 @@ const ROW_H = 26;
 const LANE_W = 14;
 const COLORS = ['#4e9bf5', '#e5a42b', '#5fb865', '#d9636b', '#a77ee8', '#3fbdb0', '#e07fc0', '#9aa64a'];
 
-// refs: 히스토리에 함께 표시할 브랜치들. '@HEAD' 는 현재 체크아웃한 브랜치
+// refs: 히스토리에 표시할 브랜치들 (VS Code 처럼 '모든 브랜치' 또는 각각 선택)
+// '@ALL' 은 모든 브랜치, '@HEAD' 는 현재 체크아웃한 브랜치
+const ALL = '@ALL';
 const CUR = '@HEAD';
-const filter = { refs: [CUR], file: null, search: '' };
-const gitRefs = () => filter.refs.map((r) => (r === CUR ? 'HEAD' : r));
+const filter = { refs: [ALL], file: null, search: '' };
+const isAll = () => filter.refs.includes(ALL);
+const gitRefs = () => (isAll() ? [] : filter.refs.map((r) => (r === CUR ? 'HEAD' : r)));
 // 배지 비교용 이름: '@HEAD' → 현재 브랜치 이름
 const refNames = () => filter.refs.map((r) => (r === CUR ? state.status?.branch || 'HEAD' : r));
 let allCommits = []; // 불러온 전체 커밋
 let commits = []; // 화면에 보이는 커밋 (공통 이력 숨기기 적용 후)
 let graph = [];
-// 여러 브랜치 비교: 커밋마다 어느 선택 브랜치에 포함되는지 (비트마스크)
-let branchData = { local: [], remote: [], tags: [] };
-let membership = null;
-let hideCommon = localStorage.getItem('log.hideCommon') === '1';
+
 let selectedHash = null;
 let selectedFile = null;
 const multi = new Set(); // Ctrl/Shift 로 여러 개 선택한 커밋
@@ -49,7 +49,6 @@ export function initLog() {
         <span id="logFilterInfo" class="filter-chip" hidden></span>
         <span class="tb-spacer"></span>
         <span class="hint-sel" id="logMultiInfo"></span>
-        <label class="check tb-btn small" id="logHideCommonWrap" hidden title="선택한 모든 브랜치에 똑같이 있는 이력은 숨기고, 서로 다른 이력만 봅니다"><input type="checkbox" id="logHideCommon"> 공통 이력 숨기기</label>
         <button class="tb-btn small" id="logView" title="정렬 / 강조 방식">👁 보기 ▾</button>
         <button class="tb-btn small" id="logReflog" title="HEAD 이동 기록 (실수로 잃어버린 커밋 찾기)">↺ Reflog</button>
         <button class="tb-btn small" id="logReload" title="새로고침">⟳</button>
@@ -77,13 +76,7 @@ export function initLog() {
     }, 300);
   };
   $('#logReload').onclick = () => load();
-  $('#logHideCommon').checked = hideCommon;
-  $('#logHideCommon').onchange = (e) => {
-    hideCommon = e.target.checked;
-    localStorage.setItem('log.hideCommon', hideCommon ? '1' : '0');
-    applyCompare();
-    renderTable();
-  };
+
   $('#logView').onclick = (e) => {
     const set = (k, v) => {
       viewOpt[k] = v;
@@ -129,10 +122,12 @@ function setFilterChip() {
     chip.append(h('span', { text: `파일: ${filter.file}` }), h('button', { class: 'chip-x', text: '✕', title: '파일 필터 해제', onclick: () => ((filter.file = null), load()) }));
     return;
   }
-  const names = refNames();
-  const onlyCurrent = filter.refs.length === 1 && filter.refs[0] === CUR;
-  chip.append(h('span', { text: `보는 브랜치: ${names.join(' + ')}` }));
-  if (!onlyCurrent) chip.append(h('button', { class: 'chip-x', text: '✕', title: '현재 브랜치만 보기', onclick: () => ((filter.refs = [CUR]), load()) }));
+  if (isAll()) {
+    chip.hidden = true;
+    return;
+  }
+  chip.append(h('span', { text: `보는 브랜치: ${refNames().join(' + ')}` }));
+  chip.append(h('button', { class: 'chip-x', text: '✕', title: '모든 브랜치 보기', onclick: () => ((filter.refs = [ALL]), load()) }));
 }
 
 async function load() {
@@ -140,7 +135,7 @@ async function load() {
   if (boundRepo !== state.repo) {
     // 다른 저장소(탭)로 바뀌면 필터/선택 초기화
     boundRepo = state.repo;
-    filter.refs = [CUR];
+    filter.refs = [ALL];
     filter.file = null;
     filter.search = '';
     $('#logSearch').value = '';
@@ -153,7 +148,6 @@ async function load() {
   try {
     const [list, br] = await Promise.all([git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order }), git('branches')]);
     allCommits = list;
-    branchData = br;
     applyCompare();
     renderBranches(br);
     renderTable();
@@ -184,7 +178,7 @@ function renderBranches(br) {
   el.innerHTML = '';
   // 현재 브랜치는 '@HEAD' 로 다룬다 (체크아웃을 바꾸면 자동으로 따라감)
   const key = (ref, opts) => (opts.current ? CUR : ref);
-  const isSel = (ref, opts) => filter.refs.includes(key(ref, opts)) || (opts.current && filter.refs.includes(ref));
+  const isSel = (ref, opts) => !isAll() && (filter.refs.includes(key(ref, opts)) || (opts.current && filter.refs.includes(ref)));
   const item = (label, ref, opts = {}) => {
     const selected = isSel(ref, opts);
     const chk = h('input', { type: 'checkbox', checked: selected, title: '함께 보기 (Ctrl+클릭)' });
@@ -198,9 +192,10 @@ function renderBranches(br) {
     );
     const toggle = () => {
       const k = key(ref, opts);
-      if (selected) filter.refs = filter.refs.filter((r) => r !== k && !(opts.current && r === ref));
-      else filter.refs = [...filter.refs, k];
-      if (!filter.refs.length) filter.refs = [CUR];
+      const cur = filter.refs.filter((r) => r !== ALL);
+      if (selected) filter.refs = cur.filter((r) => r !== k && !(opts.current && r === ref));
+      else filter.refs = [...cur, k];
+      if (!filter.refs.length) filter.refs = [ALL];
       filter.file = null;
       load();
     };
@@ -238,7 +233,16 @@ function renderBranches(br) {
     g.append(head, body);
     el.append(g);
   };
-  el.append(h('div', { class: 'tree-tip', text: '클릭: 그 브랜치만 보기 · Ctrl+클릭/체크: 여러 브랜치 함께 보기' }));
+  el.append(h('div', { class: 'tree-tip', text: '클릭: 그 브랜치만 보기 · 체크/Ctrl+클릭: 여러 브랜치 골라 보기' }));
+  // 모든 브랜치 (VS Code 의 All)
+  const allChk = h('input', { type: 'checkbox', checked: isAll() });
+  const allRow = h('div', { class: `tree-item ${isAll() && !filter.file ? 'active' : ''}`, title: '모든 브랜치의 이력을 함께 봅니다' }, allChk, h('span', { class: 'ti-ico', text: '◎' }), h('span', { class: 'ti-name', text: '모든 브랜치' }));
+  allRow.onclick = () => {
+    filter.refs = [ALL];
+    filter.file = null;
+    load();
+  };
+  el.append(allRow);
   if (state.status?.detached) el.append(item(`HEAD (${state.status.headShort})`, CUR, { ico: '●', current: true, title: '분리된 HEAD (특정 커밋을 체크아웃한 상태)' }));
   group(
     '로컬',
@@ -373,6 +377,7 @@ function refBadges(refs) {
 // 브랜치 하나만 골라서 볼 때는 그 브랜치(와 짝이 되는 원격/로컬 브랜치) 배지만 남긴다.
 // 다른 브랜치 배지는 "그 브랜치가 여기서 끝남" 표시라 단일 브랜치 화면에서는 헷갈리기만 한다.
 function visibleRefs(refs) {
+  if (isAll()) return refs;
   const short = (n) => n.replace(/^[^/]+\//, ''); // origin/x → x
   const names = new Set(refNames().flatMap((n) => [n, short(n)]));
   return refs.filter((r) => {
@@ -399,65 +404,17 @@ function computeInHead() {
   return set;
 }
 
-// ---------- 여러 브랜치 비교 (공통 이력 / 다른 이력) ----------
-
-const comparing = () => !filter.file && filter.refs.length > 1;
-
-// 선택한 각 브랜치의 끝 커밋에서 부모를 따라가며, 커밋마다 포함된 브랜치를 비트로 표시한다
 function applyCompare() {
-  membership = null;
-  $('#logHideCommonWrap').hidden = !comparing();
-  if (comparing()) {
-    const byHash = new Map(allCommits.map((c) => [c.hash, c]));
-    const all = [...branchData.local, ...branchData.remote, ...branchData.tags];
-    membership = new Map();
-    filter.refs.forEach((r, bit) => {
-      let tip;
-      if (r === CUR) tip = allCommits.find((c) => c.refs.some((x) => x === 'HEAD' || x.startsWith('HEAD -> ')));
-      else {
-        const b = all.find((x) => x.name === r);
-        tip = b && allCommits.find((c) => c.hash.startsWith(b.sha));
-      }
-      if (!tip) return;
-      const stack = [tip.hash];
-      while (stack.length) {
-        const h = stack.pop();
-        const m = membership.get(h) || 0;
-        if (m & (1 << bit)) continue;
-        membership.set(h, m | (1 << bit));
-        const c = byHash.get(h);
-        if (c) stack.push(...c.parents);
-      }
-    });
-  }
-  const full = (1 << filter.refs.length) - 1;
-  commits = membership && hideCommon ? allCommits.filter((c) => (membership.get(c.hash) || 0) !== full) : allCommits;
+  commits = allCommits;
   graph = filter.file ? null : computeGraph(commits);
-}
-
-// 선택 브랜치별 색 (배지/표시 공용)
-const refColor = (bit) => COLORS[(bit + 1) % COLORS.length];
-
-function compareCell(c) {
-  if (!membership) return '';
-  const m = membership.get(c.hash) || 0;
-  const names = refNames();
-  const full = (1 << names.length) - 1;
-  if (m === full) return `<span class="inc common" title="선택한 모든 브랜치에 있는 이력">공통</span>`;
-  const owners = names.map((n, bit) => ({ n, bit })).filter((x) => m & (1 << x.bit));
-  if (!owners.length) return '';
-  const label = owners.length === 1 ? `${owners[0].n}만` : owners.map((o) => o.n).join(' · ');
-  const color = refColor(owners[0].bit);
-  return `<span class="inc diff" style="--inc:${color}" title="${esc(owners.map((o) => o.n).join(', '))} 에만 있는 이력">${esc(label)}</span>`;
 }
 
 function renderTable() {
   const table = $('#logTable');
   if (!commits.length) {
-    table.innerHTML = `<div class="empty">${filter.search ? '검색 결과가 없습니다.' : membership && hideCommon ? '선택한 브랜치들의 이력이 모두 같습니다 (서로 다른 이력 없음).' : '커밋이 없습니다. 첫 커밋을 만들어 보세요.'}</div>`;
+    table.innerHTML = `<div class="empty">${filter.search ? '검색 결과가 없습니다.' : '커밋이 없습니다. 첫 커밋을 만들어 보세요.'}</div>`;
     return;
   }
-  const fullMask = membership ? (1 << filter.refs.length) - 1 : 0;
   const maxLanes = graph ? Math.max(1, ...graph.map((g) => Math.max(g.before.length, g.after.length, g.idx + 1))) : 0;
   const gw = Math.min(maxLanes, 20) * LANE_W + 6;
   inHead = viewOpt.dimOthers && !filter.file ? computeInHead() : null;
@@ -468,11 +425,8 @@ function renderTable() {
     const notInHead = inHead && !inHead.has(c.hash);
     const other = isMerge || notInHead;
     const tip = isMerge ? '병합(Merge) 커밋' : notInHead ? '현재 브랜치에 포함되지 않은 커밋' : '';
-    const m = membership ? membership.get(c.hash) || 0 : 0;
-    const cmpCls = membership ? (m === fullMask ? 'row-common' : 'row-diff') : '';
-    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''} ${cmpCls}" data-i="${i}" ${tip ? `title="${tip}"` : ''}>
+    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''}" data-i="${i}" ${tip ? `title="${tip}"` : ''}>
       ${graph ? `<div class="c-graph" style="width:${gw}px">${graphSvg(graph[i], gw)}</div>` : ''}
-      ${membership ? `<div class="c-inc">${compareCell(c)}</div>` : ''}
       <div class="c-subj">${refBadges(visibleRefs(c.refs))}<span class="subj">${esc(c.subject)}</span></div>
       <div class="c-author">${esc(c.author)}</div>
       <div class="c-date">${esc(fmtDate(c.time))}</div>
