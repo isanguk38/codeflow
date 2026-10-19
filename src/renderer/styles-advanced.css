@@ -456,3 +456,32 @@ select.input {
 .bisect-found {
   font-size: 15px;
 }
+
+/* ---------- 병합 옵션 ---------- */
+.merge-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.merge-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--bg);
+}
+.merge-mode input {
+  margin-top: 3px;
+}
+.merge-mode.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.merge-mode.disabled {
+  opacity: 0.5;
+  cursor: default;
+}

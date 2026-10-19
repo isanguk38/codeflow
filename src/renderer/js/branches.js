@@ -19,10 +19,87 @@ export const checkout = (name) => op(`체크아웃 ${name}`, () => git('checkout
 export const checkoutRemote = (name) =>
   op(`체크아웃 ${name}`, () => git('checkoutRemote', name), { success: (local) => `원격 '${name}' 을(를) 추적하는 '${local}' 로 전환했습니다.` });
 
+const MERGE_MODES = [
+  { value: 'default', label: '기본', desc: '가능하면 브랜치 포인터만 앞으로 옮기고(fast-forward), 아니면 병합 커밋을 만듭니다.' },
+  { value: 'no-ff', label: '항상 병합 커밋 (--no-ff)', desc: '항상 병합 커밋을 남겨서 "이 기능이 언제 들어왔는지" 히스토리에 분명히 보입니다. 기능 단위로 되돌리기 쉽습니다.' },
+  { value: 'squash', label: '하나로 합쳐서 커밋 (--squash)', desc: '들어오는 커밋들을 커밋 하나로 뭉칩니다. 자잘한 작업 커밋을 남기지 않을 때 사용합니다. (병합 기록은 남지 않음)' },
+  { value: 'ff-only', label: 'Fast-forward 만 (--ff-only)', desc: '병합 커밋 없이 앞으로 옮길 수 있을 때만 병합하고, 아니면 취소합니다.' },
+];
+
 export async function mergeInto(name) {
   const cur = state.status?.branch;
-  const ok = await confirmDialog(`'${name}' 브랜치를 현재 브랜치 '${cur}' 에 병합합니다.`, { title: '병합 (Merge)', okLabel: '병합' });
-  if (ok) await op('병합', () => git('merge', name), { success: (r) => (/Already up to date/i.test(r?.output || '') ? '이미 최신 상태입니다.' : `'${name}' 병합 완료`) });
+  if (!cur) return toast('분리된 HEAD 상태에서는 병합할 수 없습니다. 브랜치를 체크아웃하세요.', 'warn');
+  let pv;
+  try {
+    pv = await git('mergePreview', name);
+  } catch (e) {
+    return toast(e.message, 'error');
+  }
+  if (pv.upToDate) return toast(`'${name}' 의 변경은 이미 '${cur}' 에 모두 들어 있습니다.`, 'info');
+
+  const saved = localStorage.getItem('mergeMode') || 'default';
+  let mode = saved;
+  const msg = h('textarea', { class: 'rb-msg', spellcheck: 'false' });
+  const msgWrap = h('div', { class: 'form' }, h('label', { class: 'form-label', text: '커밋 메시지' }), msg);
+  const defaultMsg = (m) => (m === 'squash' ? `Squashed '${name}' into '${cur}'` : `Merge branch '${name}' into '${cur}'`);
+  let edited = false;
+  msg.oninput = () => (edited = true);
+  const options = h('div', { class: 'merge-modes' });
+  const sync = () => {
+    options.querySelectorAll('.merge-mode').forEach((el) => el.classList.toggle('on', el.dataset.mode === mode));
+    // fast-forward 되는 경우(기본/ff-only)는 커밋이 생기지 않으므로 메시지 입력 불필요
+    const makesCommit = mode === 'no-ff' || mode === 'squash' || (mode === 'default' && !pv.canFF);
+    msgWrap.hidden = !makesCommit;
+    if (!edited) msg.value = defaultMsg(mode);
+  };
+  for (const m of MERGE_MODES) {
+    const disabled = m.value === 'ff-only' && !pv.canFF;
+    const radio = h('input', { type: 'radio', name: 'mergeMode', checked: m.value === mode, disabled });
+    const el = h(
+      'label',
+      { class: `merge-mode ${disabled ? 'disabled' : ''}`, 'data-mode': m.value },
+      radio,
+      h('div', {}, h('b', { text: m.label }), h('div', { class: 'fdir', text: disabled ? '지금은 불가능: 현재 브랜치에만 있는 커밋이 있습니다.' : m.desc }))
+    );
+    radio.onchange = () => {
+      mode = m.value;
+      sync();
+    };
+    options.append(el);
+  }
+  if (mode === 'ff-only' && !pv.canFF) mode = 'default';
+  sync();
+
+  const body = h(
+    'div',
+    { class: 'form' },
+    h('p', {
+      class: 'msg',
+      html: `<b>${esc(name)}</b> → <b>${esc(cur)}</b> · 들어올 커밋 ${pv.incoming}개${pv.canFF ? ' · <span class="plus">fast-forward 가능</span>' : ` · 현재 브랜치에만 있는 커밋 ${pv.outgoing}개`}`,
+    }),
+    options,
+    msgWrap
+  );
+  const { modal } = await import('./ui.js');
+  modal({
+    title: '병합 (Merge)',
+    body,
+    wide: true,
+    buttons: [
+      { label: '취소' },
+      {
+        label: '병합',
+        primary: true,
+        onClick: () => {
+          localStorage.setItem('mergeMode', mode);
+          const message = msgWrap.hidden ? null : msg.value.trim() || null;
+          op('병합', () => git('merge', name, { mode, message }), {
+            success: (r) => (/Already up to date/i.test(r?.output || '') ? '이미 최신 상태입니다.' : `'${name}' 병합 완료 (${MERGE_MODES.find((x) => x.value === mode).label})`),
+          });
+        },
+      },
+    ],
+  });
 }
 
 export async function rebaseOnto(name) {

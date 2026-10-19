@@ -496,7 +496,37 @@ async function mergeLike(repo, args, opts = {}) {
   throw new GitError((r.stderr || r.stdout).trim(), r);
 }
 
-const merge = (repo, branch) => mergeLike(repo, ['merge', '--no-edit', branch]);
+// mode: 'default'(가능하면 fast-forward) | 'no-ff'(항상 병합 커밋) | 'ff-only'(fast-forward 만) | 'squash'(하나로 뭉쳐서 커밋)
+async function merge(repo, branch, { mode = 'default', message } = {}) {
+  if (mode === 'squash') {
+    const r = await mergeLike(repo, ['merge', '--squash', branch]);
+    if (!r.ok) return r;
+    // --squash 는 변경을 스테이징만 하므로 바로 커밋한다
+    const staged = await run(repo, ['diff', '--cached', '--quiet'], { allowFail: true });
+    if (staged.code === 0) return { ok: true, output: 'Already up to date.' };
+    await run(repo, ['commit', '-F', '-'], { input: message || `Squashed '${branch}'` });
+    return r;
+  }
+  const args = ['merge'];
+  if (mode === 'no-ff') args.push('--no-ff');
+  if (mode === 'ff-only') args.push('--ff-only');
+  if (message && mode !== 'ff-only') args.push('-m', message);
+  else args.push('--no-edit');
+  args.push(branch);
+  if (mode === 'ff-only') {
+    const r = await run(repo, args, { allowFail: true });
+    if (r.code !== 0) throw new GitError(/Not possible to fast-forward|not possible to fast-forward/i.test(r.stderr) ? '현재 브랜치에 병합할 브랜치에 없는 커밋이 있어서 fast-forward 할 수 없습니다. 다른 병합 방식을 선택하세요.' : (r.stderr || r.stdout).trim());
+    return { ok: true, output: (r.stdout + r.stderr).trim() };
+  }
+  return mergeLike(repo, args);
+}
+
+// 병합 전에 보여줄 정보: 들어올 커밋 수, fast-forward 가능 여부
+async function mergePreview(repo, branch) {
+  const incoming = (await run(repo, ['rev-list', '--count', `HEAD..${branch}`])).stdout.trim();
+  const outgoing = (await run(repo, ['rev-list', '--count', `${branch}..HEAD`])).stdout.trim();
+  return { incoming: +incoming, outgoing: +outgoing, canFF: +outgoing === 0 && +incoming > 0, upToDate: +incoming === 0 };
+}
 const rebase = (repo, onto) => mergeLike(repo, ['rebase', onto]);
 const cherryPick = (repo, hash) => mergeLike(repo, ['cherry-pick', hash]);
 
@@ -728,6 +758,7 @@ module.exports = {
   deleteRemoteBranch,
   renameBranch,
   merge,
+  mergePreview,
   rebase,
   cherryPick,
   revertCommit,
