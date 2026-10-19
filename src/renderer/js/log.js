@@ -325,6 +325,20 @@ function refBadges(refs) {
   return html;
 }
 
+// 브랜치 하나만 골라서 볼 때는 그 브랜치(와 짝이 되는 원격/로컬 브랜치) 배지만 남긴다.
+// 다른 브랜치 배지는 "그 브랜치가 여기서 끝남" 표시라 단일 브랜치 화면에서는 헷갈리기만 한다.
+function visibleRefs(refs) {
+  if (!filter.ref) return refs;
+  const sel = filter.ref === 'HEAD' ? state.status?.branch || 'HEAD' : filter.ref;
+  const short = (n) => n.replace(/^[^/]+\//, ''); // origin/x → x
+  const names = new Set([sel, short(sel)]);
+  return refs.filter((r) => {
+    if (r === 'HEAD') return filter.ref === 'HEAD';
+    const name = r.startsWith('HEAD -> ') ? r.slice(8) : r.startsWith('tag: ') ? r.slice(5) : r;
+    return names.has(name) || (name.includes('/') && names.has(short(name)));
+  });
+}
+
 // HEAD 에서 부모를 따라가며 현재 브랜치에 포함된 커밋을 표시 (불러온 범위 안에서)
 function computeInHead() {
   const byHash = new Map(commits.map((c) => [c.hash, c]));
@@ -360,7 +374,7 @@ function renderTable() {
     const tip = isMerge ? '병합(Merge) 커밋' : notInHead ? '현재 브랜치에 포함되지 않은 커밋' : '';
     html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''}" data-i="${i}" ${tip ? `title="${tip}"` : ''}>
       ${graph ? `<div class="c-graph" style="width:${gw}px">${graphSvg(graph[i], gw)}</div>` : ''}
-      <div class="c-subj">${refBadges(c.refs)}<span class="subj">${esc(c.subject)}</span></div>
+      <div class="c-subj">${refBadges(visibleRefs(c.refs))}<span class="subj">${esc(c.subject)}</span></div>
       <div class="c-author">${esc(c.author)}</div>
       <div class="c-date">${esc(fmtDate(c.time))}</div>
       <div class="c-hash">${c.hash.slice(0, 8)}</div>
