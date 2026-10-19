@@ -105,7 +105,7 @@ export function initLog() {
 }
 
 export function activateLog() {
-  if (dirty) load();
+  if (dirty || boundRepo !== state.repo) load();
 }
 
 export function showFileHistory(path) {
@@ -130,37 +130,85 @@ function setFilterChip() {
   chip.append(h('button', { class: 'chip-x', text: '✕', title: '모든 브랜치 보기', onclick: () => ((filter.refs = [ALL]), load()) }));
 }
 
+// 저장소(탭)별로 마지막 히스토리 화면을 기억해 두었다가 탭을 옮기면 바로 보여준다
+const perRepo = new Map();
+let loadSeq = 0;
+
+function saveRepoView() {
+  if (!boundRepo) return;
+  perRepo.set(boundRepo, {
+    refs: filter.refs,
+    file: filter.file,
+    search: filter.search,
+    // 이 저장소 이력을 끝까지 받은 적이 있을 때만 기억 (도중에 탭을 옮긴 빈 목록은 기억하지 않음)
+    allCommits: loadedRepo === boundRepo ? allCommits : perRepo.get(boundRepo)?.allCommits || null,
+    br: loadedRepo === boundRepo ? lastBr : perRepo.get(boundRepo)?.br || null,
+    selectedHash,
+    selectedFile,
+  });
+}
+let lastBr = null;
+let loadedRepo = null; // 현재 화면의 이력이 어느 저장소 것인지
+
+function showCommits(list, br) {
+  allCommits = list;
+  lastBr = br;
+  applyCompare();
+  renderBranches(br);
+  renderTable();
+  if (selectedHash && commits.some((c) => c.hash === selectedHash)) selectCommit(selectedHash, false);
+  else if (commits.length) selectCommit(commits[0].hash, false);
+  else {
+    $('#logDetailFiles').innerHTML = '';
+    emptyDiff($('#logDetailDiff'), '커밋이 없습니다.');
+  }
+}
+
 async function load() {
   if (!state.repo) return;
-  if (boundRepo !== state.repo) {
-    // 다른 저장소(탭)로 바뀌면 필터/선택 초기화
-    boundRepo = state.repo;
-    filter.refs = [ALL];
-    filter.file = null;
-    filter.search = '';
-    $('#logSearch').value = '';
-    selectedHash = null;
-    selectedFile = null;
+  const repo = state.repo;
+  const seq = ++loadSeq;
+  if (boundRepo !== repo) {
+    // 다른 저장소(탭)로 바뀜: 이전 저장소 화면을 기억하고, 이 저장소의 기억해 둔 화면을 즉시 표시
+    saveRepoView();
+    boundRepo = repo;
     multi.clear();
+    const saved = perRepo.get(repo);
+    filter.refs = saved?.refs || [ALL];
+    filter.file = saved?.file || null;
+    filter.search = saved?.search || '';
+    $('#logSearch').value = filter.search;
+    selectedHash = saved?.selectedHash || null;
+    selectedFile = saved?.selectedFile || null;
+    loadedRepo = null;
+    if (saved?.allCommits) {
+      setFilterChip();
+      showCommits(saved.allCommits, saved.br);
+      loadedRepo = repo;
+    } else {
+      // 처음 보는 저장소: 이전 저장소 이력이 남지 않게 바로 비우고 '불러오는 중' 표시
+      allCommits = [];
+      commits = [];
+      $('#logBranches').innerHTML = '';
+      $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
+      $('#logDetailFiles').innerHTML = '';
+      emptyDiff($('#logDetailDiff'), '');
+    }
   }
   dirty = false;
   setFilterChip();
   const slow = setTimeout(() => {
-    $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
+    if (seq === loadSeq && !allCommits.length) $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
   }, 250);
   try {
     const [list, br] = await Promise.all([git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order }), git('branches')]);
-    allCommits = list;
-    applyCompare();
-    renderBranches(br);
-    renderTable();
-    if (selectedHash && commits.some((c) => c.hash === selectedHash)) selectCommit(selectedHash, false);
-    else if (commits.length) selectCommit(commits[0].hash, false);
-    else {
-      $('#logDetailFiles').innerHTML = '';
-      emptyDiff($('#logDetailDiff'), '커밋이 없습니다.');
-    }
+    // 그 사이 탭이 바뀌었거나 더 새로운 요청이 있으면 이 결과는 버린다 (이전 프로젝트 이력이 덮어쓰는 문제 방지)
+    if (seq !== loadSeq || state.repo !== repo) return;
+    showCommits(list, br);
+    loadedRepo = repo;
+    saveRepoView();
   } catch (e) {
+    if (seq !== loadSeq || state.repo !== repo) return;
     $('#logTable').innerHTML = `<div class="empty">히스토리를 불러오지 못했습니다: ${esc(e.message)}</div>`;
   } finally {
     clearTimeout(slow);
@@ -168,7 +216,10 @@ async function load() {
 }
 
 async function loadMore() {
+  const repo = state.repo;
+  const seq = loadSeq;
   const more = await git('log', { limit: PAGE, skip: allCommits.length, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order });
+  if (seq !== loadSeq || state.repo !== repo) return;
   allCommits = allCommits.concat(more);
   applyCompare();
   renderTable();
@@ -644,8 +695,10 @@ async function selectCommit(hash, scroll = true) {
   markRows();
   const box = $('#logDetailFiles');
   let d;
+  const repo = state.repo;
   try {
     d = await git('commitDetails', hash);
+    if (state.repo !== repo) return;
   } catch (e) {
     box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     return;

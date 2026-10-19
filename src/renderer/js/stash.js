@@ -33,12 +33,14 @@ export async function stashChanges() {
 
 async function load() {
   const list = $('#stashList');
+  const repo = state.repo;
   let items;
   try {
     items = await git('stashList');
   } catch {
     items = [];
   }
+  if (state.repo !== repo) return; // 그 사이 탭이 바뀜
   list.innerHTML = '';
   if (!items.length) {
     list.append(h('div', { class: 'empty', html: '보관된 항목이 없습니다.<br><small>작업하던 내용을 잠시 치워두고 다른 브랜치로 전환할 때 사용하세요.</small>' }));

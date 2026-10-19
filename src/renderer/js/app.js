@@ -1,7 +1,7 @@
 // 앱 진입점: 레이아웃/툴바/단축키/뷰 전환
 import { $, $$, h, toast } from './ui.js';
-import { state, refresh, onRefresh, op, git } from './state.js';
-import { initChanges, focusCommitMessage } from './changes.js';
+import { state, refresh, onRefresh, op, git, emitStatus } from './state.js';
+import { initChanges, focusCommitMessage, showRepoLoading } from './changes.js';
 import { initLog, activateLog } from './log.js';
 import { initStash, activateStash } from './stash.js';
 import { openBranchPopup, newBranch } from './branches.js';
@@ -97,7 +97,23 @@ async function onOpened() {
   }
   $('#app').classList.remove('no-repo');
   setView(state.view === 'welcome' ? 'changes' : state.view);
+  if (state.status) emitStatus(); // 기억해 둔 상태로 먼저 그리기
+  else clearRepoChrome();
   await refresh();
+}
+
+// 처음 여는 저장소: 이전 저장소 정보가 남아 보이지 않게 툴바/상태바를 비운다
+function clearRepoChrome() {
+  const name = state.repo.split(/[\\/]/).filter(Boolean).pop();
+  $('#repoName').textContent = name;
+  document.title = `${name} - CodeFlow`;
+  $('#branchName').textContent = '...';
+  $('#behindBadge').hidden = true;
+  $('#aheadBadge').hidden = true;
+  $('#changeCount').hidden = true;
+  $('#opBanner').hidden = true;
+  $('#statusPath').textContent = `${state.repo}  ·  불러오는 중...`;
+  showRepoLoading();
 }
 
 async function main() {

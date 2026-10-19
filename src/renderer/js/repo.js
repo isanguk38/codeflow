@@ -81,7 +81,8 @@ export async function switchTab(dir) {
     return closeTab(t.path);
   }
   state.repo = t.path;
-  state.status = null;
+  // 마지막으로 본 상태를 바로 보여주고(빠른 전환), 최신 상태는 onOpened 에서 새로 불러온다
+  state.status = t.status || null;
   state.view = t.view || 'changes';
   saveTabs();
   renderTabs();

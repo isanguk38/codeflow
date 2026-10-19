@@ -389,6 +389,13 @@ async function doCommit(andPush) {
   if (andPush) doPush();
 }
 
+// 처음 여는 저장소: 상태를 받아오기 전까지 이전 저장소 파일 목록이 보이지 않게 비운다
+export function showRepoLoading() {
+  bindRepo();
+  $('#fileList').innerHTML = '<div class="loading-note"><span class="spinner"></span> 변경 사항을 확인하는 중...</div>';
+  emptyDiff($('#changesDiff'));
+}
+
 export function focusCommitMessage() {
   $('#commitMsg')?.focus();
 }

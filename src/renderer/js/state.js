@@ -167,26 +167,45 @@ async function handleKnownError(label, e, fn, smart = true) {
   return false;
 }
 
+// 상태 새로고침. 저장소(탭)별로 따로 돌고, 도중에 다른 저장소로 바뀌면 결과를 버린다.
 let refreshing = null;
+let refreshingRepo = null;
 export function refresh() {
   if (!state.repo) return Promise.resolve();
-  if (refreshing) return refreshing;
-  refreshing = (async () => {
+  if (refreshing && refreshingRepo === state.repo) return refreshing;
+  const repo = state.repo;
+  const prev = refreshing;
+  const p = (async () => {
+    if (prev) await prev.catch(() => {});
+    if (state.repo !== repo) return;
     try {
-      state.status = await git('status');
-      for (const fn of listeners) {
-        try {
-          await fn(state.status);
-        } catch (e) {
-          console.error(e);
-        }
-      }
+      const st = await git('status');
+      if (state.repo !== repo) return; // 그 사이 탭이 바뀜
+      state.status = st;
+      await emitStatus();
     } catch (e) {
       console.error(e);
-      setStatusMsg(`상태 조회 실패: ${e.message}`);
+      if (state.repo === repo) setStatusMsg(`상태 조회 실패: ${e.message}`);
     } finally {
-      refreshing = null;
+      if (refreshing === p) {
+        refreshing = null;
+        refreshingRepo = null;
+      }
     }
   })();
-  return refreshing;
+  refreshing = p;
+  refreshingRepo = repo;
+  return p;
+}
+
+// 현재 state.status 로 모든 화면을 다시 그린다 (탭 전환 시 기억해 둔 상태로 즉시 표시할 때도 사용)
+export async function emitStatus() {
+  if (!state.status) return;
+  for (const fn of listeners) {
+    try {
+      await fn(state.status);
+    } catch (e) {
+      console.error(e);
+    }
+  }
 }
