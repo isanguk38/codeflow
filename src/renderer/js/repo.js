@@ -345,7 +345,14 @@ export async function openSettings() {
     state.repo ? remoteBox : null,
     state.repo ? addRemote : null,
     h('h4', { text: '동작' }),
-    h('label', { class: 'check' }, rebase, ' Pull 할 때 병합(merge) 대신 리베이스(rebase) 사용')
+    h('label', { class: 'check' }, rebase, ' Pull 할 때 병합(merge) 대신 리베이스(rebase) 사용'),
+    h('h4', { text: '앱 정보' }),
+    h(
+      'div',
+      { class: 'row' },
+      h('span', { text: `CodeFlow 버전 ${await window.api.appVersion()}` }),
+      h('button', { class: 'btn small', text: '업데이트 확인', onclick: async () => (await import('./update.js')).checkForUpdatesNow() })
+    )
   );
   modal({
     title: '설정',

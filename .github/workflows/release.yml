@@ -1,4 +1,5 @@
 # v* 태그를 Push 하면 Windows 설치 파일을 빌드해서 GitHub Release 에 올린다.
+# 설치된 CodeFlow 는 이 Release 를 확인해서 "새 버전이 나왔습니다" 안내를 띄운다.
 name: Release
 
 on:
@@ -13,6 +14,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -21,3 +24,13 @@ jobs:
       - run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 이전 태그 이후의 커밋 제목으로 "바뀐 점" 을 채운다 (앱의 업데이트 안내 창에 표시됨)
+      - name: Release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          range=${prev:+$prev..}${GITHUB_REF_NAME}
+          { echo "## 바뀐 점"; git log --no-merges --format='- %s' "$range"; } > notes.md
+          gh release edit "${GITHUB_REF_NAME}" --notes-file notes.md

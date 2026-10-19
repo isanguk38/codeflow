@@ -251,7 +251,7 @@ pre,
   gap: 4px;
 }
 .no-repo #rail,
-.no-repo #toolbar > :not(#repoBtn):not(.tb-spacer):not(#themeBtn):not(#settingsBtn) {
+.no-repo #toolbar > :not(#repoBtn):not(.tb-spacer):not(#themeBtn):not(#settingsBtn):not(#updateBtn) {
   display: none;
 }
 .rail-btn {

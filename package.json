@@ -40,13 +40,17 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "CodeFlow-Setup-${version}.exe"
     },
     "publish": {
       "provider": "github",
       "owner": "isanguk38",
       "repo": "codeflow",
       "releaseType": "release"
+    },
+    "portable": {
+      "artifactName": "CodeFlow-${version}-Portable.exe"
     }
   }
 }

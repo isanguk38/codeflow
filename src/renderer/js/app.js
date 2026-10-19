@@ -8,6 +8,7 @@ import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
 import { initAdvanced, activateAdvanced } from './advanced.js';
+import { startUpdateCheck } from './update.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -165,6 +166,7 @@ async function main() {
 
   // 창이 다시 활성화되면(에디터에서 파일 수정 후 돌아오면) 자동 새로고침
   window.api.onFocus(() => refresh());
+  startUpdateCheck();
 
   await renderWelcome();
   // 지난번에 열어 둔 탭 복원

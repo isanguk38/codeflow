@@ -123,6 +123,24 @@ function addRecent(dir) {
   saveSettings(s);
 }
 
+// 앱 업데이트
+const updater = require('./updater');
+ipcMain.handle('update:check', async () => {
+  try {
+    return { ok: true, data: await updater.check() };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+ipcMain.handle('update:install', async (_e, url) => {
+  try {
+    return { ok: true, data: await updater.install(url) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:set', (_e, patch) => {
   const s = { ...loadSettings(), ...patch };

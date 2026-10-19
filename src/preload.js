@@ -22,4 +22,8 @@ contextBridge.exposeInMainWorld('api', {
   exists: (p) => ipcRenderer.invoke('path:exists', p),
   copy: (text) => clipboard.writeText(text),
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
+  appVersion: () => ipcRenderer.invoke('app:version'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: (url) => ipcRenderer.invoke('update:install', url),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, p) => cb(p)),
 });

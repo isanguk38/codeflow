@@ -499,3 +499,38 @@ select.input {
 .log-row.other .c-graph {
   opacity: 0.85;
 }
+
+/* ---------- 업데이트 ---------- */
+.update-btn {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.update-btn:hover {
+  background: var(--accent2);
+}
+.update-notes {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  max-height: 40vh;
+  overflow: auto;
+  user-select: text;
+}
+.update-notes h4 {
+  margin: 8px 0 4px;
+}
+.update-notes ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.update-dialog h4 {
+  margin: 10px 0 6px;
+}
+.update-dialog a {
+  color: var(--accent2);
+}
+.form .row {
+  align-items: center;
+}
