@@ -21,10 +21,11 @@ let dirty = true;
 let boundRepo = null;
 let inHead = null; // 현재 브랜치(HEAD)에 포함된 커밋 해시 집합
 
-// 보기 옵션 (IntelliJ 기본값과 동일: 날짜순 + 현재 브랜치 아닌 커밋 흐리게)
+// 보기 옵션 (IntelliJ 기본값과 동일: 날짜순 + 병합 커밋은 회색)
 const viewOpt = {
   order: localStorage.getItem('log.order') || 'date',
-  dimOthers: localStorage.getItem('log.dimOthers') !== '0',
+  dimMerges: localStorage.getItem('log.dimMerges') !== '0',
+  dimOthers: localStorage.getItem('log.dimOthers2') === '1',
 };
 
 export function initLog() {
@@ -68,7 +69,8 @@ export function initLog() {
   $('#logView').onclick = (e) => {
     const set = (k, v) => {
       viewOpt[k] = v;
-      localStorage.setItem(`log.${k}`, k === 'dimOthers' ? (v ? '1' : '0') : v);
+      const key = { order: 'log.order', dimMerges: 'log.dimMerges', dimOthers: 'log.dimOthers2' }[k];
+      localStorage.setItem(key, typeof v === 'boolean' ? (v ? '1' : '0') : v);
       k === 'order' ? load() : renderTable();
     };
     menuAt(e.currentTarget, [
@@ -77,7 +79,8 @@ export function initLog() {
       { label: `${viewOpt.order === 'topo' ? '✓ ' : '　'}브랜치별로 묶어서 (토폴로지)`, onClick: () => set('order', 'topo') },
       '-',
       { header: '강조' },
-      { label: `${viewOpt.dimOthers ? '✓ ' : '　'}현재 브랜치에 없는 커밋 흐리게`, onClick: () => set('dimOthers', !viewOpt.dimOthers) },
+      { label: `${viewOpt.dimMerges ? '✓ ' : '　'}병합(Merge) 커밋은 회색으로 (IntelliJ 기본)`, onClick: () => set('dimMerges', !viewOpt.dimMerges) },
+      { label: `${viewOpt.dimOthers ? '✓ ' : '　'}현재 브랜치에 없는 커밋도 회색으로`, onClick: () => set('dimOthers', !viewOpt.dimOthers) },
     ]);
   };
   $('#logReflog').onclick = async () => (await import('./advanced.js')).openReflog();
@@ -350,8 +353,12 @@ function renderTable() {
   inHead = viewOpt.dimOthers && !filter.file ? computeInHead() : null;
   let html = '';
   commits.forEach((c, i) => {
-    const other = inHead && !inHead.has(c.hash);
-    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''}" data-i="${i}" ${other ? 'title="현재 브랜치에 포함되지 않은 커밋"' : ''}>
+    // IntelliJ 처럼 병합 커밋(부모 2개 이상)은 회색, 일반 커밋은 흰색
+    const isMerge = viewOpt.dimMerges && c.parents.length > 1;
+    const notInHead = inHead && !inHead.has(c.hash);
+    const other = isMerge || notInHead;
+    const tip = isMerge ? '병합(Merge) 커밋' : notInHead ? '현재 브랜치에 포함되지 않은 커밋' : '';
+    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''}" data-i="${i}" ${tip ? `title="${tip}"` : ''}>
       ${graph ? `<div class="c-graph" style="width:${gw}px">${graphSvg(graph[i], gw)}</div>` : ''}
       <div class="c-subj">${refBadges(c.refs)}<span class="subj">${esc(c.subject)}</span></div>
       <div class="c-author">${esc(c.author)}</div>
