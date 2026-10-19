@@ -485,3 +485,17 @@ select.input {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------- 히스토리: 현재 브랜치에 없는 커밋 흐리게 (IntelliJ 방식) ---------- */
+.log-row.other .subj,
+.log-row.other .c-author,
+.log-row.other .c-date,
+.log-row.other .c-hash {
+  color: var(--text3);
+}
+.log-row.other .ref {
+  opacity: 0.75;
+}
+.log-row.other .c-graph {
+  opacity: 0.85;
+}

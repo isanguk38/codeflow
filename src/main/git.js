@@ -350,13 +350,14 @@ async function rollback(repo, files) {
 const FS = '\x1f';
 const RS = '\x1e';
 
-async function log(repo, { limit = 500, skip = 0, all = true, ref, file, search } = {}) {
+async function log(repo, { limit = 500, skip = 0, all = true, ref, file, search, order = 'date' } = {}) {
   if (!(await hasHead(repo))) return [];
   const args = ['log', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%D${FS}%s${RS}`, `-n`, String(limit), `--skip=${skip}`];
   if (file) {
     args.push('--follow');
   } else {
-    args.push('--topo-order');
+    // date: IntelliJ 처럼 커밋 날짜순(부모는 항상 자식 뒤), topo: 브랜치별로 묶어서
+    args.push(order === 'topo' ? '--topo-order' : '--date-order');
     if (ref) args.push(ref);
     else if (all) args.push('--branches', '--remotes', '--tags', 'HEAD');
   }

@@ -1,5 +1,5 @@
 // 히스토리 화면: 브랜치 트리 + 커밋 그래프 + 커밋 상세/Diff
-import { $, h, esc, fmtDate, splitPath, STATUS_LABEL, contextMenu, confirmDialog, choiceDialog, promptDialog, splitter, toast } from './ui.js';
+import { $, h, esc, fmtDate, splitPath, STATUS_LABEL, contextMenu, menuAt, confirmDialog, choiceDialog, promptDialog, splitter, toast } from './ui.js';
 import { state, git, op, onRefresh } from './state.js';
 import { renderDiff, emptyDiff } from './diff.js';
 import { branchMenuItems, newBranch, checkout, checkoutRemote } from './branches.js';
@@ -19,6 +19,13 @@ let anchor = null;
 let root;
 let dirty = true;
 let boundRepo = null;
+let inHead = null; // 현재 브랜치(HEAD)에 포함된 커밋 해시 집합
+
+// 보기 옵션 (IntelliJ 기본값과 동일: 날짜순 + 현재 브랜치 아닌 커밋 흐리게)
+const viewOpt = {
+  order: localStorage.getItem('log.order') || 'date',
+  dimOthers: localStorage.getItem('log.dimOthers') !== '0',
+};
 
 export function initLog() {
   root = $('#view-log');
@@ -31,6 +38,7 @@ export function initLog() {
         <span id="logFilterInfo" class="filter-chip" hidden></span>
         <span class="tb-spacer"></span>
         <span class="hint-sel" id="logMultiInfo"></span>
+        <button class="tb-btn small" id="logView" title="정렬 / 강조 방식">👁 보기 ▾</button>
         <button class="tb-btn small" id="logReflog" title="HEAD 이동 기록 (실수로 잃어버린 커밋 찾기)">↺ Reflog</button>
         <button class="tb-btn small" id="logReload" title="새로고침">⟳</button>
       </div>
@@ -57,6 +65,21 @@ export function initLog() {
     }, 300);
   };
   $('#logReload').onclick = () => load();
+  $('#logView').onclick = (e) => {
+    const set = (k, v) => {
+      viewOpt[k] = v;
+      localStorage.setItem(`log.${k}`, k === 'dimOthers' ? (v ? '1' : '0') : v);
+      k === 'order' ? load() : renderTable();
+    };
+    menuAt(e.currentTarget, [
+      { header: '정렬' },
+      { label: `${viewOpt.order === 'date' ? '✓ ' : '　'}커밋 날짜순 (IntelliJ 기본)`, onClick: () => set('order', 'date') },
+      { label: `${viewOpt.order === 'topo' ? '✓ ' : '　'}브랜치별로 묶어서 (토폴로지)`, onClick: () => set('order', 'topo') },
+      '-',
+      { header: '강조' },
+      { label: `${viewOpt.dimOthers ? '✓ ' : '　'}현재 브랜치에 없는 커밋 흐리게`, onClick: () => set('dimOthers', !viewOpt.dimOthers) },
+    ]);
+  };
   $('#logReflog').onclick = async () => (await import('./advanced.js')).openReflog();
   $('#logTableWrap').addEventListener('keydown', onKey);
   emptyDiff($('#logDetailDiff'), '커밋을 선택하고 파일을 클릭하면 변경 내용이 표시됩니다.');
@@ -104,7 +127,7 @@ async function load() {
   dirty = false;
   setFilterChip();
   try {
-    const [list, br] = await Promise.all([git('log', { limit: PAGE, ref: filter.ref, file: filter.file, search: filter.search }), git('branches')]);
+    const [list, br] = await Promise.all([git('log', { limit: PAGE, ref: filter.ref, file: filter.file, search: filter.search, order: viewOpt.order }), git('branches')]);
     commits = list;
     graph = filter.file ? null : computeGraph(commits);
     renderBranches(br);
@@ -121,7 +144,7 @@ async function load() {
 }
 
 async function loadMore() {
-  const more = await git('log', { limit: PAGE, skip: commits.length, ref: filter.ref, file: filter.file, search: filter.search });
+  const more = await git('log', { limit: PAGE, skip: commits.length, ref: filter.ref, file: filter.file, search: filter.search, order: viewOpt.order });
   commits = commits.concat(more);
   graph = filter.file ? null : computeGraph(commits);
   renderTable();
@@ -268,17 +291,52 @@ function curve(x1, y1, x2, y2, color) {
 
 // ---------- 커밋 목록 ----------
 
+// IntelliJ 처럼 같은 커밋을 가리키는 로컬/원격 브랜치는 "origin & master" 하나로 합쳐 표시
 function refBadges(refs) {
-  return refs
-    .map((r) => {
-      if (r.startsWith('HEAD -> ')) return `<span class="ref head">● ${esc(r.slice(8))}</span>`;
-      if (r === 'HEAD') return `<span class="ref head">HEAD</span>`;
-      if (r.startsWith('tag: ')) return `<span class="ref tag">⌂ ${esc(r.slice(5))}</span>`;
-      if (r.endsWith('/HEAD')) return '';
-      if (r.includes('/')) return `<span class="ref remote">${esc(r)}</span>`;
-      return `<span class="ref local">${esc(r)}</span>`;
-    })
-    .join('');
+  let head = null;
+  const locals = [];
+  const remotes = [];
+  const tags = [];
+  for (const r of refs) {
+    if (r.startsWith('HEAD -> ')) {
+      head = r.slice(8);
+      locals.push(head);
+    } else if (r === 'HEAD') head = 'HEAD';
+    else if (r.startsWith('tag: ')) tags.push(r.slice(5));
+    else if (r.endsWith('/HEAD')) continue;
+    else if (r.includes('/') && !locals.includes(r)) remotes.push(r);
+    else locals.push(r);
+  }
+  // 이름에 '/' 가 들어간 로컬 브랜치(feature/x)와 원격 브랜치를 구분: 원격 목록은 원격 이름으로 시작
+  const used = new Set();
+  let html = '';
+  for (const l of locals) {
+    const pair = remotes.filter((r) => r.slice(r.indexOf('/') + 1) === l);
+    pair.forEach((r) => used.add(r));
+    const label = pair.length ? `${pair.map((r) => r.slice(0, r.indexOf('/'))).join(', ')} & ${l}` : l;
+    html += `<span class="ref ${l === head ? 'head' : 'local'}" title="${esc([l, ...pair].join(', '))}">${l === head ? '● ' : ''}${esc(label)}</span>`;
+  }
+  if (head === 'HEAD') html = `<span class="ref head">HEAD</span>` + html;
+  for (const r of remotes) if (!used.has(r)) html += `<span class="ref remote">${esc(r)}</span>`;
+  for (const t of tags) html += `<span class="ref tag">⌂ ${esc(t)}</span>`;
+  return html;
+}
+
+// HEAD 에서 부모를 따라가며 현재 브랜치에 포함된 커밋을 표시 (불러온 범위 안에서)
+function computeInHead() {
+  const byHash = new Map(commits.map((c) => [c.hash, c]));
+  const head = commits.find((c) => c.refs.some((r) => r === 'HEAD' || r.startsWith('HEAD -> ')));
+  if (!head) return null;
+  const set = new Set();
+  const stack = [head.hash];
+  while (stack.length) {
+    const h = stack.pop();
+    if (set.has(h)) continue;
+    set.add(h);
+    const c = byHash.get(h);
+    if (c) stack.push(...c.parents);
+  }
+  return set;
 }
 
 function renderTable() {
@@ -289,9 +347,11 @@ function renderTable() {
   }
   const maxLanes = graph ? Math.max(1, ...graph.map((g) => Math.max(g.before.length, g.after.length, g.idx + 1))) : 0;
   const gw = Math.min(maxLanes, 20) * LANE_W + 6;
+  inHead = viewOpt.dimOthers && !filter.file ? computeInHead() : null;
   let html = '';
   commits.forEach((c, i) => {
-    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''}" data-i="${i}">
+    const other = inHead && !inHead.has(c.hash);
+    html += `<div class="log-row ${c.hash === selectedHash ? 'sel' : ''} ${other ? 'other' : ''}" data-i="${i}" ${other ? 'title="현재 브랜치에 포함되지 않은 커밋"' : ''}>
       ${graph ? `<div class="c-graph" style="width:${gw}px">${graphSvg(graph[i], gw)}</div>` : ''}
       <div class="c-subj">${refBadges(c.refs)}<span class="subj">${esc(c.subject)}</span></div>
       <div class="c-author">${esc(c.author)}</div>
