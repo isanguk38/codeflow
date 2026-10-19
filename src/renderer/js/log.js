@@ -171,6 +171,22 @@ async function loadMore() {
 
 // ---------- 브랜치 트리 ----------
 
+let selectMode = false; // '골라 보기' 모드 (체크박스 표시)
+
+// 원격 추적 상태 표시: ↑보낼 커밋, ↓받을 커밋, gone → 원격 삭제됨
+function trackHint(b) {
+  if (b.track.includes('gone'))
+    return {
+      hint: '원격 삭제됨',
+      hintClass: 'gone',
+      hintTitle: `연결된 원격 브랜치(${b.upstream || ''})가 삭제되었습니다.
+보통 MR 병합 때 '소스 브랜치 삭제'로 지워진 경우입니다.
+로컬 브랜치와 커밋은 그대로 남아 있으며, 이미 병합된 작업이면 삭제해도 됩니다.`,
+    };
+  const hint = b.track.replace('ahead ', '↑').replace('behind ', '↓').replace(/[[\],]/g, '');
+  return { hint, hintTitle: hint ? '↑ Push 할 커밋 수 / ↓ Pull 로 받을 커밋 수' : '' };
+}
+
 function renderBranches(br) {
   const el = $('#logBranches');
   // 접어 둔 그룹은 다시 그려도 접힌 채로 유지
@@ -181,14 +197,15 @@ function renderBranches(br) {
   const isSel = (ref, opts) => !isAll() && (filter.refs.includes(key(ref, opts)) || (opts.current && filter.refs.includes(ref)));
   const item = (label, ref, opts = {}) => {
     const selected = isSel(ref, opts);
-    const chk = h('input', { type: 'checkbox', checked: selected, title: '함께 보기 (Ctrl+클릭)' });
+    // 체크박스는 '골라 보기' 모드에서만 보인다
+    const chk = selectMode ? h('input', { type: 'checkbox', checked: selected, title: '이 브랜치를 함께 보기' }) : null;
     const row = h(
       'div',
       { class: `tree-item ${selected && !filter.file ? 'active' : ''} ${opts.current ? 'current' : ''}`, title: opts.title || label },
       chk,
       h('span', { class: 'ti-ico', text: opts.ico || '⑂' }),
       h('span', { class: 'ti-name', text: label }),
-      opts.hint ? h('span', { class: 'ti-hint', text: opts.hint }) : null
+      opts.hint ? h('span', { class: `ti-hint ${opts.hintClass || ''}`, text: opts.hint, title: opts.hintTitle || '' }) : null
     );
     const toggle = () => {
       const k = key(ref, opts);
@@ -199,12 +216,14 @@ function renderBranches(br) {
       filter.file = null;
       load();
     };
-    chk.onclick = (e) => {
-      e.stopPropagation();
-      toggle();
-    };
+    if (chk)
+      chk.onclick = (e) => {
+        e.stopPropagation();
+        toggle();
+      };
     row.onclick = (e) => {
-      if (e.ctrlKey || e.metaKey) return toggle();
+      // 골라 보기 모드에서는 줄을 눌러도 체크가 토글된다
+      if (selectMode || e.ctrlKey || e.metaKey) return toggle();
       // 그냥 클릭: 이 브랜치만 보기
       filter.refs = [key(ref, opts)];
       filter.file = null;
@@ -233,16 +252,32 @@ function renderBranches(br) {
     g.append(head, body);
     el.append(g);
   };
-  el.append(h('div', { class: 'tree-tip', text: '클릭: 그 브랜치만 보기 · 체크/Ctrl+클릭: 여러 브랜치 골라 보기' }));
-  // 모든 브랜치 (VS Code 의 All)
-  const allChk = h('input', { type: 'checkbox', checked: isAll() });
-  const allRow = h('div', { class: `tree-item ${isAll() && !filter.file ? 'active' : ''}`, title: '모든 브랜치의 이력을 함께 봅니다' }, allChk, h('span', { class: 'ti-ico', text: '◎' }), h('span', { class: 'ti-name', text: '모든 브랜치' }));
+  // 모든 브랜치 (VS Code 의 All) + 오른쪽 '골라 보기' 버튼
+  const pickBtn = h('button', {
+    class: `tb-btn small pick-btn ${selectMode ? 'on' : ''}`,
+    text: selectMode ? '✓ 골라 보기' : '☐ 골라 보기',
+    title: selectMode ? '골라 보기 끝내기 (체크박스 숨기기)' : '체크박스로 원하는 브랜치들만 묶어서 보기',
+    onclick: (e) => {
+      e.stopPropagation();
+      selectMode = !selectMode;
+      renderBranches(br);
+    },
+  });
+  const allRow = h(
+    'div',
+    { class: `tree-item all-row ${isAll() && !filter.file ? 'active' : ''}`, title: '모든 브랜치의 이력을 함께 봅니다' },
+    selectMode ? h('input', { type: 'checkbox', checked: isAll() }) : null,
+    h('span', { class: 'ti-ico', text: '◎' }),
+    h('span', { class: 'ti-name', text: '모든 브랜치' }),
+    pickBtn
+  );
+  if (selectMode) el.append(h('div', { class: 'tree-tip', text: '보고 싶은 브랜치를 체크하세요. 체크한 브랜치들의 이력만 함께 보입니다.' }));
   allRow.onclick = () => {
     filter.refs = [ALL];
     filter.file = null;
     load();
   };
-  el.append(allRow);
+  el.prepend(allRow);
   if (state.status?.detached) el.append(item(`HEAD (${state.status.headShort})`, CUR, { ico: '●', current: true, title: '분리된 HEAD (특정 커밋을 체크아웃한 상태)' }));
   group(
     '로컬',
@@ -252,7 +287,7 @@ function renderBranches(br) {
         branch: b,
         current: b.current,
         ico: b.current ? '★' : '⑂',
-        hint: b.track.replace('ahead ', '↑').replace('behind ', '↓').replace(/[[\],]/g, ''),
+        ...trackHint(b),
         title: `${b.name}${b.upstream ? ` → ${b.upstream}` : ''}\n더블클릭: 체크아웃 / 우클릭: 메뉴`,
       })
     )
