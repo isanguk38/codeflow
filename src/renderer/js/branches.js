@@ -2,6 +2,9 @@
 import { $, h, esc, contextMenu, promptDialog, confirmDialog, choiceDialog, toast, closeMenu, registerMenu } from './ui.js';
 import { state, git, op } from './state.js';
 
+// 브랜치 목록이 바뀌는 작업 뒤에 히스토리 왼쪽 목록을 즉시 갱신
+const treeNow = async () => (await import('./log.js')).reloadBranchTree();
+
 export async function newBranch(start, { checkout = true } = {}) {
   const r = await promptDialog(start ? `'${start}' 에서 새 브랜치 만들기` : '현재 위치에서 새 브랜치 만들기', {
     title: '새 브랜치',
@@ -12,6 +15,7 @@ export async function newBranch(start, { checkout = true } = {}) {
   if (!r) return;
   const name = r.value.replace(/\s+/g, '-');
   await op('브랜치 생성', () => git('createBranch', { name, start, checkout: r.checked }), { success: `브랜치 '${name}' 생성됨` });
+  treeNow();
 }
 
 export const checkout = (name) => op(`체크아웃 ${name}`, () => git('checkout', name), { success: `'${name}' 로 전환했습니다.` });
@@ -111,6 +115,7 @@ export async function rebaseOnto(name) {
 async function rename(name) {
   const n = await promptDialog(`'${name}' 의 새 이름`, { title: '브랜치 이름 변경', value: name, okLabel: '변경' });
   if (n && n !== name) await op('이름 변경', () => git('renameBranch', name, n), { success: `'${n}' 로 이름 변경됨` });
+  treeNow();
 }
 
 async function remove(b) {
@@ -123,6 +128,7 @@ async function remove(b) {
     const force = await confirmDialog(`'${b.name}' 은(는) 아직 병합되지 않은 커밋이 있습니다. 그래도 삭제할까요? (커밋이 사라질 수 있습니다)`, { title: '강제 삭제', okLabel: '강제 삭제', danger: true });
     if (force) await op('브랜치 삭제', () => git('deleteBranch', b.name, true), { success: `'${b.name}' 삭제됨` });
   } else (await import('./ui.js')).errorDialog(r.error, '브랜치 삭제 실패');
+  treeNow();
   const { refresh } = await import('./state.js');
   refresh();
 }
@@ -130,6 +136,7 @@ async function remove(b) {
 async function removeRemote(b) {
   const ok = await confirmDialog(`원격 저장소에서 '${b.name}' 브랜치를 삭제합니다. 다른 사람에게도 영향을 줍니다.`, { title: '원격 브랜치 삭제', okLabel: '삭제', danger: true });
   if (ok) await op('원격 브랜치 삭제', () => git('deleteRemoteBranch', b.name), { success: `'${b.name}' 삭제됨` });
+  treeNow();
 }
 
 export async function checkoutRevision() {

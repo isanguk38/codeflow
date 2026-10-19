@@ -201,7 +201,14 @@ async function load() {
     if (seq === loadSeq && !allCommits.length) $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
   }, 250);
   try {
-    const [list, br] = await Promise.all([git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order }), git('branches')]);
+    const logP = git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order });
+    logP.catch(() => {}); // 아래에서 await 하며 처리 (먼저 실패해도 경고가 뜨지 않게)
+    // 브랜치 목록은 빠르므로 이력을 기다리지 않고 바로 다시 그린다 (삭제/생성/이름 변경이 즉시 보이도록)
+    const br = await git('branches');
+    if (seq !== loadSeq || state.repo !== repo) return;
+    lastBr = br;
+    renderBranches(br);
+    const list = await logP;
     // 그 사이 탭이 바뀌었거나 더 새로운 요청이 있으면 이 결과는 버린다 (이전 프로젝트 이력이 덮어쓰는 문제 방지)
     if (seq !== loadSeq || state.repo !== repo) return;
     showCommits(list, br);
@@ -812,6 +819,18 @@ async function showCommitDiff(d, f) {
   } catch (e) {
     emptyDiff($('#logDetailDiff'), e.message);
   }
+}
+
+// 브랜치 생성/삭제/이름 변경 직후 왼쪽 브랜치 목록만 바로 다시 그린다 (이력은 새로고침에서 따로 갱신)
+export async function reloadBranchTree() {
+  if (!state.repo || boundRepo !== state.repo) return;
+  const repo = state.repo;
+  try {
+    const br = await git('branches');
+    if (state.repo !== repo) return;
+    lastBr = br;
+    renderBranches(br);
+  } catch {}
 }
 
 // 다른 화면(Blame, 비교, Reflog)에서 특정 커밋으로 이동

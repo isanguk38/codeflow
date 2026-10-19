@@ -1,8 +1,13 @@
-// 새 버전 안내: 시작 시와 6시간마다 GitHub 최신 릴리즈를 확인하고, 있으면 안내 창 + 상단 "업데이트" 버튼
+// 새 버전 안내 (ERD 앱과 같은 방식)
+// 시작할 때, 1시간마다, 그리고 창으로 돌아왔을 때 마지막 확인이 10분 넘게 지났으면 GitHub 최신 릴리즈를 확인한다.
+// 새 버전이 처음 보이면 안내 창을 띄우고, 상단 "업데이트" 버튼은 새 버전이 있는 동안 계속 보인다.
 import { $, h, esc, modal, toast } from './ui.js';
 
-const INTERVAL = 6 * 60 * 60 * 1000;
+const INTERVAL = 60 * 60 * 1000;
+const FOCUS_INTERVAL = 10 * 60 * 1000;
 let info = null; // 마지막 확인 결과
+let lastCheck = 0;
+let shownVersion = null; // 이번 실행에서 이미 안내 창을 띄운 버전
 
 const today = () => new Date().toISOString().slice(0, 10);
 const snoozeKey = (v) => `update.later.${v}`;
@@ -11,9 +16,13 @@ export function startUpdateCheck() {
   $('#updateBtn').onclick = () => info?.available && openUpdateDialog();
   setTimeout(() => check(false), 4000);
   setInterval(() => check(false), INTERVAL);
+  window.api.onFocus(() => {
+    if (Date.now() - lastCheck > FOCUS_INTERVAL) check(false);
+  });
 }
 
 async function check(manual) {
+  lastCheck = Date.now();
   const r = await window.api.checkUpdate();
   if (!r.ok) {
     if (manual) toast(`업데이트 확인 실패: ${r.error}`, 'error', 6000);
@@ -25,7 +34,12 @@ async function check(manual) {
   btn.title = info.available ? `새 버전 ${info.latest.version} 이 있습니다` : '';
   if (info.available) {
     // '나중에' 를 누른 날에는 다시 묻지 않는다 (상단 버튼으로는 언제든 가능)
-    if (manual || (info.packaged && localStorage.getItem(snoozeKey(info.latest.version)) !== today())) openUpdateDialog();
+    // 같은 버전 안내는 한 번만 자동으로 띄운다 (이후에는 상단 버튼으로)
+    const auto = info.packaged && shownVersion !== info.latest.version && localStorage.getItem(snoozeKey(info.latest.version)) !== today();
+    if (manual || auto) {
+      shownVersion = info.latest.version;
+      if (!document.querySelector('.update-dialog')) openUpdateDialog();
+    }
   } else if (manual) toast(`최신 버전입니다 (${info.current})`, 'ok');
   return info;
 }
