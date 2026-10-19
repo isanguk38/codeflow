@@ -187,7 +187,10 @@ export async function cloneDialog() {
           }
           btn.disabled = true;
           btn.textContent = '복제 중...';
+          const { busy } = await import('./state.js');
+          const done = busy('복제 (Clone)');
           const r = await window.api.cloneRepo(url.value.trim(), dir.value.trim());
+          done();
           if (!r.ok) {
             btn.disabled = false;
             btn.textContent = '복제';

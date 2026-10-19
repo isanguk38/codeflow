@@ -1,6 +1,6 @@
 // 커밋 화면: 변경 파일 목록(체크박스 선택) + 커밋 메시지 + Diff / 줄 단위 선택(부분 커밋)
 import { $, h, splitPath, STATUS_LABEL, contextMenu, confirmDialog, choiceDialog, toast, splitter } from './ui.js';
-import { state, git, op, refresh, onRefresh, FAILED } from './state.js';
+import { state, git, op, refresh, onRefresh, FAILED, busy } from './state.js';
 import { renderDiff, renderHunks, emptyDiff } from './diff.js';
 import { openConflicts, openMergeTool } from './conflicts.js';
 import { doPush } from './remote.js';
@@ -250,6 +250,9 @@ async function showDiff(f, keepScroll = false) {
     h('button', { class: 'tb-btn small', text: '↶ 되돌리기', title: '이 파일의 변경 내용 되돌리기', onclick: () => rollbackFiles([f]) }),
     h('button', { class: 'tb-btn small', text: '열기', title: '파일 열기', onclick: () => window.api.openPath(`${state.repo}/${f.path}`) }),
   ].filter(Boolean);
+  const slow = setTimeout(() => {
+    if (current === f.path) container.querySelector('.diff-scroll')?.replaceChildren(h('div', { class: 'loading-note', html: '<span class="spinner"></span> 변경 내용을 불러오는 중...' }));
+  }, 250);
   try {
     if (lineMode && canLineSelect(f)) {
       const data = await git('fileHunks', f.path);
@@ -293,6 +296,8 @@ async function showDiff(f, keepScroll = false) {
     }
   } catch (e) {
     emptyDiff(container, `Diff 를 불러오지 못했습니다: ${e.message}`);
+  } finally {
+    clearTimeout(slow);
   }
 }
 
@@ -315,7 +320,9 @@ export async function rollbackFiles(targets) {
     { title: '변경 내용 되돌리기 (Rollback)', okLabel: '되돌리기', danger: true, detail: list }
   );
   if (!ok) return;
+  const done = busy('되돌리기');
   const r = await window.api.git.rollback(state.repo, targets);
+  done();
   if (!r.ok) {
     (await import('./ui.js')).errorDialog(r.error, '되돌리기 실패');
   } else toast(`${targets.length}개 파일을 되돌렸습니다.`, 'ok');

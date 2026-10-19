@@ -145,6 +145,9 @@ async function load() {
   }
   dirty = false;
   setFilterChip();
+  const slow = setTimeout(() => {
+    $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
+  }, 250);
   try {
     const [list, br] = await Promise.all([git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order }), git('branches')]);
     allCommits = list;
@@ -159,6 +162,8 @@ async function load() {
     }
   } catch (e) {
     $('#logTable').innerHTML = `<div class="empty">히스토리를 불러오지 못했습니다: ${esc(e.message)}</div>`;
+  } finally {
+    clearTimeout(slow);
   }
 }
 

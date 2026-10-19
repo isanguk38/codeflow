@@ -1,6 +1,6 @@
 // 고급 화면: Reflog, Bisect, Submodule, Worktree, Git LFS, 정리(Clean), 커밋 서명
 import { $, h, esc, fmtDate, modal, promptDialog, confirmDialog, choiceDialog, toast, errorDialog } from './ui.js';
-import { state, git, op, onRefresh, refresh } from './state.js';
+import { state, git, op, onRefresh, refresh, busy } from './state.js';
 
 const SECTIONS = [
   { key: 'reflog', label: 'Reflog', ico: '↺', desc: 'HEAD 이동 기록 — 잃어버린 커밋 되살리기' },
@@ -369,7 +369,9 @@ RENDER.clean = async (el) => {
     const paths = items.filter((p) => checks.get(p).checked);
     if (!paths.length) return;
     if (!(await confirmDialog(`${paths.length}개 항목을 휴지통으로 이동합니다.`, { danger: true, okLabel: '정리', detail: paths.join('\n') }))) return;
+    const done = busy('정리');
     const r = await window.api.git.cleanApply(state.repo, paths);
+    done();
     if (!r.ok) errorDialog(r.error);
     else toast(`${paths.length}개 항목을 정리했습니다.`, 'ok');
     refresh();

@@ -18,15 +18,57 @@ export async function git(name, ...args) {
   return r.data;
 }
 
-let busyCount = 0;
-export const isBusy = () => busyCount > 0;
+// ---------- 진행 표시 ----------
+// 작업 중에는 상단 진행 막대 + 툴바의 "OO 중... N초" + 누른 버튼의 회전 표시를 보여준다.
+const tasks = []; // { label, start }
+let busyTimer = null;
+export const isBusy = () => tasks.length > 0;
+
+// 작업 이름 → 그 작업을 시작한 버튼 (버튼에 회전 표시 + 중복 클릭 막기)
+const TASK_BUTTONS = {
+  Fetch: ['#fetchBtn'],
+  Pull: ['#pullBtn'],
+  Push: ['#pushBtn', '#btnCommitPush'],
+  커밋: ['#btnCommit', '#btnCommitPush'],
+  '커밋 수정': ['#btnCommit', '#btnCommitPush'],
+};
+
+function renderBusy() {
+  const on = tasks.length > 0;
+  document.body.classList.toggle('is-busy', on);
+  $('#busy').hidden = !on;
+  if (!on) {
+    clearInterval(busyTimer);
+    busyTimer = null;
+    return;
+  }
+  const t = tasks[tasks.length - 1];
+  const sec = Math.floor((Date.now() - tasks[0].start) / 1000);
+  $('#busyText').textContent = `${t.label} 중...${sec >= 1 ? ` ${sec}초` : ''}${tasks.length > 1 ? ` (+${tasks.length - 1})` : ''}`;
+  if (!busyTimer) busyTimer = setInterval(renderBusy, 1000);
+}
+
+function setButtons(label, loading) {
+  for (const sel of TASK_BUTTONS[label] || []) {
+    const b = document.querySelector(sel);
+    if (!b) continue;
+    b.classList.toggle('loading', loading);
+    b.disabled = loading;
+  }
+}
+
 export function busy(text) {
-  busyCount++;
-  $('#busy').hidden = false;
-  $('#busyText').textContent = text || '작업 중...';
+  const task = { label: (text || '작업').replace(/(\.\.\.|…)$/, ''), start: Date.now() };
+  tasks.push(task);
+  setButtons(task.label, true);
+  renderBusy();
+  let ended = false;
   return () => {
-    busyCount = Math.max(0, busyCount - 1);
-    if (!busyCount) $('#busy').hidden = true;
+    if (ended) return;
+    ended = true;
+    tasks.splice(tasks.indexOf(task), 1);
+    if (!tasks.some((t) => t.label === task.label)) setButtons(task.label, false);
+    renderBusy();
   };
 }
 
@@ -38,6 +80,10 @@ export const FAILED = Symbol('failed');
 
 // 사용자 작업 실행 래퍼: 진행 표시 → 실행 → 오류 표시 → 새로고침
 export async function op(label, fn, { success, refresh: doRefresh = true, smart = true } = {}) {
+  if (tasks.some((t) => t.label === label)) {
+    toast(`${label} 이(가) 이미 진행 중입니다. 잠시만 기다려 주세요.`, 'warn');
+    return FAILED;
+  }
   const done = busy(label);
   try {
     const result = await fn();
@@ -53,6 +99,7 @@ export async function op(label, fn, { success, refresh: doRefresh = true, smart 
     setStatusMsg(`${label} 완료 (${new Date().toLocaleTimeString()})`);
     return result;
   } catch (e) {
+    done();
     setStatusMsg(`${label} 실패`);
     const handled = await handleKnownError(label, e, fn, smart);
     if (!handled) errorDialog(e.message, `${label} 실패`);
