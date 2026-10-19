@@ -6,9 +6,20 @@
   "main": "src/main/main.js",
   "author": "isanguk38",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/isanguk38/codeflow.git"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "diff": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.isanguk38.codeflow",
@@ -30,13 +41,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "isanguk38",
+      "repo": "codeflow",
+      "releaseType": "release"
     }
-  },
-  "dependencies": {
-    "diff": "^5.2.0"
-  },
-  "devDependencies": {
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8"
   }
 }

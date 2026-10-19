@@ -60,3 +60,12 @@ src/
 ```
 
 서버가 필요 없습니다. 모든 작업은 PC 에 설치된 `git` 을 실행해서 처리하고, GitHub 같은 원격 저장소와는 git 이 직접 통신합니다. 로그인은 Git for Windows 에 포함된 Git Credential Manager 가 처리합니다.
+
+## 릴리즈
+
+`package.json` 의 `version` 을 올리고 같은 번호의 태그를 Push 하면, GitHub Actions 가 Windows 설치 파일을 빌드해서 Releases 페이지에 올립니다.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
