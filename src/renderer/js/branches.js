@@ -81,6 +81,7 @@ export function branchMenuItems(b, kind) {
       '-',
       { label: `'${b.name}' 을(를) '${cur}' 에 병합`, disabled: !cur, onClick: () => mergeInto(b.name) },
       { label: `'${cur}' 을(를) '${b.name}' 위로 리베이스`, disabled: !cur, onClick: () => rebaseOnto(b.name) },
+      { label: `현재 브랜치(${cur})와 비교`, disabled: !cur, onClick: async () => (await import('./compare.js')).openCompare(cur, b.name) },
       '-',
       { label: '이름 변경...', onClick: () => rename(b.name) },
       { label: '삭제', danger: true, onClick: () => remove(b) },
@@ -94,6 +95,7 @@ export function branchMenuItems(b, kind) {
       '-',
       { label: `'${b.name}' 을(를) '${cur}' 에 병합`, disabled: !cur, onClick: () => mergeInto(b.name) },
       { label: `'${cur}' 을(를) '${b.name}' 위로 리베이스`, disabled: !cur, onClick: () => rebaseOnto(b.name) },
+      { label: `현재 브랜치(${cur})와 비교`, disabled: !cur, onClick: async () => (await import('./compare.js')).openCompare(cur, b.name) },
       '-',
       { label: '원격 브랜치 삭제', danger: true, onClick: () => removeRemote(b) },
     ];
@@ -104,6 +106,7 @@ export function branchMenuItems(b, kind) {
     { label: '체크아웃', onClick: () => checkout(b.name) },
     { label: '여기서 새 브랜치...', onClick: () => newBranch(b.name) },
     { label: `'${cur}' 에 병합`, disabled: !cur, onClick: () => mergeInto(b.name) },
+        { label: `현재 브랜치(${cur})와 비교`, disabled: !cur, onClick: async () => (await import('./compare.js')).openCompare(cur, b.name) },
     '-',
     {
       label: '태그 삭제',

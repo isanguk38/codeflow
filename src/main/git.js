@@ -16,7 +16,7 @@ class GitError extends Error {
   }
 }
 
-function run(cwd, args, { allowFail = false, input, raw = false } = {}) {
+function run(cwd, args, { allowFail = false, input, raw = false, env: extraEnv } = {}) {
   return new Promise((resolve, reject) => {
     const fullArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args];
     let child;
@@ -32,6 +32,7 @@ function run(cwd, args, { allowFail = false, input, raw = false } = {}) {
           GIT_MERGE_AUTOEDIT: 'no',
           LC_ALL: 'C.UTF-8',
           LANG: 'C.UTF-8',
+          ...(extraEnv || {}),
         },
       });
     } catch (e) {
@@ -131,6 +132,25 @@ async function status(repo) {
     result.files.push(file);
   }
   result.state = await repoState(repo);
+  const bisectLog = path.join(await gitDir(repo), 'BISECT_LOG');
+  result.bisect = fs.existsSync(bisectLog);
+  if (result.bisect) {
+    const m = fs.readFileSync(bisectLog, 'utf8').match(/# first bad commit: \[([0-9a-f]+)\] (.*)/);
+    if (m) result.bisectFound = { hash: m[1], subject: m[2] };
+    else {
+      // 로그에 결과 줄이 없어도, bad 와 good 사이에 남은 후보가 bad 하나뿐이면 찾은 것이다
+      const refs = (await run(repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/bisect'], { allowFail: true })).stdout.split('\n').filter(Boolean);
+      const bad = refs.find((l) => l.startsWith('refs/bisect/bad '))?.split(' ')[1];
+      const goods = refs.filter((l) => l.startsWith('refs/bisect/good')).map((l) => l.split(' ')[1]);
+      if (bad && goods.length) {
+        const left = (await run(repo, ['rev-list', bad, '--not', ...goods], { allowFail: true })).stdout.split('\n').filter(Boolean);
+        if (left.length === 1) {
+          const subj = (await run(repo, ['log', '-1', '--format=%s', bad], { allowFail: true })).stdout.trim();
+          result.bisectFound = { hash: bad, subject: subj };
+        }
+      }
+    }
+  }
   result.hasHead = await hasHead(repo);
   if (result.detached) {
     const h = await run(repo, ['rev-parse', '--short', 'HEAD'], { allowFail: true });
@@ -198,16 +218,101 @@ async function commitFilePair(repo, hash, file) {
 
 // ---------- 커밋 ----------
 
-async function commit(repo, { message, paths, amend }) {
+async function commit(repo, { message, paths, amend, partial, sign }) {
+  const partialPaths = Object.keys(partial || {});
+  if (partialPaths.length && (await hasHead(repo)) && !(await repoState(repo))) {
+    // 줄 단위 부분 커밋: 인덱스를 HEAD 로 맞춘 뒤 선택한 줄만 인덱스에 적용하고 인덱스 전체를 커밋한다.
+    await run(repo, ['reset', '-q']);
+    const full = (paths || []).filter((p) => !partialPaths.includes(p));
+    if (full.length) await run(repo, ['add', '-A', '--', ...full]);
+    for (const p of partialPaths) {
+      const fresh = await fileHunks(repo, p);
+      if (fresh.raw !== partial[p].raw) throw new GitError(`'${p}' 파일이 선택 이후에 변경되었습니다. 줄을 다시 선택하세요.`);
+      const patch = buildPatch(fresh, new Set(partial[p].selected));
+      if (patch) await run(repo, ['apply', '--cached', '--recount', '--whitespace=nowarn', '-'], { input: patch });
+    }
+    const staged = await run(repo, ['diff', '--cached', '--quiet'], { allowFail: true });
+    if (staged.code === 0 && !amend) throw new GitError('커밋할 변경이 선택되지 않았습니다.');
+    const args = message ? ['commit', '-F', '-'] : ['commit', '--no-edit'];
+    if (amend) args.push('--amend');
+    if (sign) args.push('-S');
+    await run(repo, args, message ? { input: message } : {});
+    return;
+  }
   if (paths && paths.length) {
     await run(repo, ['add', '-A', '--', ...paths]);
   }
   const args = message ? ['commit', '-F', '-'] : ['commit', '--no-edit'];
   if (amend) args.push('--amend');
+  if (sign) args.push('-S');
   // 병합 중에는 일부 파일만 커밋(partial commit)할 수 없으므로 pathspec 을 붙이지 않는다.
   const partialAllowed = (await hasHead(repo)) && !(await repoState(repo));
   if (paths && paths.length && partialAllowed) args.push('--', ...paths);
   await run(repo, args, message ? { input: message } : {});
+}
+
+// 작업 파일과 HEAD 의 차이를 덩어리(hunk)/줄 단위로 나눈다 (부분 커밋용)
+async function fileHunks(repo, file) {
+  const r = await run(repo, ['diff', 'HEAD', '--no-color', '--no-ext-diff', '-U3', '--', file]);
+  const raw = r.stdout;
+  const lines = raw.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const header = [];
+  const hunks = [];
+  let cur = null;
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
+      cur = { header: line, oldStart: +m[1], newStart: +m[3], context: m[5] || '', lines: [] };
+      hunks.push(cur);
+    } else if (cur) {
+      cur.lines.push({ t: line[0] || ' ', s: line.slice(1) });
+    } else header.push(line);
+  }
+  const binary = header.some((l) => l.startsWith('Binary files'));
+  return { raw, header, hunks, binary };
+}
+
+// 선택한 줄(id: "덩어리번호:줄번호")만 담은 패치를 만든다.
+// 선택하지 않은 '-' 줄은 그대로 두고(문맥), 선택하지 않은 '+' 줄은 버린다.
+function buildPatch(diff, selected) {
+  let body = '';
+  let any = false;
+  diff.hunks.forEach((hk, hi) => {
+    const out = [];
+    let changed = false;
+    let lastKept = true;
+    hk.lines.forEach((ln, li) => {
+      const id = `${hi}:${li}`;
+      if (ln.t === '\\') {
+        if (lastKept) out.push('\\' + ln.s);
+        return;
+      }
+      if (ln.t === ' ') {
+        out.push(' ' + ln.s);
+        lastKept = true;
+      } else if (ln.t === '-') {
+        if (selected.has(id)) {
+          out.push('-' + ln.s);
+          changed = true;
+        } else out.push(' ' + ln.s);
+        lastKept = true;
+      } else if (ln.t === '+') {
+        if (selected.has(id)) {
+          out.push('+' + ln.s);
+          changed = true;
+          lastKept = true;
+        } else lastKept = false;
+      }
+    });
+    if (changed) {
+      any = true;
+      body += `@@ -${hk.oldStart},1 +${hk.newStart},1 @@\n` + out.join('\n') + '\n';
+    }
+  });
+  if (!any) return null;
+  const header = diff.header.filter((l) => /^(diff --git|index |--- |\+\+\+ |old mode|new mode)/.test(l));
+  return header.join('\n') + '\n' + body;
 }
 
 async function lastCommitMessage(repo) {
@@ -297,8 +402,8 @@ function parseNameStatus(out) {
 }
 
 async function commitDetails(repo, hash) {
-  const r = await run(repo, ['show', '-s', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%cn${FS}%ct${FS}%D${FS}%B`, hash]);
-  const [h, parents, author, email, at, committer, ct, refs, body] = r.stdout.split(FS);
+  const r = await run(repo, ['show', '-s', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%cn${FS}%ct${FS}%D${FS}%G?${FS}%GS${FS}%B`, hash]);
+  const [h, parents, author, email, at, committer, ct, refs, sig, signer, body] = r.stdout.split(FS);
   const parentList = parents ? parents.split(' ') : [];
   let files;
   if (parentList.length) {
@@ -316,6 +421,7 @@ async function commitDetails(repo, hash) {
     commitTime: +ct * 1000,
     refs: refs ? refs.split(', ').filter(Boolean) : [],
     body: (body || '').trim(),
+    signature: sig && sig !== 'N' ? { status: sig, signer } : null,
     files,
   };
 }
@@ -380,8 +486,8 @@ async function renameBranch(repo, oldName, newName) {
 }
 
 // 병합/리베이스 등은 충돌이 나도 예외 대신 결과를 돌려준다(충돌 해결 화면으로 넘어가기 위함).
-async function mergeLike(repo, args) {
-  const r = await run(repo, args, { allowFail: true });
+async function mergeLike(repo, args, opts = {}) {
+  const r = await run(repo, args, { allowFail: true, ...opts });
   if (r.code === 0) return { ok: true, output: (r.stdout + r.stderr).trim() };
   const st = await repoState(repo);
   const s = await status(repo);
@@ -494,9 +600,10 @@ async function stashList(repo) {
     });
 }
 
-async function stashSave(repo, message) {
+async function stashSave(repo, message, paths) {
   const args = ['stash', 'push', '-u'];
   if (message) args.push('-m', message);
+  if (paths && paths.length) args.push('--', ...paths);
   await run(repo, args);
 }
 
@@ -564,11 +671,21 @@ async function deleteTag(repo, name) {
 
 async function config(repo) {
   const get = async (k) => (await run(repo, ['config', '--get', k], { allowFail: true })).stdout.trim();
-  return { userName: await get('user.name'), userEmail: await get('user.email') };
+  return {
+    userName: await get('user.name'),
+    userEmail: await get('user.email'),
+    signingKey: await get('user.signingkey'),
+    gpgFormat: (await get('gpg.format')) || 'openpgp',
+  };
 }
 
-async function setConfig(repo, { userName, userEmail, global }) {
+async function setConfig(repo, { userName, userEmail, global, signingKey, gpgFormat }) {
   const scope = global ? ['--global'] : [];
+  if (signingKey !== undefined) {
+    if (signingKey) await run(repo, ['config', ...scope, 'user.signingkey', signingKey]);
+    else await run(repo, ['config', ...scope, '--unset', 'user.signingkey'], { allowFail: true });
+  }
+  if (gpgFormat !== undefined) await run(repo, ['config', ...scope, 'gpg.format', gpgFormat]);
   if (userName !== undefined) await run(repo, ['config', ...scope, 'user.name', userName]);
   if (userEmail !== undefined) await run(repo, ['config', ...scope, 'user.email', userEmail]);
 }
@@ -583,6 +700,17 @@ async function addToGitignore(repo, pattern) {
 module.exports = {
   GitError,
   run,
+  FS,
+  RS,
+  hasHead,
+  repoState,
+  gitDir,
+  showBlob,
+  pack,
+  parseNameStatus,
+  mergeLike,
+  fileHunks,
+  buildPatch,
   topLevel,
   status,
   workingFilePair,

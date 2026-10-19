@@ -1423,3 +1423,51 @@ input[type='checkbox'] {
   opacity: 0;
   transform: translateX(20px);
 }
+
+/* ---------- 부분 커밋 (줄 선택) ---------- */
+.diff-table col.c-chk {
+  width: 28px;
+}
+.diff-table td.chk {
+  text-align: center;
+  padding: 0;
+}
+.diff-table tr.r-hunk td {
+  background: var(--bg2);
+  color: var(--text2);
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+}
+.diff-table tr.r-hunk td.chk {
+  padding: 0;
+}
+.hunk-ctx {
+  color: var(--text3);
+}
+.diff-table tr.line-sel {
+  cursor: pointer;
+}
+.diff-table tr.line-sel.off td {
+  opacity: 0.45;
+}
+.diff-table tr.line-sel:hover td.code {
+  filter: brightness(1.15);
+}
+.hint-sel {
+  color: var(--accent2);
+  font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+}
+.tb-btn.on {
+  background: var(--sel);
+  color: var(--accent2);
+}
+.file-row .partial-mark {
+  font-size: 10px;
+  color: var(--accent2);
+  border: 1px dashed currentColor;
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}

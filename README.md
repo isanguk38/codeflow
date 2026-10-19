@@ -33,6 +33,21 @@ npm run dist
 
 스마트 모드: 로컬 변경 때문에 체크아웃/Pull 이 막히면 변경 사항을 자동으로 보관했다가 작업 후 다시 적용합니다.
 
+### 고급 기능
+
+| 기능 | 위치 |
+| --- | --- |
+| 여러 프로젝트 탭 | 상단 탭 바. ＋ 로 새 탭, Ctrl+Tab 전환, Ctrl+W 닫기, 드래그로 순서 변경. 열어 둔 탭은 다음 실행 때 복원 |
+| 부분 커밋 (줄 단위) | 커밋 화면 → 파일 선택 → Diff 위 `☐ 줄 선택` → 커밋할 줄/덩어리만 체크 |
+| 대화형 리베이스 | 히스토리 → 커밋 우클릭 → `여기부터 커밋 편집`. 순서 변경, 메시지 수정, 합치기(squash/fixup), 삭제 |
+| 여러 커밋 한 번에 | 히스토리에서 Ctrl/Shift+클릭으로 여러 개 선택 → 우클릭: 체리픽, Revert, 하나로 합치기, 두 커밋 비교 |
+| Blame | 커밋 화면 파일 우클릭 → `Blame`, 또는 히스토리 상세 파일 우클릭 → `이 리비전에서 Blame` |
+| Reflog | 히스토리 상단 `↺ Reflog` 또는 고급 → Reflog. 잃어버린 커밋을 브랜치로 되살리기 / 리셋 |
+| 브랜치·커밋 비교 | 브랜치 메뉴 → `현재 브랜치와 비교`, 커밋 우클릭 → `HEAD 와 비교` |
+| Bisect | 정상이던 커밋 우클릭 → `Bisect 시작`, 이후 상단 배너에서 정상/문제 있음 표시 |
+| Submodule / Worktree / Git LFS / 정리(Clean) / 커밋 서명 | 왼쪽 `⚒ 고급` 화면 |
+| 일부 파일만 Stash | 파일 우클릭 → `이 파일만 보관`, 또는 체크한 파일만 보관 |
+
 ## 단축키
 
 | 키 | 동작 |
@@ -46,6 +61,8 @@ npm run dist
 | Alt+9 / Alt+0 | 히스토리 / 커밋 화면 |
 | F7 / Shift+F7 | 다음/이전 변경 위치 (Diff) |
 | F5 | 새로고침 |
+| Ctrl+Tab / Ctrl+Shift+Tab | 다음/이전 프로젝트 탭 |
+| Ctrl+W | 현재 탭 닫기 |
 | Ctrl+Alt+Z | 선택 파일 되돌리기 |
 
 ## 구조
@@ -53,7 +70,8 @@ npm run dist
 ```
 src/
   main/main.js       Electron 메인 프로세스 (창, IPC)
-  main/git.js        git CLI 래퍼 (모든 Git 작업)
+  main/git.js        git CLI 래퍼 (기본 Git 작업)
+  main/git-extra.js  고급 Git 작업 (대화형 리베이스, Blame, Reflog, Bisect 등)
   main/channels.js   렌더러에서 호출 가능한 Git 함수 목록
   preload.js         window.api 로 안전하게 노출
   renderer/          화면 (HTML/CSS/바닐라 JS 모듈)

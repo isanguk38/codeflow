@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
   <title>CodeFlow</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles-advanced.css" />
 </head>
 <body>
   <div id="app">
@@ -26,6 +27,7 @@
       <button id="settingsBtn" class="tb-btn icon" title="설정">⚙</button>
     </header>
 
+    <div id="tabbar" class="tabbar"></div>
     <div id="opBanner" class="op-banner" hidden></div>
 
     <div id="body">
@@ -33,12 +35,14 @@
         <button class="rail-btn active" data-view="changes" title="커밋 (Ctrl+K)"><span class="ico">✎</span><span>커밋</span><span id="changeCount" class="rail-count" hidden></span></button>
         <button class="rail-btn" data-view="log" title="히스토리 (Alt+9)"><span class="ico">◷</span><span>히스토리</span></button>
         <button class="rail-btn" data-view="stash" title="스태시"><span class="ico">⧉</span><span>스태시</span></button>
+        <button class="rail-btn" data-view="advanced" title="고급 기능: Reflog, Bisect, Submodule, Worktree, LFS, 정리, 서명"><span class="ico">⚒</span><span>고급</span></button>
       </nav>
 
       <main id="views">
         <section id="view-changes" class="view active"></section>
         <section id="view-log" class="view"></section>
         <section id="view-stash" class="view"></section>
+        <section id="view-advanced" class="view"></section>
         <section id="welcome" class="view"></section>
       </main>
     </div>

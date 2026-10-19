@@ -1,11 +1,125 @@
 // 저장소 열기/만들기/복제, 시작 화면, 설정
-import { $, h, esc, menuAt, modal, promptDialog, confirmDialog, toast, errorDialog } from './ui.js';
+import { $, h, esc, menuAt, modal, promptDialog, confirmDialog, toast, errorDialog, contextMenu } from './ui.js';
 import { state, git, op, refresh } from './state.js';
 
 let onOpened = () => {};
 export const setOnOpened = (fn) => (onOpened = fn);
 
-export async function openRepo(dir) {
+// ---------- 탭 (여러 프로젝트 동시에 열기) ----------
+export const tabs = []; // { path, view, status }
+const norm = (p) => p.replace(/[\\/]+$/, '').toLowerCase();
+
+function saveTabs() {
+  window.api.setSettings({ tabs: tabs.map((t) => t.path), last: state.repo });
+}
+
+export function renderTabs() {
+  const bar = $('#tabbar');
+  bar.innerHTML = '';
+  bar.hidden = !tabs.length;
+  for (const t of tabs) {
+    const active = state.repo && norm(t.path) === norm(state.repo);
+    const st = t.status;
+    const n = st?.files?.length || 0;
+    const el = h(
+      'div',
+      { class: `tab ${active ? 'active' : ''}`, title: t.path, draggable: 'true' },
+      h('span', { class: 'tab-name', text: repoName(t.path) }),
+      st ? h('span', { class: `tab-branch ${st.detached ? 'detached' : ''}`, text: st.detached ? `HEAD` : st.branch || '' }) : null,
+      n ? h('span', { class: 'tab-count', text: n, title: `변경 ${n}개` }) : null,
+      st?.state || st?.files?.some((f) => f.status === 'conflict') ? h('span', { class: 'tab-warn', text: '⚠', title: '병합/리베이스 진행 중' }) : null,
+      h('button', { class: 'tab-x', text: '✕', title: '탭 닫기 (Ctrl+W)', onclick: (e) => (e.stopPropagation(), closeTab(t.path)) })
+    );
+    el.onclick = () => !active && switchTab(t.path);
+    el.onauxclick = (e) => e.button === 1 && closeTab(t.path);
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      contextMenu(e.clientX, e.clientY, [
+        { label: '탭 닫기', onClick: () => closeTab(t.path) },
+        { label: '다른 탭 모두 닫기', disabled: tabs.length < 2, onClick: () => tabs.filter((x) => x !== t).forEach((x) => closeTab(x.path)) },
+        '-',
+        { label: '탐색기에서 열기', onClick: () => window.api.openPath(t.path) },
+        { label: '경로 복사', onClick: () => window.api.copy(t.path) },
+      ]);
+    };
+    // 드래그로 탭 순서 바꾸기
+    el.ondragstart = (e) => e.dataTransfer.setData('text/tab', t.path);
+    el.ondragover = (e) => e.preventDefault();
+    el.ondrop = (e) => {
+      e.preventDefault();
+      const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
+      const to = tabs.indexOf(t);
+      if (from < 0 || from === to) return;
+      tabs.splice(to, 0, tabs.splice(from, 1)[0]);
+      saveTabs();
+      renderTabs();
+    };
+    bar.append(el);
+  }
+  const add = h('button', { class: 'tab-add', text: '＋', title: '프로젝트 열기 (새 탭)' });
+  add.onclick = () => repoMenu(add);
+  bar.append(add);
+}
+
+export function cacheTabStatus(s) {
+  const t = tabs.find((x) => state.repo && norm(x.path) === norm(state.repo));
+  if (t) {
+    t.status = s;
+    renderTabs();
+  }
+}
+
+export async function switchTab(dir) {
+  const { isBusy } = await import('./state.js');
+  if (isBusy()) return toast('진행 중인 작업이 끝난 뒤에 탭을 바꿀 수 있습니다.', 'warn');
+  const cur = tabs.find((x) => state.repo && norm(x.path) === norm(state.repo));
+  if (cur) cur.view = state.view;
+  const t = tabs.find((x) => norm(x.path) === norm(dir));
+  if (!t) return;
+  if (!(await window.api.exists(t.path))) {
+    toast(`폴더를 찾을 수 없습니다: ${t.path}`, 'error');
+    return closeTab(t.path);
+  }
+  state.repo = t.path;
+  state.status = null;
+  state.view = t.view || 'changes';
+  saveTabs();
+  renderTabs();
+  onOpened();
+}
+
+export async function closeTab(dir) {
+  const { isBusy } = await import('./state.js');
+  const i = tabs.findIndex((x) => norm(x.path) === norm(dir));
+  if (i < 0) return;
+  const closingActive = state.repo && norm(state.repo) === norm(dir);
+  if (closingActive && isBusy()) return toast('진행 중인 작업이 끝난 뒤에 닫을 수 있습니다.', 'warn');
+  tabs.splice(i, 1);
+  if (closingActive) {
+    const next = tabs[i] || tabs[i - 1];
+    if (next) {
+      state.repo = null;
+      return switchTab(next.path).then(saveTabs);
+    }
+    state.repo = null;
+    state.status = null;
+    saveTabs();
+    renderTabs();
+    onOpened();
+    return;
+  }
+  saveTabs();
+  renderTabs();
+}
+
+export function cycleTab(dir) {
+  if (tabs.length < 2) return;
+  const i = tabs.findIndex((x) => norm(x.path) === norm(state.repo));
+  switchTab(tabs[(i + dir + tabs.length) % tabs.length].path);
+}
+
+// 저장소를 탭으로 연다. 이미 열려 있으면 그 탭으로 이동.
+export async function openRepo(dir, { activate = true } = {}) {
   const r = await window.api.openRepo(dir);
   if (!r.ok) {
     if (r.notRepo) {
@@ -15,10 +129,14 @@ export async function openRepo(dir) {
     }
     return errorDialog(r.error);
   }
-  state.repo = r.data;
   state.settings = await window.api.getSettings();
-  onOpened();
+  if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'changes' });
+  if (activate) return switchTab(r.data);
+  saveTabs();
+  renderTabs();
 }
+
+export const openRepoInNewTab = (dir) => openRepo(dir);
 
 export async function pickAndOpen() {
   const dir = await window.api.pickFolder('Git 저장소 폴더 선택');
@@ -91,19 +209,19 @@ function repoName(p) {
 
 export async function repoMenu(anchor) {
   const s = await window.api.getSettings();
-  const recent = (s.recent || []).filter((r) => r !== state.repo);
+  const recent = (s.recent || []).filter((r) => !tabs.some((t) => norm(t.path) === norm(r)));
   const remotes = state.repo ? await git('remotes').catch(() => []) : [];
   const web = remotes.map((r) => ({ ...r, web: toWebUrl(r.url) })).filter((r) => r.web);
   menuAt(anchor, [
     state.repo ? { header: state.repo } : null,
-    { label: '폴더 열기...', hint: 'Ctrl+O', onClick: pickAndOpen },
+    { label: '폴더 열기 (새 탭)...', hint: 'Ctrl+O', onClick: pickAndOpen },
     { label: '저장소 복제 (Clone)...', onClick: cloneDialog },
     { label: '새 저장소 만들기 (Init)...', onClick: () => initRepo() },
     state.repo ? '-' : null,
     state.repo ? { label: '탐색기에서 열기', onClick: () => window.api.openPath(state.repo) } : null,
     ...web.map((r) => ({ label: `웹에서 보기 (${r.name})`, onClick: () => window.api.openExternal(r.web) })),
     recent.length ? '-' : null,
-    recent.length ? { header: '최근 저장소' } : null,
+    recent.length ? { header: '최근 저장소 (새 탭으로 열기)' } : null,
     ...recent.map((r) => ({ label: repoName(r), hint: r, onClick: () => openRepo(r) })),
   ]);
 }

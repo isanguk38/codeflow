@@ -1,7 +1,7 @@
 {
   "name": "codeflow",
   "productName": "CodeFlow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "보기 쉽고 사용하기 간편한 Git 형상관리 데스크톱 툴",
   "main": "src/main/main.js",
   "author": "isanguk38",

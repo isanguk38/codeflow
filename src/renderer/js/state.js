@@ -19,6 +19,7 @@ export async function git(name, ...args) {
 }
 
 let busyCount = 0;
+export const isBusy = () => busyCount > 0;
 export function busy(text) {
   busyCount++;
   $('#busy').hidden = false;
@@ -36,7 +37,7 @@ export function setStatusMsg(msg) {
 export const FAILED = Symbol('failed');
 
 // 사용자 작업 실행 래퍼: 진행 표시 → 실행 → 오류 표시 → 새로고침
-export async function op(label, fn, { success, refresh: doRefresh = true } = {}) {
+export async function op(label, fn, { success, refresh: doRefresh = true, smart = true } = {}) {
   const done = busy(label);
   try {
     const result = await fn();
@@ -53,7 +54,7 @@ export async function op(label, fn, { success, refresh: doRefresh = true } = {})
     return result;
   } catch (e) {
     setStatusMsg(`${label} 실패`);
-    const handled = await handleKnownError(label, e, fn);
+    const handled = await handleKnownError(label, e, fn, smart);
     if (!handled) errorDialog(e.message, `${label} 실패`);
     return FAILED;
   } finally {
@@ -63,8 +64,14 @@ export async function op(label, fn, { success, refresh: doRefresh = true } = {})
 }
 
 // 로컬 변경사항 때문에 실패하면 IntelliJ 의 "Smart checkout" 처럼 stash → 실행 → 복원을 제안한다.
-async function handleKnownError(label, e, fn) {
+async function handleKnownError(label, e, fn, smart = true) {
   const msg = e.message || '';
+  if (!smart && /would be overwritten|Please commit your changes or stash them|uncommitted changes|unstaged changes/i.test(msg)) {
+    errorDialog(`${msg}
+
+커밋하지 않은 변경 사항이 있어서 진행할 수 없습니다. 먼저 커밋하거나 보관(Stash)하세요.`, `${label} 실패`);
+    return true;
+  }
   if (/would be overwritten by (checkout|merge)|Please commit your changes or stash them|cannot (pull|rebase) with (rebase|uncommitted)|You have unstaged changes|contains uncommitted changes/i.test(msg)) {
     const ok = await confirmDialog(
       '로컬 변경 사항과 겹쳐서 작업을 진행할 수 없습니다.\n변경 사항을 임시 보관(stash)한 뒤 작업을 실행하고, 끝나면 자동으로 다시 적용할까요? (스마트 모드)',

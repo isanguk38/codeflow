@@ -206,3 +206,72 @@ export function emptyDiff(container, text = '파일을 선택하면 변경 내�
   container.innerHTML = '';
   container.append(h('div', { class: 'empty big', text }));
 }
+
+// 부분 커밋용: 덩어리(hunk)/줄 단위 체크박스 보기
+// data: fileHunks 결과, sel: 선택된 줄 id Set ("덩어리:줄"), onChange(sel) 호출
+export function renderHunks(container, data, sel, onChange, { title, actions = [] } = {}) {
+  container.innerHTML = '';
+  const bar = h('div', { class: 'diff-bar' });
+  const stats = h('span', { class: 'diff-stats' });
+  bar.append(h('span', { class: 'diff-title', text: title || '' }), stats, h('span', { class: 'tb-spacer' }), ...actions);
+  container.append(bar);
+  const scroller = h('div', { class: 'diff-scroll', tabindex: '0' });
+  container.append(scroller);
+  if (data.binary || !data.hunks.length) {
+    scroller.append(h('div', { class: 'empty', text: data.binary ? '바이너리 파일은 줄 단위로 선택할 수 없습니다.' : '변경된 줄이 없습니다.' }));
+    return;
+  }
+  const changeIds = (hi) => data.hunks[hi].lines.map((l, li) => (l.t === '+' || l.t === '-' ? `${hi}:${li}` : null)).filter(Boolean);
+  const all = data.hunks.flatMap((_, hi) => changeIds(hi));
+  const updateStats = () => {
+    stats.innerHTML = `<span class="hint-sel">${all.filter((id) => sel.has(id)).length} / ${all.length} 줄 선택됨</span>`;
+  };
+
+  const table = h('table', { class: 'diff-table unified hunks' });
+  table.innerHTML = '<colgroup><col class="c-chk"><col class="c-ln"><col class="c-ln"><col class="c-code"></colgroup>';
+  const tbody = h('tbody');
+  table.append(tbody);
+  const draw = () => {
+    let html = '';
+    data.hunks.forEach((hk, hi) => {
+      const ids = changeIds(hi);
+      const n = ids.filter((id) => sel.has(id)).length;
+      html += `<tr class="r-hunk" data-hunk="${hi}"><td class="chk"><input type="checkbox" ${n === ids.length ? 'checked' : ''} data-ind="${n > 0 && n < ids.length ? 1 : 0}"></td><td colspan="3">${esc(hk.header.replace(/^(@@.*?@@).*$/, '$1'))} <span class="hunk-ctx">${esc(hk.context)}</span></td></tr>`;
+      let o = hk.oldStart;
+      let nn = hk.newStart;
+      hk.lines.forEach((ln, li) => {
+        const id = `${hi}:${li}`;
+        if (ln.t === '\\') return;
+        if (ln.t === ' ') {
+          html += `<tr class="r-eq"><td class="chk"></td><td class="ln">${o++}</td><td class="ln">${nn++}</td><td class="code"> ${esc(ln.s) || ' '}</td></tr>`;
+          return;
+        }
+        const cls = ln.t === '+' ? 'add' : 'del';
+        const on = sel.has(id);
+        html += `<tr class="r-${cls} line-sel ${on ? '' : 'off'}" data-id="${id}"><td class="chk ${cls}"><input type="checkbox" ${on ? 'checked' : ''}></td><td class="ln ${cls}">${ln.t === '-' ? o++ : ''}</td><td class="ln ${cls}">${ln.t === '+' ? nn++ : ''}</td><td class="code ${cls}">${ln.t}${esc(ln.s) || ' '}</td></tr>`;
+      });
+    });
+    tbody.innerHTML = html;
+    tbody.querySelectorAll('input[data-ind="1"]').forEach((i) => (i.indeterminate = true));
+    updateStats();
+  };
+  tbody.addEventListener('click', (e) => {
+    const hunkRow = e.target.closest('tr.r-hunk');
+    if (hunkRow) {
+      const ids = changeIds(+hunkRow.dataset.hunk);
+      const allOn = ids.every((id) => sel.has(id));
+      ids.forEach((id) => (allOn ? sel.delete(id) : sel.add(id)));
+    } else {
+      const row = e.target.closest('tr.line-sel');
+      if (!row) return;
+      const id = row.dataset.id;
+      sel.has(id) ? sel.delete(id) : sel.add(id);
+    }
+    const top = scroller.scrollTop;
+    draw();
+    scroller.scrollTop = top;
+    onChange(sel, all);
+  });
+  draw();
+  scroller.append(table);
+}

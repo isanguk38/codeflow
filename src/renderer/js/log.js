@@ -14,8 +14,11 @@ let commits = [];
 let graph = [];
 let selectedHash = null;
 let selectedFile = null;
+const multi = new Set(); // Ctrl/Shift 로 여러 개 선택한 커밋
+let anchor = null;
 let root;
 let dirty = true;
+let boundRepo = null;
 
 export function initLog() {
   root = $('#view-log');
@@ -27,6 +30,8 @@ export function initLog() {
         <input class="input small" id="logSearch" placeholder="커밋 메시지 검색" spellcheck="false">
         <span id="logFilterInfo" class="filter-chip" hidden></span>
         <span class="tb-spacer"></span>
+        <span class="hint-sel" id="logMultiInfo"></span>
+        <button class="tb-btn small" id="logReflog" title="HEAD 이동 기록 (실수로 잃어버린 커밋 찾기)">↺ Reflog</button>
         <button class="tb-btn small" id="logReload" title="새로고침">⟳</button>
       </div>
       <div class="log-table-wrap" id="logTableWrap">
@@ -52,6 +57,7 @@ export function initLog() {
     }, 300);
   };
   $('#logReload').onclick = () => load();
+  $('#logReflog').onclick = async () => (await import('./advanced.js')).openReflog();
   $('#logTableWrap').addEventListener('keydown', onKey);
   emptyDiff($('#logDetailDiff'), '커밋을 선택하고 파일을 클릭하면 변경 내용이 표시됩니다.');
 
@@ -84,6 +90,17 @@ function setFilterChip() {
 
 async function load() {
   if (!state.repo) return;
+  if (boundRepo !== state.repo) {
+    // 다른 저장소(탭)로 바뀌면 필터/선택 초기화
+    boundRepo = state.repo;
+    filter.ref = null;
+    filter.file = null;
+    filter.search = '';
+    $('#logSearch').value = '';
+    selectedHash = null;
+    selectedFile = null;
+    multi.clear();
+  }
   dirty = false;
   setFilterChip();
   try {
@@ -287,13 +304,34 @@ function renderTable() {
   $('#logMore')?.addEventListener('click', loadMore);
   table.onclick = (e) => {
     const row = e.target.closest('.log-row');
-    if (row) selectCommit(commits[+row.dataset.i].hash);
+    if (!row) return;
+    const i = +row.dataset.i;
+    const c = commits[i];
+    if (e.ctrlKey) {
+      if (!multi.size && selectedHash) multi.add(selectedHash);
+      multi.has(c.hash) ? multi.delete(c.hash) : multi.add(c.hash);
+      anchor = i;
+    } else if (e.shiftKey && anchor !== null) {
+      multi.clear();
+      const [a, b] = [Math.min(anchor, i), Math.max(anchor, i)];
+      for (let k = a; k <= b; k++) multi.add(commits[k].hash);
+    } else {
+      multi.clear();
+      anchor = i;
+    }
+    if (multi.size === 1) multi.clear();
+    selectCommit(c.hash);
   };
   table.oncontextmenu = (e) => {
     const row = e.target.closest('.log-row');
     if (!row) return;
     e.preventDefault();
     const c = commits[+row.dataset.i];
+    if (multi.size > 1 && multi.has(c.hash)) {
+      contextMenu(e.clientX, e.clientY, multiMenu());
+      return;
+    }
+    multi.clear();
     selectCommit(c.hash);
     contextMenu(e.clientX, e.clientY, commitMenu(c));
   };
@@ -323,7 +361,66 @@ function commitMenu(c) {
     { label: '커밋 되돌리기 (Revert) — 반대 커밋 생성', onClick: () => revert(c) },
     { label: `현재 브랜치(${cur})에 체리픽`, onClick: () => cherryPick(c) },
     { label: `'${cur}' 을(를) 여기로 리셋...`, danger: true, onClick: () => resetTo(c) },
+    '-',
+    { label: '여기부터 커밋 편집 (대화형 리베이스)...', onClick: async () => (await import('./rebase.js')).openInteractiveRebase(c.hash) },
+    { label: '현재 작업 위치(HEAD)와 비교', onClick: async () => (await import('./compare.js')).openCompare(c.hash, 'HEAD') },
+    '-',
+    ...bisectItems(c),
   ];
+}
+
+function bisectItems(c) {
+  if (state.status?.bisect) {
+    return [
+      { header: 'Bisect (문제 커밋 찾기) 진행 중' },
+      { label: '이 커밋은 정상 (good)', onClick: () => bisectMark('good', c) },
+      { label: '이 커밋은 문제 있음 (bad)', onClick: () => bisectMark('bad', c) },
+    ];
+  }
+  return [{ label: 'Bisect 시작: 이 커밋은 정상, HEAD 는 문제', onClick: async () => (await import('./advanced.js')).startBisect('HEAD', c.hash) }];
+}
+
+async function bisectMark(term, c) {
+  // 표시하려는 커밋으로 먼저 이동한 상태여야 정확하므로, 현재 HEAD 가 아니면 체크아웃 후 표시한다
+  const { markBisect } = await import('./advanced.js');
+  markBisect(term, c.hash);
+}
+
+// 여러 커밋 선택 시 메뉴
+function multiMenu() {
+  const sel = commits.filter((c) => multi.has(c.hash)); // 최신 → 오래된 순서
+  const hasMerge = sel.some((c) => c.parents.length > 1);
+  const idx = sel.map((c) => commits.indexOf(c));
+  const contiguous = idx.every((v, k) => k === 0 || v === idx[k - 1] + 1);
+  const cur = state.status?.branch || 'HEAD';
+  return [
+    { header: `${sel.length}개 커밋 선택됨` },
+    { label: `현재 브랜치(${cur})에 체리픽 (${sel.length}개, 오래된 순서로)`, disabled: hasMerge, onClick: () => cherryPickMany(sel) },
+    { label: `모두 되돌리기 (Revert ${sel.length}개, 최신 순서로)`, disabled: hasMerge, onClick: () => revertMany(sel) },
+    { label: `하나로 합치기 (Squash ${sel.length}개)...`, disabled: hasMerge || !contiguous, onClick: () => squashSelected(sel) },
+    sel.length === 2 ? { label: '두 커밋 비교', onClick: async () => (await import('./compare.js')).openCompare(sel[1].hash, sel[0].hash) } : null,
+    '-',
+    { label: '해시 모두 복사', onClick: () => window.api.copy(sel.map((c) => c.hash).join('\n')) },
+    hasMerge ? { header: '병합 커밋이 포함되어 일부 작업을 할 수 없습니다' } : null,
+  ];
+}
+
+async function cherryPickMany(sel) {
+  const list = [...sel].reverse();
+  const ok = await confirmDialog(`${list.length}개 커밋을 현재 브랜치에 차례로 복사합니다.`, { title: '여러 커밋 체리픽', okLabel: '체리픽', detail: list.map((c) => `${c.hash.slice(0, 8)} ${c.subject}`).join('\n') });
+  if (ok) op('체리픽', () => git('cherryPickMany', list.map((c) => c.hash)), { success: `${list.length}개 커밋 체리픽 완료` });
+}
+
+async function revertMany(sel) {
+  const ok = await confirmDialog(`${sel.length}개 커밋의 변경을 취소하는 되돌리기 커밋을 각각 만듭니다.`, { title: '여러 커밋 되돌리기', okLabel: '되돌리기', detail: sel.map((c) => `${c.hash.slice(0, 8)} ${c.subject}`).join('\n') });
+  if (ok) op('Revert', () => git('revertMany', sel.map((c) => c.hash)), { success: `${sel.length}개 커밋을 되돌렸습니다.` });
+}
+
+async function squashSelected(sel) {
+  const oldest = sel[sel.length - 1];
+  const preset = {};
+  sel.slice(0, -1).forEach((c) => (preset[c.hash] = 'squash'));
+  (await import('./rebase.js')).openInteractiveRebase(oldest.hash, preset);
 }
 
 async function revert(c) {
@@ -358,9 +455,19 @@ async function createTag(c) {
 
 // ---------- 커밋 상세 ----------
 
+function markRows() {
+  document.querySelectorAll('#logTable .log-row').forEach((r) => {
+    const hsh = commits[+r.dataset.i]?.hash;
+    r.classList.toggle('sel', hsh === selectedHash);
+    r.classList.toggle('multi', multi.has(hsh));
+  });
+  const info = $('#logMultiInfo');
+  if (info) info.textContent = multi.size > 1 ? `${multi.size}개 커밋 선택됨 (우클릭: 일괄 작업)` : '';
+}
+
 async function selectCommit(hash, scroll = true) {
   selectedHash = hash;
-  document.querySelectorAll('#logTable .log-row').forEach((r) => r.classList.toggle('sel', commits[+r.dataset.i]?.hash === hash));
+  markRows();
   const box = $('#logDetailFiles');
   let d;
   try {
@@ -378,7 +485,8 @@ async function selectCommit(hash, scroll = true) {
     d.body.includes('\n') ? h('pre', { class: 'ci-body', text: d.body.split('\n').slice(1).join('\n').trim() }) : null,
     h('div', { class: 'ci-meta', html: `<b>${esc(d.author)}</b> &lt;${esc(d.email)}&gt;<br>${esc(fmtDate(d.time))}` }),
     h('div', { class: 'ci-meta mono', html: `${d.hash}${d.parents.length ? `<br>부모: ${d.parents.map((p) => p.slice(0, 8)).join(', ')}` : ''}` }),
-    d.refs.length ? h('div', { class: 'ci-refs', html: refBadges(d.refs) }) : null
+    d.refs.length ? h('div', { class: 'ci-refs', html: refBadges(d.refs) }) : null,
+    d.signature ? h('div', { class: `ci-sig ${d.signature.status === 'G' ? 'good' : 'warn'}`, text: `${d.signature.status === 'G' ? '✔ 서명 확인됨' : `⚠ 서명 상태: ${d.signature.status}`}${d.signature.signer ? ` (${d.signature.signer})` : ''}` }) : null
   );
   box.append(info, h('div', { class: 'group-header', html: `변경된 파일 <span class="count">${d.files.length}개</span>${d.parents.length > 1 ? ' <span class="count">(첫 번째 부모 기준)</span>' : ''}` }));
   const list = h('div', { class: 'detail-files' });
@@ -401,6 +509,7 @@ async function selectCommit(hash, scroll = true) {
       contextMenu(e.clientX, e.clientY, [
         { label: '변경 내용 보기', onClick: () => row.click() },
         { label: '파일 히스토리 보기', onClick: () => showFileHistory(f.path) },
+        { label: '이 리비전에서 Blame', disabled: f.status === 'deleted', onClick: async () => (await import('./blame.js')).openBlame(f.path, d.hash) },
         { label: '경로 복사', onClick: () => window.api.copy(f.path) },
       ]);
     };
@@ -422,4 +531,17 @@ async function showCommitDiff(d, f) {
   } catch (e) {
     emptyDiff($('#logDetailDiff'), e.message);
   }
+}
+
+// 다른 화면(Blame, 비교, Reflog)에서 특정 커밋으로 이동
+export async function showCommit(hash) {
+  filter.ref = null;
+  filter.file = null;
+  document.querySelector('.rail-btn[data-view="log"]')?.click();
+  await load();
+  const full = commits.find((c) => c.hash.startsWith(hash));
+  multi.clear();
+  await selectCommit(full ? full.hash : hash);
+  if (full) $(`#logTable .log-row[data-i="${commits.indexOf(full)}"]`)?.scrollIntoView({ block: 'center' });
+  else toast('목록에 보이지 않는 커밋입니다 (다른 브랜치에 없거나 더 오래된 커밋). 상세 내용만 표시합니다.', 'info', 5000);
 }

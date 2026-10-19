@@ -1,12 +1,13 @@
 // 앱 진입점: 레이아웃/툴바/단축키/뷰 전환
 import { $, $$, h, toast } from './ui.js';
-import { state, refresh, onRefresh } from './state.js';
+import { state, refresh, onRefresh, op, git } from './state.js';
 import { initChanges, focusCommitMessage } from './changes.js';
 import { initLog, activateLog } from './log.js';
 import { initStash, activateStash } from './stash.js';
 import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
-import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened } from './repo.js';
+import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
+import { initAdvanced, activateAdvanced } from './advanced.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -18,6 +19,7 @@ function setView(view) {
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'log') activateLog();
   if (view === 'stash') activateStash();
+  if (view === 'advanced') activateAdvanced();
 }
 
 function applyTheme(theme) {
@@ -25,6 +27,7 @@ function applyTheme(theme) {
 }
 
 function updateChrome(s) {
+  cacheTabStatus(s);
   const name = state.repo.split(/[\\/]/).filter(Boolean).pop();
   $('#repoName').textContent = name;
   document.title = `${name} - CodeFlow`;
@@ -54,10 +57,43 @@ function updateChrome(s) {
       conflicts ? h('button', { class: 'btn small primary', text: '충돌 해결...', onclick: openConflicts }) : h('button', { class: 'btn small primary', text: `계속 (${label} 완료)`, onclick: continueOperation }),
       h('button', { class: 'btn small danger', text: `${label} 중단`, onclick: abortOperation })
     );
+  } else if (s.bisect && s.bisectFound) {
+    banner.hidden = false;
+    banner.innerHTML = '';
+    banner.append(
+      h('span', { class: 'ob-ico', text: '🎯' }),
+      h('span', { text: `Bisect 완료 — 문제가 처음 생긴 커밋: ${s.bisectFound.hash.slice(0, 8)} ${s.bisectFound.subject}` }),
+      h('span', { class: 'tb-spacer' }),
+      h('button', { class: 'btn small', text: '커밋 보기', onclick: async () => (await import('./log.js')).showCommit(s.bisectFound.hash) }),
+      h('button', { class: 'btn small primary', text: 'Bisect 종료', onclick: () => op('Bisect 종료', () => git('bisectReset'), { success: '원래 브랜치로 돌아왔습니다.' }) })
+    );
+  } else if (s.bisect) {
+    banner.hidden = false;
+    banner.innerHTML = '';
+    const mark = async (term) => (await import('./advanced.js')).markBisect(term);
+    banner.append(
+      h('span', { class: 'ob-ico', text: '⌖' }),
+      h('span', { text: `Bisect 진행 중 — 현재 커밋(${s.headShort || ''})을 확인하고 결과를 표시하세요.` }),
+      h('span', { class: 'tb-spacer' }),
+      h('button', { class: 'btn small primary', text: '✔ 정상', onclick: () => mark('good') }),
+      h('button', { class: 'btn small danger', text: '✘ 문제 있음', onclick: () => mark('bad') }),
+      h('button', { class: 'btn small', text: '건너뛰기', onclick: () => mark('skip') }),
+      h('button', { class: 'btn small', text: '상세...', onclick: async () => (await import('./advanced.js')).showSection('bisect') })
+    );
   } else banner.hidden = true;
 }
 
 async function onOpened() {
+  if (!state.repo) {
+    $('#app').classList.add('no-repo');
+    $('#repoName').textContent = '저장소 열기';
+    document.title = 'CodeFlow';
+    $('#opBanner').hidden = true;
+    $('#statusPath').textContent = '';
+    await renderWelcome();
+    setView('welcome');
+    return;
+  }
   $('#app').classList.remove('no-repo');
   setView(state.view === 'welcome' ? 'changes' : state.view);
   await refresh();
@@ -69,6 +105,7 @@ async function main() {
   initChanges();
   initLog();
   initStash();
+  initAdvanced();
   setOnOpened(onOpened);
   onRefresh(updateChrome);
 
@@ -117,6 +154,12 @@ async function main() {
     } else if (e.altKey && e.key === '0') {
       e.preventDefault();
       setView('changes');
+    } else if (e.ctrlKey && e.key === 'Tab') {
+      e.preventDefault();
+      cycleTab(e.shiftKey ? -1 : 1);
+    } else if (e.ctrlKey && k === 'w') {
+      e.preventDefault();
+      state.repo && closeTab(state.repo);
     }
   });
 
@@ -124,9 +167,13 @@ async function main() {
   window.api.onFocus(() => refresh());
 
   await renderWelcome();
-  if (state.settings.last && (await window.api.exists(state.settings.last))) {
-    await openRepo(state.settings.last);
-  } else {
+  // 지난번에 열어 둔 탭 복원
+  const saved = (state.settings.tabs || (state.settings.last ? [state.settings.last] : [])).filter(Boolean);
+  for (const p of saved) if (await window.api.exists(p)) await openRepo(p, { activate: false });
+  const last = tabs.find((t) => t.path === state.settings.last) || tabs[0];
+  if (last) await openRepo(last.path);
+  else {
+    renderTabs();
     $('#app').classList.add('no-repo');
     setView('welcome');
   }

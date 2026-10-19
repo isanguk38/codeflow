@@ -1,0 +1,458 @@
+/* 탭, 대화형 리베이스, Blame, 비교, 고급 화면 */
+
+/* ---------- 탭 ---------- */
+.tabbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 8px 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.tabbar::-webkit-scrollbar {
+  height: 4px;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 6px 12px;
+  border-radius: 7px 7px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text2);
+  border: 1px solid transparent;
+  border-bottom: 0;
+  max-width: 280px;
+}
+.tab:hover {
+  background: var(--bg3);
+}
+.tab.active {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+  margin-bottom: -1px;
+  padding-bottom: 7px;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.tab-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-branch {
+  font-size: 11px;
+  color: var(--text3);
+}
+.tab-branch.detached {
+  color: var(--warn);
+}
+.tab-count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  padding: 0 5px;
+  line-height: 15px;
+}
+.tab-warn {
+  color: var(--warn);
+}
+.tab-x {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text3);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 1px 4px;
+  opacity: 0;
+}
+.tab:hover .tab-x,
+.tab.active .tab-x {
+  opacity: 1;
+}
+.tab-x:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+.tab-add {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text2);
+  font-size: 15px;
+  padding: 3px 10px 6px;
+  border-radius: 6px;
+}
+.tab-add:hover {
+  background: var(--bg3);
+}
+
+/* ---------- 히스토리 다중 선택 ---------- */
+.log-row.multi {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.ci-sig {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.ci-sig.good {
+  color: var(--ok);
+}
+.ci-sig.warn {
+  color: var(--warn);
+}
+
+/* ---------- 대화형 리베이스 ---------- */
+.rb-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  max-height: 55vh;
+  overflow: auto;
+}
+.rb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  white-space: nowrap;
+}
+.rb-row.member {
+  padding-left: 28px;
+}
+.rb-row.a-drop .rb-subj {
+  text-decoration: line-through;
+  color: var(--text3);
+}
+.rb-row.a-reword .rb-subj {
+  color: var(--accent2);
+}
+.rb-row.a-squash,
+.rb-row.a-fixup {
+  background: color-mix(in srgb, var(--c-renamed) 8%, transparent);
+}
+.rb-row.bad {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+.rb-move {
+  display: flex;
+  flex-direction: column;
+}
+.rb-move .tb-btn {
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 11px;
+}
+.rb-action {
+  width: 210px;
+  padding: 3px 6px;
+}
+.rb-row .hash {
+  font-family: var(--mono);
+  color: var(--text3);
+  font-size: 12px;
+}
+.rb-subj {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rb-meta {
+  color: var(--text3);
+  font-size: 12px;
+}
+.rb-warn {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 2px 10px 4px 40px;
+}
+.rb-msg-wrap {
+  padding: 4px 10px 8px 40px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.rb-msg-label {
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 3px;
+}
+.rb-msg {
+  width: 100%;
+  min-height: 60px;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 7px;
+  resize: vertical;
+  outline: none;
+}
+.rb-msg:focus {
+  border-color: var(--accent);
+}
+.rb-summary {
+  margin-top: 8px;
+  color: var(--text2);
+}
+select.input {
+  cursor: pointer;
+}
+
+/* ---------- Blame ---------- */
+.blame-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+.blame-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.blame-scroll {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+}
+.blame-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  user-select: text;
+}
+.blame-table td {
+  padding: 0 8px;
+  vertical-align: top;
+}
+.blame-table td.ln {
+  text-align: right;
+  color: var(--d-ln);
+}
+.blame-table td.code {
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 4;
+}
+.blame-table tr.bl-first td {
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.bl-info {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+  font-size: 12px;
+  border-right: 1px solid var(--border);
+}
+.bl-hash {
+  color: var(--accent2);
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.bl-hash:hover {
+  text-decoration: underline;
+}
+.bl-date,
+.bl-new {
+  color: var(--text3);
+}
+.bl-info.age-new {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.bl-info.age-11 { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.bl-info.age-10 { background: color-mix(in srgb, var(--accent) 27%, transparent); }
+.bl-info.age-9 { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.bl-info.age-8 { background: color-mix(in srgb, var(--accent) 21%, transparent); }
+.bl-info.age-7 { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.bl-info.age-6 { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.bl-info.age-5 { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bl-info.age-4 { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.bl-info.age-3 { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.bl-info.age-2 { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.bl-info.age-1 { background: color-mix(in srgb, var(--accent) 3%, transparent); }
+
+/* ---------- 비교 ---------- */
+.compare {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+.cmp-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+  height: 32%;
+  min-height: 120px;
+}
+.cmp-top > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.cmp-commits {
+  overflow: auto;
+  flex: 1;
+}
+.cmp-commits .push-item:hover {
+  background: var(--hover);
+}
+.cmp-bottom {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.cmp-files {
+  width: 320px;
+  overflow: auto;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+}
+.cmp-diff {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ---------- 고급 화면 ---------- */
+.adv-nav {
+  width: 250px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  padding: 8px 6px;
+  overflow: auto;
+}
+.adv-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.adv-item small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.adv-item:hover {
+  background: var(--hover);
+}
+.adv-item.active {
+  background: var(--sel);
+}
+.adv-item .ti-ico {
+  font-size: 15px;
+  margin-top: 1px;
+}
+.adv-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 22px;
+  min-width: 0;
+}
+.adv-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.adv-title h3 {
+  margin: 0;
+}
+.adv-content h4 {
+  margin: 16px 0 6px;
+}
+.adv-help {
+  color: var(--text2);
+  margin: 6px 0 12px;
+  max-width: 900px;
+}
+.adv-help a {
+  color: var(--accent2);
+}
+.adv-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  max-width: 900px;
+  margin-bottom: 12px;
+}
+.adv-card > .btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.adv-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  max-height: 60vh;
+  overflow: auto;
+}
+.adv-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  white-space: nowrap;
+}
+.adv-row:hover {
+  background: var(--hover);
+}
+.adv-row .hash {
+  font-family: var(--mono);
+  color: var(--text3);
+  font-size: 12px;
+}
+.rl-sel {
+  color: var(--accent2);
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 60px;
+}
+.rl-action {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.row-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.row-btns .input {
+  max-width: 360px;
+}
+.sm-state {
+  font-size: 11px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 5px;
+  color: var(--ok);
+}
+.sm-state.s-uninitialized,
+.sm-state.s-modified {
+  color: var(--warn);
+}
+.sm-state.s-conflict {
+  color: var(--danger);
+}
+.bisect-found {
+  font-size: 15px;
+}
