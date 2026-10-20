@@ -9,7 +9,5 @@ module.exports = [
   'addToGitignore', 'fileHunks',
   // 고급 (git-extra.js)
   'rebaseCommits', 'interactiveRebase', 'cherryPickMany', 'revertMany', 'blame', 'reflog', 'compareRefs', 'refFilePair',
-  'submodules', 'submoduleUpdate', 'submoduleSync', 'submoduleAdd', 'worktrees', 'worktreeAdd', 'worktreeRemove',
-  'worktreePrune', 'lfsInfo', 'lfsInstall', 'lfsTrack', 'lfsUntrack', 'lfsPull', 'bisectInfo', 'bisectStart',
-  'bisectMark', 'bisectReset', 'cleanPreview', 'cleanApply',
+  'bisectReset',
 ];

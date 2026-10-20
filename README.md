@@ -43,11 +43,9 @@ npm run dist
 | 대화형 리베이스 | 히스토리 → 커밋 우클릭 → `여기부터 커밋 편집`. 순서 변경, 메시지 수정, 합치기(squash/fixup), 삭제 |
 | 여러 커밋 한 번에 | 히스토리에서 Ctrl/Shift+클릭으로 여러 개 선택 → 우클릭: 체리픽, Revert, 하나로 합치기(합칠 커밋 확인 + 메시지 입력), 두 커밋 비교 |
 | Blame | 커밋 화면 파일 우클릭 → `Blame`, 또는 히스토리 상세 파일 우클릭 → `이 리비전에서 Blame` |
-| Reflog | 히스토리 상단 `↺ Reflog` 또는 고급 → Reflog. 잃어버린 커밋을 브랜치로 되살리기 / 리셋 |
+| Reflog | 히스토리 상단 `↺ Reflog`. 잃어버린 커밋을 브랜치로 되살리기 / 리셋 |
 | 브랜치 골라 보기 | 히스토리 왼쪽 `모든 브랜치`(기본, VS Code 의 All) 옆 `☐ 골라 보기` 를 누르면 체크박스가 나타나 원하는 브랜치들만 묶어 보기. 그냥 클릭하면 그 브랜치만. 원격이 지워진 로컬 브랜치는 `원격 삭제됨` 표시 |
 | 브랜치·커밋 비교 | 브랜치 메뉴 → `현재 브랜치와 비교`, 커밋 우클릭 → `HEAD 와 비교` |
-| Bisect | 정상이던 커밋 우클릭 → `Bisect 시작`, 이후 상단 배너에서 정상/문제 있음 표시 |
-| Submodule / Worktree / Git LFS / 정리(Clean) / 커밋 서명 | 왼쪽 `⚒ 고급` 화면 |
 | 일부 파일만 Stash | 파일 우클릭 → `이 파일만 보관`, 또는 체크한 파일만 보관 |
 
 ## 단축키
@@ -73,7 +71,7 @@ npm run dist
 src/
   main/main.js       Electron 메인 프로세스 (창, IPC)
   main/git.js        git CLI 래퍼 (기본 Git 작업)
-  main/git-extra.js  고급 Git 작업 (대화형 리베이스, Blame, Reflog, Bisect 등)
+  main/git-extra.js  고급 Git 작업 (대화형 리베이스, Blame, Reflog, 비교)
   main/channels.js   렌더러에서 호출 가능한 Git 함수 목록
   preload.js         window.api 로 안전하게 노출
   renderer/          화면 (HTML/CSS/바닐라 JS 모듈)

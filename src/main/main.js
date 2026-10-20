@@ -50,7 +50,7 @@ function createWindow() {
   });
 }
 
-const gitMethods = require('./channels').filter((n) => n !== 'rollback' && n !== 'cleanApply');
+const gitMethods = require('./channels').filter((n) => n !== 'rollback');
 
 for (const name of gitMethods) {
   ipcMain.handle(`git:${name}`, async (_e, repo, ...args) => {
@@ -67,21 +67,6 @@ ipcMain.handle('git:rollback', async (_e, repo, files) => {
     const toTrash = await git.rollback(repo, files);
     for (const p of toTrash) {
       if (fs.existsSync(p)) await shell.trashItem(p);
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message || String(err) };
-  }
-});
-
-// 추적되지 않는 파일 정리: 영구 삭제 대신 휴지통으로 보낸다.
-ipcMain.handle('git:cleanApply', async (_e, repo, paths) => {
-  try {
-    const root = path.resolve(repo);
-    for (const p of paths) {
-      const abs = path.resolve(root, p);
-      if (!abs.startsWith(root + path.sep)) continue;
-      if (fs.existsSync(abs)) await shell.trashItem(abs);
     }
     return { ok: true };
   } catch (err) {

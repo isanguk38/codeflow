@@ -1,4 +1,4 @@
-// 고급 Git 기능: 대화형 리베이스, 여러 커밋 처리, Blame, Reflog, 비교, Submodule, Worktree, LFS, Bisect, Clean
+// 고급 Git 기능: 대화형 리베이스, 여러 커밋 처리, Blame, Reflog, 비교
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -144,143 +144,11 @@ async function refFilePair(repo, a, b, file) {
   return { left: pack(left), right: pack(right), leftLabel: `${a}: ${oldPath}`, rightLabel: `${b}: ${file.path}` };
 }
 
-// ---------- Submodule ----------
-
-async function submodules(repo) {
-  if (!fs.existsSync(path.join(repo, '.gitmodules'))) return [];
-  const st = await run(repo, ['submodule', 'status', '--recursive'], { allowFail: true });
-  const urls = {};
-  const cfg = await run(repo, ['config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.(url|path)$'], { allowFail: true });
-  const byName = {};
-  for (const l of cfg.stdout.split('\n').filter(Boolean)) {
-    const m = l.match(/^submodule\.(.+)\.(url|path) (.+)$/);
-    if (m) (byName[m[1]] ||= {})[m[2]] = m[3];
-  }
-  for (const v of Object.values(byName)) if (v.path) urls[v.path] = v.url;
-  return st.stdout
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => {
-      const flag = l[0];
-      const [sha, p, ...rest] = l.slice(1).trim().split(' ');
-      return {
-        path: p,
-        sha,
-        describe: rest.join(' ').replace(/[()]/g, ''),
-        url: urls[p] || '',
-        state: { ' ': 'ok', '-': 'uninitialized', '+': 'modified', U: 'conflict' }[flag] || 'ok',
-      };
-    });
-}
-
-const submoduleUpdate = (repo) => run(repo, ['submodule', 'update', '--init', '--recursive']).then((r) => (r.stdout + r.stderr).trim());
-const submoduleSync = (repo) => run(repo, ['submodule', 'sync', '--recursive']).then((r) => (r.stdout + r.stderr).trim());
-const submoduleAdd = (repo, url, p) => run(repo, ['submodule', 'add', url, p]).then((r) => (r.stdout + r.stderr).trim());
-
-// ---------- Worktree ----------
-
-async function worktrees(repo) {
-  const r = await run(repo, ['worktree', 'list', '--porcelain']);
-  const list = [];
-  let cur = null;
-  for (const l of r.stdout.split('\n')) {
-    if (l.startsWith('worktree ')) {
-      cur = { path: path.normalize(l.slice(9)), branch: null, detached: false };
-      list.push(cur);
-    } else if (!cur) continue;
-    else if (l.startsWith('HEAD ')) cur.head = l.slice(5);
-    else if (l.startsWith('branch ')) cur.branch = l.slice(7).replace('refs/heads/', '');
-    else if (l === 'detached') cur.detached = true;
-    else if (l === 'bare') cur.bare = true;
-    else if (l.startsWith('locked')) cur.locked = true;
-    else if (l.startsWith('prunable')) cur.prunable = true;
-  }
-  const main = path.normalize(repo).toLowerCase();
-  list.forEach((w) => (w.current = w.path.toLowerCase() === main));
-  return list;
-}
-
-async function worktreeAdd(repo, { dir, branch, newBranch }) {
-  const args = ['worktree', 'add'];
-  if (newBranch) args.push('-b', newBranch, dir, ...(branch ? [branch] : []));
-  else args.push(dir, branch);
-  await run(repo, args);
-}
-const worktreeRemove = (repo, dir, force) => run(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), dir]);
-const worktreePrune = (repo) => run(repo, ['worktree', 'prune']);
-
-// ---------- Git LFS ----------
-
-async function lfsInfo(repo) {
-  const v = await run(repo, ['lfs', 'version'], { allowFail: true });
-  if (v.code !== 0) return { installed: false };
-  const t = await run(repo, ['lfs', 'track'], { allowFail: true });
-  const patterns = t.stdout
-    .split('\n')
-    .map((l) => l.match(/^\s+(\S.*?)\s+\((.+)\)$/))
-    .filter(Boolean)
-    .map((m) => ({ pattern: m[1], source: m[2] }));
-  const f = await run(repo, ['lfs', 'ls-files', '--size'], { allowFail: true });
-  const files = f.stdout
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => {
-      const m = l.match(/^([0-9a-f]+) ([*-]) (.+?)(?: \((.+)\))?$/);
-      return m ? { oid: m[1], downloaded: m[2] === '*', path: m[3], size: m[4] || '' } : { path: l };
-    });
-  const hooks = fs.existsSync(path.join(await gitDir(repo), 'hooks', 'pre-push')) && fs.readFileSync(path.join(await gitDir(repo), 'hooks', 'pre-push'), 'utf8').includes('lfs');
-  return { installed: true, version: v.stdout.trim(), patterns, files, hooks };
-}
-const lfsInstall = (repo) => run(repo, ['lfs', 'install', '--local']).then((r) => r.stdout.trim());
-const lfsTrack = (repo, pattern) => run(repo, ['lfs', 'track', pattern]).then((r) => r.stdout.trim());
-const lfsUntrack = (repo, pattern) => run(repo, ['lfs', 'untrack', pattern]).then((r) => r.stdout.trim());
-const lfsPull = (repo) => run(repo, ['lfs', 'pull']).then((r) => (r.stdout + r.stderr).trim());
-
 // ---------- Bisect ----------
 
-async function bisectInfo(repo) {
-  const gd = await gitDir(repo);
-  if (!fs.existsSync(path.join(gd, 'BISECT_LOG'))) return { active: false };
-  const refs = await run(repo, ['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/bisect'], { allowFail: true });
-  const good = [];
-  let bad = null;
-  for (const l of refs.stdout.split('\n').filter(Boolean)) {
-    const [name, sha] = l.split(' ');
-    if (name.endsWith('/bad')) bad = sha;
-    else if (name.includes('good')) good.push(sha);
-  }
-  const head = (await run(repo, ['rev-parse', 'HEAD'])).stdout.trim();
-  const log = (await run(repo, ['bisect', 'log'], { allowFail: true })).stdout;
-  const found = log.match(/# first bad commit: \[([0-9a-f]+)\] (.*)/);
-  const left = bad && good.length ? (await run(repo, ['rev-list', '--count', bad, '--not', ...good], { allowFail: true })).stdout.trim() : '';
-  return { active: true, good, bad, head, found: found ? { hash: found[1], subject: found[2] } : null, remaining: left };
-}
-
-async function bisectStart(repo, bad, good) {
-  const r = await run(repo, ['bisect', 'start', bad, good]);
-  return (r.stdout + r.stderr).trim();
-}
-async function bisectMark(repo, term, rev) {
-  if (!['good', 'bad', 'skip'].includes(term)) throw new GitError('잘못된 bisect 명령');
-  const r = await run(repo, ['bisect', term, ...(rev ? [rev] : [])]);
-  return (r.stdout + r.stderr).trim();
-}
+// 다른 도구에서 시작한 bisect 상태를 끝내기 위한 종료만 남겨 둔다
 async function bisectReset(repo) {
   await run(repo, ['bisect', 'reset']);
-}
-
-// ---------- Clean (추적되지 않는 파일 정리) ----------
-
-async function cleanPreview(repo, { ignored = false, dirs = true } = {}) {
-  const args = ['clean', '-n'];
-  if (dirs) args.push('-d');
-  if (ignored) args.push('-x');
-  const r = await run(repo, args);
-  return r.stdout
-    .split('\n')
-    .map((l) => l.match(/^Would remove (.+)$/))
-    .filter(Boolean)
-    .map((m) => m[1].replace(/\/$/, ''));
 }
 
 module.exports = {
@@ -292,22 +160,5 @@ module.exports = {
   reflog,
   compareRefs,
   refFilePair,
-  submodules,
-  submoduleUpdate,
-  submoduleSync,
-  submoduleAdd,
-  worktrees,
-  worktreeAdd,
-  worktreeRemove,
-  worktreePrune,
-  lfsInfo,
-  lfsInstall,
-  lfsTrack,
-  lfsUntrack,
-  lfsPull,
-  bisectInfo,
-  bisectStart,
-  bisectMark,
   bisectReset,
-  cleanPreview,
 };

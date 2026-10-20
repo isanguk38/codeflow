@@ -7,7 +7,6 @@ import { initStash, activateStash } from './stash.js';
 import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
-import { initAdvanced, activateAdvanced } from './advanced.js';
 import { startUpdateCheck } from './update.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
@@ -20,7 +19,6 @@ function setView(view) {
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'log') activateLog();
   if (view === 'stash') activateStash();
-  if (view === 'advanced') activateAdvanced();
 }
 
 function applyTheme(theme) {
@@ -58,28 +56,15 @@ function updateChrome(s) {
       conflicts ? h('button', { class: 'btn small primary', text: '충돌 해결...', onclick: openConflicts }) : h('button', { class: 'btn small primary', text: `계속 (${label} 완료)`, onclick: continueOperation }),
       h('button', { class: 'btn small danger', text: `${label} 중단`, onclick: abortOperation })
     );
-  } else if (s.bisect && s.bisectFound) {
-    banner.hidden = false;
-    banner.innerHTML = '';
-    banner.append(
-      h('span', { class: 'ob-ico', text: '🎯' }),
-      h('span', { text: `Bisect 완료 — 문제가 처음 생긴 커밋: ${s.bisectFound.hash.slice(0, 8)} ${s.bisectFound.subject}` }),
-      h('span', { class: 'tb-spacer' }),
-      h('button', { class: 'btn small', text: '커밋 보기', onclick: async () => (await import('./log.js')).showCommit(s.bisectFound.hash) }),
-      h('button', { class: 'btn small primary', text: 'Bisect 종료', onclick: () => op('Bisect 종료', () => git('bisectReset'), { success: '원래 브랜치로 돌아왔습니다.' }) })
-    );
   } else if (s.bisect) {
+    // 다른 도구에서 시작한 Bisect 상태에 갇히지 않도록 종료 버튼만 제공
     banner.hidden = false;
     banner.innerHTML = '';
-    const mark = async (term) => (await import('./advanced.js')).markBisect(term);
     banner.append(
-      h('span', { class: 'ob-ico', text: '⌖' }),
-      h('span', { text: `Bisect 진행 중 — 현재 커밋(${s.headShort || ''})을 확인하고 결과를 표시하세요.` }),
+      h('span', { class: 'ob-ico', text: '⚠' }),
+      h('span', { text: 'Bisect(문제 커밋 찾기) 상태입니다. 원래 브랜치로 돌아가려면 종료하세요.' }),
       h('span', { class: 'tb-spacer' }),
-      h('button', { class: 'btn small primary', text: '✔ 정상', onclick: () => mark('good') }),
-      h('button', { class: 'btn small danger', text: '✘ 문제 있음', onclick: () => mark('bad') }),
-      h('button', { class: 'btn small', text: '건너뛰기', onclick: () => mark('skip') }),
-      h('button', { class: 'btn small', text: '상세...', onclick: async () => (await import('./advanced.js')).showSection('bisect') })
+      h('button', { class: 'btn small primary', text: 'Bisect 종료', onclick: () => op('Bisect 종료', () => git('bisectReset'), { success: '원래 브랜치로 돌아왔습니다.' }) })
     );
   } else banner.hidden = true;
 }
@@ -122,7 +107,6 @@ async function main() {
   initChanges();
   initLog();
   initStash();
-  initAdvanced();
   setOnOpened(onOpened);
   onRefresh(updateChrome);
 

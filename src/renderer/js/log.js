@@ -94,7 +94,7 @@ export function initLog() {
       { label: `${viewOpt.dimOthers ? '✓ ' : '　'}현재 브랜치에 없는 커밋도 회색으로`, onClick: () => set('dimOthers', !viewOpt.dimOthers) },
     ]);
   };
-  $('#logReflog').onclick = async () => (await import('./advanced.js')).openReflog();
+  $('#logReflog').onclick = async () => (await import('./reflog.js')).openReflog();
   $('#logTableWrap').addEventListener('keydown', onKey);
   emptyDiff($('#logDetailDiff'), '커밋을 선택하고 파일을 클릭하면 변경 내용이 표시됩니다.');
 
@@ -596,26 +596,7 @@ function commitMenu(c) {
     '-',
     { label: '여기부터 커밋 편집 (대화형 리베이스)...', onClick: async () => (await import('./rebase.js')).openInteractiveRebase(c.hash) },
     { label: '현재 작업 위치(HEAD)와 비교', onClick: async () => (await import('./compare.js')).openCompare(c.hash, 'HEAD') },
-    '-',
-    ...bisectItems(c),
   ];
-}
-
-function bisectItems(c) {
-  if (state.status?.bisect) {
-    return [
-      { header: 'Bisect (문제 커밋 찾기) 진행 중' },
-      { label: '이 커밋은 정상 (good)', onClick: () => bisectMark('good', c) },
-      { label: '이 커밋은 문제 있음 (bad)', onClick: () => bisectMark('bad', c) },
-    ];
-  }
-  return [{ label: 'Bisect 시작: 이 커밋은 정상, HEAD 는 문제', onClick: async () => (await import('./advanced.js')).startBisect('HEAD', c.hash) }];
-}
-
-async function bisectMark(term, c) {
-  // 표시하려는 커밋으로 먼저 이동한 상태여야 정확하므로, 현재 HEAD 가 아니면 체크아웃 후 표시한다
-  const { markBisect } = await import('./advanced.js');
-  markBisect(term, c.hash);
 }
 
 // 여러 커밋 선택 시 메뉴

@@ -137,7 +137,6 @@ export async function openRepo(dir, { activate = true } = {}) {
   renderTabs();
 }
 
-export const openRepoInNewTab = (dir) => openRepo(dir);
 
 export async function pickAndOpen() {
   const dir = await window.api.pickFolder('Git 저장소 폴더 선택');
