@@ -19,8 +19,15 @@ function tsdkFor(root) {
   return { path: unpacked(path.join(path.dirname(require.resolve('typescript/package.json')), 'lib')), source: 'bundled' };
 }
 
+// Python: 앱에 포함된 Pyright (VS Code Pylance 의 무료 엔진)를 Electron 내장 Node 로 실행
+function pyrightCommand() {
+  const cli = unpacked(path.join(path.dirname(require.resolve('pyright/package.json')), 'langserver.index.js'));
+  return { cmd: process.execPath, args: [cli, '--stdio'], env: { ELECTRON_RUN_AS_NODE: '1', VSCODE_NLS_CONFIG: JSON.stringify({ locale: 'ko' }) } };
+}
+
 const LANGS = {
   typescript: tsServerCommand,
+  python: pyrightCommand,
 };
 
 class Server {

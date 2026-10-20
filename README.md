@@ -31,7 +31,7 @@ npm run dist
 | 스태시 | 작업 중인 변경 보관, 적용, 꺼내기, 삭제 |
 | 병합 | 병합 방식 선택: 기본 / 항상 병합 커밋(--no-ff) / 하나로 합치기(--squash) / Fast-forward 만(--ff-only), 병합 커밋 메시지 편집 |
 | 원격 | Fetch, Pull(병합 또는 리베이스), Push 전 커밋 목록 확인, 강제 Push(--force-with-lease) |
-| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript 오류 표시(한국어)·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리, 아래쪽 터미널 패널(PowerShell / 명령 프롬프트 / Git Bash, 여러 개, 프로젝트 폴더에서 시작) |
+| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript·Python 오류 표시(한국어)·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리, 아래쪽 터미널 패널(PowerShell / 명령 프롬프트 / Git Bash, 여러 개, 프로젝트 폴더에서 시작) |
 
 스마트 모드: 로컬 변경 때문에 체크아웃/Pull 이 막히면 변경 사항을 자동으로 보관했다가 작업 후 다시 적용합니다.
 
@@ -82,6 +82,7 @@ src/
   main/files.js      코드 화면 파일 작업
   main/lsp.js        언어 서버 실행/중계 (TypeScript 는 앱에 포함)
   main/terminal.js   터미널 (ConPTY 로 셸 실행)
+  main/python.js     Python 인터프리터 찾기
   preload.js         window.api 로 안전하게 노출
   renderer/          화면 (HTML/CSS/바닐라 JS 모듈)
 ```
@@ -90,7 +91,13 @@ src/
 
 ## 코드 화면의 오류 표시 (언어 서버)
 
-VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류를 표시합니다. TypeScript/JavaScript 언어 서버는 앱에 포함되어 있어 따로 설치할 것이 없고, 프로젝트에 `node_modules/typescript` 가 있으면 그 버전을, 없으면 앱에 포함된 버전을 씁니다. (Python, Java 등은 이후 '언어 팩' 으로 추가 예정)
+VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류를 표시합니다. 언어 서버는 모두 앱에 포함되어 있어 따로 설치할 것이 없습니다.
+
+| 언어 | 언어 서버 | 버전 기준 |
+| --- | --- | --- |
+| TypeScript / JavaScript | typescript-language-server | 프로젝트의 `node_modules/typescript`, 없으면 앱에 포함된 TypeScript |
+| Python | Pyright (Pylance 의 무료 엔진) | 상태 표시줄 `🐍 Python` 에서 고른 인터프리터. 처음엔 프로젝트의 `.venv`/`venv` → 시스템 Python 순으로 자동 선택. 열린 파일만 검사해 큰 프로젝트에서도 가볍게 동작 |
+| Java | 지원 안 함 | 언어 서버가 JDK 17 이상과 1~2GB 메모리를 요구하고 큰 프로젝트에서 느려서 제외. Java 파일은 편집과 문법 색칠만 가능하며 안내 문구가 표시됨 |
 
 ## 자동 업데이트
 

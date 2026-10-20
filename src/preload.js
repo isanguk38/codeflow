@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     onExit: (cb) => ipcRenderer.on('term:exit', (_e, id, code) => cb(id, code)),
   },
   paste: () => clipboard.readText(),
+  pythonInterpreters: (root) => ipcRenderer.invoke('python:interpreters', root),
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: (url) => ipcRenderer.invoke('update:install', url),

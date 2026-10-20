@@ -9,7 +9,24 @@ let openFileHook = async () => null; // 다른 파일로 이동할 때 (정의�
 let ensureModelHook = async () => null; // 다른 파일 모델 준비
 
 // Monaco 언어 id → 언어 서버 종류
-const LANG_OF = { typescript: 'typescript', javascript: 'typescript' };
+const LANG_OF = { typescript: 'typescript', javascript: 'typescript', python: 'python' };
+
+// 저장소별 Python 인터프리터 경로 (Pyright 가 설정을 물어보면 알려 준다)
+const pythonPaths = new Map();
+export function setPythonPath(repo, p) {
+  pythonPaths.set(repo.toLowerCase(), p);
+  const s = servers.get(`${repo.toLowerCase()}|python`);
+  if (s?.status === 'ready') s.notify('workspace/didChangeConfiguration', { settings: {} }); // 다시 설정을 물어보게 함
+}
+
+function configFor(server, section) {
+  if (server.lang !== 'python') return {};
+  const pythonPath = pythonPaths.get(server.repo.toLowerCase());
+  if (section === 'python') return pythonPath ? { pythonPath } : {};
+  // 열린 파일만 검사 (큰 프로젝트에서도 가볍게)
+  if (section === 'python.analysis') return { autoSearchPaths: true, useLibraryCodeForTypes: true, diagnosticMode: 'openFilesOnly', typeCheckingMode: 'standard' };
+  return {};
+}
 const LSP_LANGUAGE_ID = (model) => {
   const path = model.uri.path.toLowerCase();
   if (path.endsWith('.tsx')) return 'typescriptreact';
@@ -59,7 +76,7 @@ export function initLsp(m, { onDiagnostics, openFile, ensureModel }) {
     onDiagnosticsChanged();
   });
 
-  for (const lang of ['typescript', 'javascript']) registerProviders(lang);
+  for (const lang of ['typescript', 'javascript', 'python']) registerProviders(lang);
 }
 
 class Server {
@@ -136,7 +153,7 @@ class Server {
     // 서버가 클라이언트에게 묻는 요청에는 기본값으로 답한다
     if (msg.id !== undefined && msg.method) {
       let result = null;
-      if (msg.method === 'workspace/configuration') result = (msg.params?.items || []).map(() => ({}));
+      if (msg.method === 'workspace/configuration') result = (msg.params?.items || []).map((it) => configFor(this, it.section));
       if (msg.method === 'workspace/applyEdit') result = { applied: false };
       window.api.lsp.send(this.id, { jsonrpc: '2.0', id: msg.id, result });
     }

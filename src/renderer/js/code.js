@@ -47,6 +47,7 @@ export function initCode() {
     <div class="splitter-x" id="codeSplit"></div>
     <div class="code-main">
       <div class="code-tabs" id="codeTabs"></div>
+      <div class="code-notice" id="codeNotice" hidden></div>
       <div class="code-editor-wrap">
         <div class="code-editor" id="codeEditor"></div>
         <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Shift+Alt+F 서식 정리</small></div></div>
@@ -380,6 +381,7 @@ async function ensureDoc(path) {
     clearTimeout(t);
     t = setTimeout(() => updateGutter(doc), 250);
   });
+  if (model.getLanguageId() === 'python') await ensurePython(repo);
   lsp.attachModel(repo, model).catch((e) => console.warn('언어 서버 연결 실패', e));
   loadHead(doc);
   return doc;
@@ -392,6 +394,7 @@ export async function openFile(path, selection) {
   const v = view();
   if (!v.tabs.some((p) => keyOf(p) === keyOf(path))) v.tabs.push(doc.path);
   activate(doc.path);
+  showLanguageNotice(doc);
   if (selection) {
     const range = selection.startLineNumber ? selection : { startLineNumber: selection.lineNumber, startColumn: selection.column, endLineNumber: selection.lineNumber, endColumn: selection.column };
     editor.setSelection(range);
@@ -412,6 +415,7 @@ function activate(path) {
   editor.setModel(doc.model);
   if (doc.viewState) editor.restoreViewState(doc.viewState);
   updateGutter(doc);
+  showLanguageNotice(doc);
   renderTabs();
   updateStatus();
   document.querySelectorAll('#codeTree .ft-row').forEach((r) => r.classList.toggle('active', keyOf(r.dataset.path) === keyOf(doc.path)));
@@ -419,6 +423,7 @@ function activate(path) {
 
 function showEmpty() {
   view().active = null;
+  if ($('#codeNotice')) $('#codeNotice').hidden = true;
   editor?.setModel(null);
   $('#codeEditor').style.visibility = 'hidden';
   $('#codeEmpty').hidden = false;
@@ -638,9 +643,16 @@ function updateStatus() {
   const errs = markers.filter((m) => m.severity === monaco.MarkerSeverity.Error).length;
   const warns = markers.filter((m) => m.severity === monaco.MarkerSeverity.Warning).length;
   const lang = d.model.getLanguageId();
-  const info = lsp.serverLangFor(d.model) ? lsp.serverInfo(d.repo) : null;
-  const ls = !lsp.serverLangFor(d.model)
-    ? ''
+  const info = lsp.serverLangFor(d.model) ? lsp.serverInfo(d.repo, lsp.serverLangFor(d.model)) : null;
+  const lsLang = lsp.serverLangFor(d.model);
+  const ls = !lsLang
+    ? lang === 'java'
+      ? '<span class="cs-item warn" title="Java 는 코드 검사(오류 표시·자동 완성·어노테이션 확인)를 지원하지 않습니다">Java · 코드 검사 미지원</span>'
+      : ''
+    : lsLang === 'python'
+      ? !info || info.status === 'starting'
+        ? '<span class="cs-item"><span class="spinner"></span> Python 언어 서버 시작 중</span>'
+        : ''
     : !info || info.status === 'starting'
       ? '<span class="cs-item"><span class="spinner"></span> 언어 서버 시작 중</span>'
       : info.status === 'error'
@@ -653,16 +665,109 @@ function updateStatus() {
     editor.trigger('status', 'editor.action.marker.next', null);
   };
   el.append(
+    ...[
     problems,
     h('span', { class: 'cs-item', text: relOf(d.repo, d.path) }),
     h('span', { class: 'tb-spacer' }),
     h('span', { html: ls }),
+    lang === 'python' ? pythonStatusItem(d.repo) : null,
     h('span', { class: 'cs-item', text: p ? `줄 ${p.lineNumber}, 열 ${p.column}` : '' }),
     h('span', { class: 'cs-item', text: lang }),
     h('span', { class: 'cs-item', text: `UTF-8${d.bom ? ' BOM' : ''}` }),
     h('span', { class: 'cs-item', text: d.eol }),
-    termBtn
+    termBtn,
+    ].filter(Boolean)
   );
   // 언어 서버 준비 상태가 바뀌면 다시 그린다
   if (info?.status === 'starting' || (lsp.serverLangFor(d.model) && !info)) setTimeout(updateStatus, 800);
+}
+
+// ---------- Python 인터프리터 (Java 의 JDK 에 해당: 쓸 수 있는 문법과 설치된 패키지가 달라진다) ----------
+
+const pyCache = new Map(); // 저장소 → 찾은 인터프리터 목록
+const pyKey = (repo) => `py.interp:${repo.toLowerCase()}`;
+
+async function pythonList(repo, force) {
+  if (!force && pyCache.has(repo)) return pyCache.get(repo);
+  const list = await window.api.pythonInterpreters(repo);
+  pyCache.set(repo, list);
+  return list;
+}
+
+function currentPython(repo) {
+  try {
+    return JSON.parse(localStorage.getItem(pyKey(repo)) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+// 처음이면 프로젝트 가상환경(.venv 등) → 시스템 Python 순서로 자동 선택
+async function ensurePython(repo) {
+  let cur = currentPython(repo);
+  const list = await pythonList(repo);
+  if (cur && !list.some((x) => x.path.toLowerCase() === cur.path.toLowerCase())) cur = null;
+  if (!cur && list.length) {
+    cur = list[0];
+    localStorage.setItem(pyKey(repo), JSON.stringify(cur));
+  }
+  lsp.setPythonPath(repo, cur?.path || null);
+  return cur;
+}
+
+function pythonStatusItem(repo) {
+  const cur = currentPython(repo);
+  const el = h('span', {
+    class: `cs-item cs-btn ${cur ? '' : 'warn'}`,
+    title: cur ? `${cur.path}\n클릭해서 다른 Python 선택` : 'Python 을 찾지 못했습니다. 설치된 패키지(import)를 인식하지 못할 수 있습니다.',
+    text: cur ? `🐍 Python ${cur.version}${cur.source.startsWith('가상환경') ? ` (${cur.source.replace(/^가상환경 \((.*)\)$/, '$1')})` : ''}` : '🐍 Python 없음',
+  });
+  el.onclick = async () => {
+    const list = await pythonList(repo, true);
+    const items = list.map((x) => ({
+      label: `${cur && cur.path.toLowerCase() === x.path.toLowerCase() ? '✓ ' : '　'}Python ${x.version} · ${x.source}`,
+      hint: x.path,
+      onClick: () => {
+        localStorage.setItem(pyKey(repo), JSON.stringify(x));
+        lsp.setPythonPath(repo, x.path);
+        updateStatus();
+        toast(`Python ${x.version} (${x.source}) 을(를) 사용합니다.`, 'ok');
+      },
+    }));
+    const r = el.getBoundingClientRect();
+    contextMenu(r.left, r.top - 8 - (items.length + 2) * 28, [{ header: 'Python 인터프리터 선택' }, ...(items.length ? items : [{ label: '설치된 Python 을 찾지 못했습니다', disabled: true }]), '-', { label: '다시 찾기', onClick: () => pythonList(repo, true).then(updateStatus) }]);
+  };
+  return el;
+}
+
+// ---------- 언어별 안내 (Java 는 코드 검사 미지원) ----------
+
+const dismissedNotice = new Set();
+
+function showLanguageNotice(doc) {
+  const el = $('#codeNotice');
+  if (!el) return;
+  const lang = doc.model.getLanguageId();
+  const key = `${doc.repo.toLowerCase()}|${lang}`;
+  if (lang !== 'java' || dismissedNotice.has(key)) {
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = '';
+  el.append(
+    h('span', { class: 'cn-ico', text: '⚠' }),
+    h('span', {
+      html: '<b>Java 는 코드 검사를 지원하지 않습니다.</b> 오류 표시, 자동 완성, 어노테이션·JDK 버전 확인은 되지 않고 편집과 문법 색칠만 가능합니다. 정확한 검사와 Tomcat 실행은 IntelliJ 등 Java 전용 도구를 사용하세요.',
+    }),
+    h('span', { class: 'tb-spacer' }),
+    h('button', {
+      class: 'tb-btn small',
+      text: '닫기',
+      onclick: () => {
+        dismissedNotice.add(key);
+        el.hidden = true;
+      },
+    })
+  );
+  el.hidden = false;
 }

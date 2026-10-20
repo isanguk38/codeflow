@@ -397,3 +397,24 @@
 .cs-btn.on {
   color: var(--accent2);
 }
+
+/* ---------- 편집기 위 안내 띠 / 상태 표시줄 경고 ---------- */
+.code-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg2));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  flex-shrink: 0;
+}
+.code-notice[hidden] {
+  display: none;
+}
+.code-notice .cn-ico {
+  color: var(--warn);
+}
+.cs-item.warn {
+  color: var(--warn);
+}

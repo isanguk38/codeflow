@@ -133,6 +133,9 @@ ipcMain.on('lsp:send', (_e, id, msg) => lsp.sendTo(id, msg));
 ipcMain.handle('lsp:stop', (_e, id) => lsp.stop(id));
 app.on('before-quit', () => lsp.stopAll());
 
+// 코드 화면: Python 인터프리터 목록
+ipcMain.handle('python:interpreters', (_e, root) => require('./python').interpreters(root));
+
 // 코드 화면: 터미널
 const terminal = require('./terminal');
 ipcMain.handle('term:shells', () => terminal.shells().map(({ id, name }) => ({ id, name })));

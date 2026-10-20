@@ -21,6 +21,7 @@
     "@xterm/xterm": "^5.5.0",
     "diff": "^5.2.0",
     "monaco-editor": "^0.52.2",
+    "pyright": "^1.1.414",
     "typescript": "^5.6.3",
     "typescript-language-server": "^4.3.4"
   },
@@ -41,7 +42,8 @@
       "!node_modules/monaco-editor/{esm,dev,min-maps}/**",
       "!node_modules/monaco-editor/**/*.map",
       "!node_modules/typescript/lib/{cs,de,es,fr,it,ja,pl,pt-br,ru,tr,zh-cn,zh-tw}/**",
-      "!node_modules/**/*.d.ts.map"
+      "!node_modules/**/*.d.ts.map",
+      "!node_modules/pyright/dist/*.map"
     ],
     "win": {
       "target": [
@@ -66,7 +68,8 @@
     "asarUnpack": [
       "node_modules/typescript-language-server/**",
       "node_modules/typescript/**",
-      "node_modules/@lydell/**"
+      "node_modules/@lydell/**",
+      "node_modules/pyright/**"
     ]
   }
 }
