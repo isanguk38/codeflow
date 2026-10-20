@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
   fs: Object.fromEntries(['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash'].map((n) => [n, (...a) => ipcRenderer.invoke(`fs:${n}`, ...a)])),
   lsp: {
-    start: (lang, root) => ipcRenderer.invoke('lsp:start', lang, root),
+    start: (lang, root, opts) => ipcRenderer.invoke('lsp:start', lang, root, opts),
     send: (id, msg) => ipcRenderer.send('lsp:send', id, msg),
     stop: (id) => ipcRenderer.invoke('lsp:stop', id),
     onMessage: (cb) => ipcRenderer.on('lsp:message', (_e, id, msg) => cb(id, msg)),
@@ -41,6 +41,13 @@ contextBridge.exposeInMainWorld('api', {
   },
   paste: () => clipboard.readText(),
   pythonInterpreters: (root) => ipcRenderer.invoke('python:interpreters', root),
+  java: {
+    status: () => ipcRenderer.invoke('java:status'),
+    install: () => ipcRenderer.invoke('java:install'),
+    remove: () => ipcRenderer.invoke('java:remove'),
+    project: (root) => ipcRenderer.invoke('java:project', root),
+    onProgress: (cb) => ipcRenderer.on('java:progress', (_e, p) => cb(p)),
+  },
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: (url) => ipcRenderer.invoke('update:install', url),

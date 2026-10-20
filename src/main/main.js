@@ -122,9 +122,9 @@ for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder
 
 // 코드 화면: 언어 서버 (오류 표시, 자동 완성 등)
 const lsp = require('./lsp');
-ipcMain.handle('lsp:start', (e, lang, root) => {
+ipcMain.handle('lsp:start', (e, lang, root, opts) => {
   try {
-    return { ok: true, data: lsp.start(lang, root, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a)) };
+    return { ok: true, data: lsp.start(lang, root, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a), opts) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -132,6 +132,25 @@ ipcMain.handle('lsp:start', (e, lang, root) => {
 ipcMain.on('lsp:send', (_e, id, msg) => lsp.sendTo(id, msg));
 ipcMain.handle('lsp:stop', (_e, id) => lsp.stop(id));
 app.on('before-quit', () => lsp.stopAll());
+
+// 코드 화면: Java 언어 팩 (설치/제거/상태, 설치된 JDK, 프로젝트 Java 버전)
+const javapack = require('./javapack');
+ipcMain.handle('java:status', () => javapack.status());
+ipcMain.handle('java:install', async (e) => {
+  try {
+    return { ok: true, data: await javapack.install((p) => !e.sender.isDestroyed() && e.sender.send('java:progress', p)) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+ipcMain.handle('java:remove', () => {
+  try {
+    return { ok: true, data: javapack.remove() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('java:project', (_e, root) => javapack.projectInfo(root));
 
 // 코드 화면: Python 인터프리터 목록
 ipcMain.handle('python:interpreters', (_e, root) => require('./python').interpreters(root));

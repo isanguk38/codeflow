@@ -25,9 +25,13 @@ function pyrightCommand() {
   return { cmd: process.execPath, args: [cli, '--stdio'], env: { ELECTRON_RUN_AS_NODE: '1', VSCODE_NLS_CONFIG: JSON.stringify({ locale: 'ko' }) } };
 }
 
+// Java: 언어 팩으로 설치한 Eclipse JDT LS (Java 파일을 열 때만 시작)
+const javapack = require('./javapack');
+
 const LANGS = {
   typescript: tsServerCommand,
   python: pyrightCommand,
+  java: (root) => javapack.command(root),
 };
 
 class Server {
@@ -35,7 +39,7 @@ class Server {
     this.id = id;
     this.lang = lang;
     this.root = root;
-    const { cmd, args, env } = LANGS[lang]();
+    const { cmd, args, env } = LANGS[lang](root);
     this.proc = spawn(cmd, args, { cwd: root, env: { ...process.env, ...env }, windowsHide: true });
     this.buf = Buffer.alloc(0);
     this.proc.stdout.on('data', (d) => {
@@ -85,7 +89,7 @@ class Server {
 const servers = new Map(); // id → Server
 let seq = 0;
 
-function start(lang, root, send) {
+function start(lang, root, send, opts = {}) {
   if (!LANGS[lang]) throw new Error(`지원하지 않는 언어: ${lang}`);
   for (const s of servers.values()) if (s.lang === lang && s.root.toLowerCase() === root.toLowerCase() && s.proc.exitCode === null) return { id: s.id, reused: true };
   const id = ++seq;
@@ -94,7 +98,12 @@ function start(lang, root, send) {
     send(ch, ...a);
   });
   servers.set(id, s);
-  return { id, tsdk: lang === 'typescript' ? tsdkFor(root) : null };
+  return {
+    id,
+    tsdk: lang === 'typescript' ? tsdkFor(root) : null,
+    // Java: 프로젝트 검사 기준으로 쓸 JDK 목록과 pom.xml/build.gradle 정보
+    java: lang === 'java' ? { runtimes: javapack.projectRuntimes(opts.preferredJdk), project: javapack.projectInfo(root) } : null,
+  };
 }
 
 function sendTo(id, msg) {

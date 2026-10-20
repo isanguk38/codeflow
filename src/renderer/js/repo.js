@@ -96,6 +96,8 @@ export async function closeTab(dir) {
   const closingActive = state.repo && norm(state.repo) === norm(dir);
   if (closingActive && isBusy()) return toast('진행 중인 작업이 끝난 뒤에 닫을 수 있습니다.', 'warn');
   tabs.splice(i, 1);
+  // 닫은 프로젝트의 언어 서버(특히 무거운 Java)를 끈다
+  import('./lsp-client.js').then((m) => m.stopRepoServers(dir)).catch(() => {});
   if (closingActive) {
     const next = tabs[i] || tabs[i - 1];
     if (next) {
@@ -349,6 +351,8 @@ export async function openSettings() {
     state.repo ? addRemote : null,
     h('h4', { text: '동작' }),
     h('label', { class: 'check' }, rebase, ' Pull 할 때 병합(merge) 대신 리베이스(rebase) 사용'),
+    h('h4', { text: '언어 팩' }),
+    await javaPackRow(),
     h('h4', { text: '앱 정보' }),
     h(
       'div',
@@ -378,4 +382,54 @@ export async function openSettings() {
       },
     ],
   });
+}
+
+// 설정 → 언어 팩: Java (TypeScript/JavaScript, Python 은 앱에 기본 포함)
+async function javaPackRow() {
+  const box = h('div', { class: 'lang-pack' });
+  const draw = async () => {
+    const st = await window.api.java.status();
+    box.innerHTML = '';
+    const info = h('div', { class: 'lp-info' });
+    info.append(
+      h('b', { text: 'Java' }),
+      h('span', {
+        class: 'fdir',
+        text: st.installed
+          ? ` 설치됨 (언어 서버 ${st.version}) · 실행 Java ${st.runtime?.version || '-'}${st.runtime?.bundled ? ' (언어 팩 포함)' : ''}`
+          : ' 설치 안 됨 · 약 130MB · Java 파일을 열 때만 실행되며, 프로젝트 JDK 버전 기준으로 검사합니다',
+      }),
+      h('div', { class: 'fdir lp-jdks', text: st.jdks.length ? `찾은 JDK: ${st.jdks.map((j) => `${j.version}`).join(', ')}` : 'PC 에서 JDK 를 찾지 못했습니다 (프로젝트 기준 검사에 JDK 가 필요합니다)' })
+    );
+    const btn = st.installed
+      ? h('button', {
+          class: 'btn small danger',
+          text: '제거',
+          onclick: async () => {
+            if (!(await confirmDialog('Java 언어 팩을 제거합니다. 저장된 프로젝트 색인도 함께 지워집니다.', { danger: true, okLabel: '제거' }))) return;
+            const { removeJavaPack } = await import('./code.js');
+            await removeJavaPack();
+            draw();
+          },
+        })
+      : h('button', {
+          class: 'btn small primary',
+          text: '설치',
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            const { installJavaPack } = await import('./code.js');
+            try {
+              await installJavaPack((p) => (b.textContent = p.step === 'download' && p.percent >= 0 ? `받는 중 ${p.percent}%` : p.message));
+              toast('Java 언어 팩을 설치했습니다.', 'ok');
+            } catch (err) {
+              errorDialog(err.message, 'Java 언어 팩 설치 실패');
+            }
+            draw();
+          },
+        });
+    box.append(info, btn);
+  };
+  await draw();
+  return h('div', { class: 'form' }, h('div', { class: 'fdir', text: 'TypeScript/JavaScript, Python 코드 검사는 앱에 기본 포함되어 있습니다.' }), box);
 }

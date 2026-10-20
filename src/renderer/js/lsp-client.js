@@ -11,6 +11,39 @@ let ensureModelHook = async () => null; // 다른 파일 모델 준비
 // Monaco 언어 id → 언어 서버 종류
 const LANG_OF = { typescript: 'typescript', javascript: 'typescript', python: 'python' };
 
+// Java 는 언어 팩을 설치했을 때만 사용 (Java 파일을 열 때만 서버 시작)
+let javaEnabled = false;
+export function setJavaEnabled(v) {
+  javaEnabled = !!v;
+}
+const JAVA_IDLE_STOP_MS = 5 * 60 * 1000; // 마지막 Java 파일을 닫고 5분 지나면 서버 종료 (메모리 반환)
+let onStatusChanged = () => {};
+export const onServerStatus = (fn) => (onStatusChanged = fn);
+
+// 저장소별로 사용자가 고른 기준 JDK
+const preferredJdks = new Map();
+export function setPreferredJdk(repo, home) {
+  if (home) preferredJdks.set(repo.toLowerCase(), home);
+  else preferredJdks.delete(repo.toLowerCase());
+}
+
+function javaSettings(runtimes) {
+  return {
+    configuration: { runtimes, updateBuildConfiguration: 'automatic' },
+    import: {
+      maven: { enabled: true },
+      gradle: { enabled: true, wrapper: { enabled: true } },
+      exclusions: ['**/node_modules/**', '**/.metadata/**', '**/archetype-resources/**', '**/META-INF/maven/**'],
+    },
+    autobuild: { enabled: true },
+    maxConcurrentBuilds: 1,
+    completion: { enabled: true, guessMethodArguments: 'insertBestGuessedArguments' },
+    signatureHelp: { enabled: true },
+    format: { enabled: true },
+    references: { includeDecompiledSources: true },
+  };
+}
+
 // 저장소별 Python 인터프리터 경로 (Pyright 가 설정을 물어보면 알려 준다)
 const pythonPaths = new Map();
 export function setPythonPath(repo, p) {
@@ -20,6 +53,7 @@ export function setPythonPath(repo, p) {
 }
 
 function configFor(server, section) {
+  if (server.lang === 'java') return section === 'java' ? server.javaSettings : section?.startsWith('java.') ? null : {};
   if (server.lang !== 'python') return {};
   const pythonPath = pythonPaths.get(server.repo.toLowerCase());
   if (section === 'python') return pythonPath ? { pythonPath } : {};
@@ -34,7 +68,7 @@ const LSP_LANGUAGE_ID = (model) => {
   return model.getLanguageId();
 };
 
-export const serverLangFor = (model) => LANG_OF[model.getLanguageId()] || null;
+export const serverLangFor = (model) => (model.getLanguageId() === 'java' ? (javaEnabled ? 'java' : null) : LANG_OF[model.getLanguageId()] || null);
 const keyOf = (uri) => monaco.Uri.parse(uri).fsPath.toLowerCase();
 
 export function initLsp(m, { onDiagnostics, openFile, ensureModel }) {
@@ -76,7 +110,7 @@ export function initLsp(m, { onDiagnostics, openFile, ensureModel }) {
     onDiagnosticsChanged();
   });
 
-  for (const lang of ['typescript', 'javascript', 'python']) registerProviders(lang);
+  for (const lang of ['typescript', 'javascript', 'python', 'java']) registerProviders(lang);
 }
 
 class Server {
@@ -92,13 +126,22 @@ class Server {
   }
 
   async start() {
-    const r = await window.api.lsp.start(this.lang, this.repo);
+    const r = await window.api.lsp.start(this.lang, this.repo, { preferredJdk: preferredJdks.get(this.repo.toLowerCase()) });
     if (!r.ok) {
       this.status = 'error';
+      this.error = r.error;
+      onStatusChanged();
       throw new Error(r.error);
     }
     this.id = r.data.id;
     this.tsdk = r.data.tsdk;
+    if (r.data.java) {
+      this.java = r.data.java; // { runtimes, project }
+      this.javaSettings = javaSettings(r.data.java.runtimes);
+      this.javaState = { ready: false, message: 'Java 언어 서버 시작 중' };
+      // 프로젝트 준비(ServiceReady)가 끝나야 자동 완성 등이 정확하므로, 요청은 이 약속을 기다린다
+      this.javaReady = new Promise((res) => (this.resolveJavaReady = res));
+    }
     byId.set(this.id, this);
     const rootUri = monaco.Uri.file(this.repo).toString();
     const init = await this.request('initialize', {
@@ -118,11 +161,18 @@ class Server {
         },
         workspace: { configuration: true, workspaceFolders: true },
       },
-      initializationOptions: {
-        locale: 'ko',
-        ...(this.tsdk?.source === 'project' ? { tsserver: { path: this.tsdk.path } } : {}),
-        preferences: { includeCompletionsForModuleExports: true, includeCompletionsWithInsertText: true },
-      },
+      initializationOptions:
+        this.lang === 'java'
+          ? {
+              settings: { java: this.javaSettings },
+              // 라이브러리/JDK 클래스로 '정의로 이동' 할 수 있도록 (jdt:// 내용 요청)
+              extendedClientCapabilities: { classFileContentsSupport: true, progressReportProvider: false },
+            }
+          : {
+              locale: 'ko',
+              ...(this.tsdk?.source === 'project' ? { tsserver: { path: this.tsdk.path } } : {}),
+              preferences: { includeCompletionsForModuleExports: true, includeCompletionsWithInsertText: true },
+            },
     });
     this.caps = init.capabilities || {};
     this.notify('initialized', {});
@@ -150,6 +200,17 @@ class Server {
     }
     if (msg.method === 'textDocument/publishDiagnostics') return applyDiagnostics(msg.params);
     if (msg.method === '$/typescriptVersion') this.tsVersion = msg.params;
+    // Java 준비 상황 (Maven/Gradle 가져오기, 색인 등) → 상태 표시줄
+    if (msg.method === 'language/status' && this.javaState) {
+      const { type, message } = msg.params || {};
+      if (type === 'ServiceReady' || type === 'Started') {
+        this.javaState = { ready: true, message: '' };
+        this.resolveJavaReady?.();
+      }
+      else if (type === 'Error') this.javaState = { ready: false, error: true, message: message || '오류' };
+      else if (type === 'Starting' && !this.javaState.ready) this.javaState = { ready: false, message: javaStatusText(message) };
+      onStatusChanged();
+    }
     // 서버가 클라이언트에게 묻는 요청에는 기본값으로 답한다
     if (msg.id !== undefined && msg.method) {
       let result = null;
@@ -174,11 +235,23 @@ function serverFor(repo, lang) {
   return s;
 }
 
+// 언어 서버 진행 메시지를 짧은 한국어로
+function javaStatusText(message = '') {
+  const pct = (message.match(/(\d+)%/) || [])[1];
+  const p = pct && +pct <= 100 ? ` ${pct}%` : '';
+  if (/repo\.maven|https?:\/\//i.test(message)) return `Maven 라이브러리 받는 중${p}`;
+  if (/Importing/i.test(message)) return `프로젝트 가져오는 중${p}`;
+  if (/Refreshing|Building|Opening/i.test(message)) return `색인 만드는 중${p}`;
+  return `Java 준비 중${p}`;
+}
+
 // 편집기에서 연 파일을 언어 서버에 알린다
 export async function attachModel(repo, model) {
   const lang = serverLangFor(model);
   if (!lang) return;
   const s = serverFor(repo, lang);
+  clearTimeout(s.idleTimer);
+  onStatusChanged();
   await s.ready;
   const uri = model.uri.toString();
   if (s.docs.has(uri)) return;
@@ -213,22 +286,43 @@ export function detachModel(model) {
   if (s?.docs.has(uri)) {
     s.docs.delete(uri);
     s.notify('textDocument/didClose', { textDocument: { uri } });
+    // Java 는 무거우므로 열린 Java 파일이 없으면 잠시 뒤 서버를 끈다 (다시 열면 저장된 색인으로 빠르게 시작)
+    if (s.lang === 'java' && !s.docs.size) s.idleTimer = setTimeout(() => stopServer(s), JAVA_IDLE_STOP_MS);
   }
   monaco.editor.setModelMarkers(model, 'lsp', []);
+}
+
+async function stopServer(s) {
+  clearTimeout(s.idleTimer);
+  servers.delete(s.key);
+  for (const uri of s.docs.keys()) {
+    const m = monaco.editor.getModel(monaco.Uri.parse(uri));
+    if (m) monaco.editor.setModelMarkers(m, 'lsp', []);
+  }
+  s.docs.clear();
+  if (s.id) {
+    byId.delete(s.id);
+    await window.api.lsp.stop(s.id);
+  }
+  onStatusChanged();
+}
+
+// 언어 서버 다시 시작 (기준 JDK 변경 등) → 열린 파일을 다시 연결
+export async function restartServer(repo, lang, models) {
+  const s = servers.get(`${repo.toLowerCase()}|${lang}`);
+  if (s) await stopServer(s);
+  for (const m of models) if (!m.isDisposed()) attachModel(repo, m).catch(() => {});
 }
 
 export function serverInfo(repo, lang = 'typescript') {
   const s = servers.get(`${repo.toLowerCase()}|${lang}`);
   if (!s) return null;
-  return { status: s.status, ts: s.tsVersion, tsdk: s.tsdk };
+  return { status: s.status, ts: s.tsVersion, tsdk: s.tsdk, java: s.java, javaState: s.javaState, error: s.error };
 }
 
+// 프로젝트 탭을 닫으면 그 프로젝트의 언어 서버를 모두 끈다
 export async function stopRepoServers(repo) {
-  for (const s of [...servers.values()]) {
-    if (s.repo.toLowerCase() !== repo.toLowerCase()) continue;
-    servers.delete(s.key);
-    if (s.id) await window.api.lsp.stop(s.id);
-  }
+  for (const s of [...servers.values()]) if (s.repo.toLowerCase() === repo.toLowerCase()) await stopServer(s);
 }
 
 // ---------- 진단(오류/경고) ----------
@@ -284,6 +378,15 @@ function kindMap() {
 }
 
 async function ready(model) {
+  if (!model.__lsp && model.uri.scheme === 'jdt') {
+    // 라이브러리 클래스 안에서도 마우스 올림/정의로 이동이 되도록 현재 Java 서버에 연결
+    const s = [...servers.values()].find((x) => x.lang === 'java' && x.status === 'ready');
+    if (s && !s.docs.has(model.uri.toString())) {
+      s.docs.set(model.uri.toString(), model.getVersionId());
+      s.notify('textDocument/didOpen', { textDocument: { uri: model.uri.toString(), languageId: 'java', version: model.getVersionId(), text: model.getValue() } });
+    }
+    model.__lsp = s;
+  }
   const s = model.__lsp;
   if (!s) return null;
   try {
@@ -292,12 +395,14 @@ async function ready(model) {
     return null;
   }
   if (!s.docs.has(model.uri.toString())) return null;
+  // Java: 프로젝트를 가져오는 중이면 끝날 때까지 기다린다(최대 20초) — 빈 결과가 오지 않게
+  if (s.javaReady && !s.javaState?.ready) await Promise.race([s.javaReady, new Promise((r) => setTimeout(r, 20000))]);
   model.__flush?.();
   return s;
 }
 
 // 다른 파일 위치로 이동할 수 있도록 대상 파일 모델을 미리 만든다
-async function toLocations(result) {
+async function toLocations(result, server) {
   if (!result) return [];
   const arr = Array.isArray(result) ? result : [result];
   const out = [];
@@ -305,6 +410,17 @@ async function toLocations(result) {
     const uri = l.targetUri || l.uri;
     const range = l.targetSelectionRange || l.range;
     if (!uri || !range) continue;
+    if (uri.startsWith('jdt:')) {
+      // JDK/라이브러리 클래스: 언어 서버에서 소스(또는 디컴파일 결과)를 받아 읽기 전용으로 연다
+      const vuri = monaco.Uri.parse(uri);
+      if (!monaco.editor.getModel(vuri)) {
+        const text = await server?.request('java/classFileContents', { uri }).catch(() => null);
+        if (text == null) continue;
+        monaco.editor.createModel(text, 'java', vuri);
+      }
+      out.push({ uri: vuri, range: toRange(range) });
+      continue;
+    }
     await ensureModelHook(monaco.Uri.parse(uri).fsPath);
     out.push({ uri: monaco.Uri.parse(uri), range: toRange(range) });
   }
@@ -337,7 +453,11 @@ function registerProviders(language) {
       return {
         incomplete: !!r?.isIncomplete,
         suggestions: items.map((it) => {
-          const edit = it.textEdit;
+          // LSP 3.17: 공통 값(itemDefaults)과 textEditText 로 보내는 서버(Java 등) 대응
+          const defs = r?.itemDefaults || {};
+          const er = defs.editRange;
+          const edit = it.textEdit || (er && (it.textEditText !== undefined || it.insertText !== undefined) ? { ...(er.start ? { range: er } : er), newText: it.textEditText ?? it.insertText ?? it.label } : null);
+          if (it.insertTextFormat === undefined && defs.insertTextFormat !== undefined) it.insertTextFormat = defs.insertTextFormat;
           const range = edit ? (edit.range ? toRange(edit.range) : { insert: toRange(edit.insert), replace: toRange(edit.replace) }) : defRange;
           return {
             label: it.label,
@@ -376,7 +496,7 @@ function registerProviders(language) {
     async provideDefinition(model, position) {
       const s = await ready(model);
       if (!s) return [];
-      return toLocations(await s.request('textDocument/definition', docParams(model, position)).catch(() => null));
+      return toLocations(await s.request('textDocument/definition', docParams(model, position)).catch(() => null), s);
     },
   });
 
@@ -384,7 +504,7 @@ function registerProviders(language) {
     async provideReferences(model, position) {
       const s = await ready(model);
       if (!s) return [];
-      return toLocations(await s.request('textDocument/references', { ...docParams(model, position), context: { includeDeclaration: true } }).catch(() => null));
+      return toLocations(await s.request('textDocument/references', { ...docParams(model, position), context: { includeDeclaration: true } }).catch(() => null), s);
     },
   });
 
@@ -425,7 +545,7 @@ function registerProviders(language) {
 export function openerFor() {
   return {
     async openCodeEditor(_source, resource, selectionOrPosition) {
-      await openFileHook(resource.fsPath, selectionOrPosition);
+      await openFileHook(resource.scheme === 'file' ? resource.fsPath : resource.toString(), selectionOrPosition);
       return true;
     },
   };

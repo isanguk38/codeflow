@@ -418,3 +418,30 @@
 .cs-item.warn {
   color: var(--warn);
 }
+.ctab-ro {
+  font-size: 10px;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.code-notice .btn {
+  flex-shrink: 0;
+}
+
+/* 설정 → 언어 팩 */
+.lang-pack {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.lp-info {
+  flex: 1;
+  min-width: 0;
+}
+.lp-jdks {
+  margin-top: 2px;
+}

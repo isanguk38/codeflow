@@ -31,7 +31,7 @@ npm run dist
 | 스태시 | 작업 중인 변경 보관, 적용, 꺼내기, 삭제 |
 | 병합 | 병합 방식 선택: 기본 / 항상 병합 커밋(--no-ff) / 하나로 합치기(--squash) / Fast-forward 만(--ff-only), 병합 커밋 메시지 편집 |
 | 원격 | Fetch, Pull(병합 또는 리베이스), Push 전 커밋 목록 확인, 강제 Push(--force-with-lease) |
-| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript·Python 오류 표시(한국어)·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리, 아래쪽 터미널 패널(PowerShell / 명령 프롬프트 / Git Bash, 여러 개, 프로젝트 폴더에서 시작) |
+| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript·Python·Java(언어 팩) 오류 표시·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리, 아래쪽 터미널 패널(PowerShell / 명령 프롬프트 / Git Bash, 여러 개, 프로젝트 폴더에서 시작) |
 
 스마트 모드: 로컬 변경 때문에 체크아웃/Pull 이 막히면 변경 사항을 자동으로 보관했다가 작업 후 다시 적용합니다.
 
@@ -83,6 +83,7 @@ src/
   main/lsp.js        언어 서버 실행/중계 (TypeScript 는 앱에 포함)
   main/terminal.js   터미널 (ConPTY 로 셸 실행)
   main/python.js     Python 인터프리터 찾기
+  main/javapack.js   Java 언어 팩 설치/제거, 설치된 JDK 찾기, 프로젝트 Java 버전 읽기
   preload.js         window.api 로 안전하게 노출
   renderer/          화면 (HTML/CSS/바닐라 JS 모듈)
 ```
@@ -97,7 +98,7 @@ VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류�
 | --- | --- | --- |
 | TypeScript / JavaScript | typescript-language-server | 프로젝트의 `node_modules/typescript`, 없으면 앱에 포함된 TypeScript |
 | Python | Pyright (Pylance 의 무료 엔진) | 상태 표시줄 `🐍 Python` 에서 고른 인터프리터. 처음엔 프로젝트의 `.venv`/`venv` → 시스템 Python 순으로 자동 선택. 열린 파일만 검사해 큰 프로젝트에서도 가볍게 동작 |
-| Java | 지원 안 함 | 언어 서버가 JDK 17 이상과 1~2GB 메모리를 요구하고 큰 프로젝트에서 느려서 제외. Java 파일은 편집과 문법 색칠만 가능하며 안내 문구가 표시됨 |
+| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | Java 파일을 처음 열 때 설치 안내(약 130MB, 언어 서버 + Java 21 실행 환경 + Lombok). 검사 기준 JDK 는 `pom.xml`/`build.gradle` 의 Java 버전에 맞춰 PC 에 설치된 JDK(Program Files, IntelliJ 의 `~/.jdks` 등) 중에서 자동 선택하고, 상태 표시줄 `☕ Java` 에서 직접 고를 수도 있음. Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
 
 ## 자동 업데이트
 

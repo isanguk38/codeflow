@@ -167,6 +167,8 @@ function setupEditor() {
     renderTabs();
   });
 
+  refreshJavaPack();
+  lsp.onServerStatus(() => updateStatus());
   lsp.initLsp(monaco, {
     onDiagnostics: () => {},
     openFile: (p, sel) => openFile(p, sel),
@@ -360,6 +362,13 @@ async function deleteEntry(e) {
 async function ensureDoc(path) {
   const k = keyOf(path);
   if (docs.has(k)) return docs.get(k);
+  if (path.startsWith('jdt:')) {
+    const model = monaco.editor.getModel(monaco.Uri.parse(path));
+    if (!model) return null;
+    const doc = { path, repo: state.repo, model, virtual: true, savedVersion: model.getAlternativeVersionId(), eol: 'LF', deco: [], headText: undefined };
+    docs.set(k, doc);
+    return doc;
+  }
   const r = await window.api.fs.read(path);
   if (!r.ok) {
     toast(`파일을 열 수 없습니다: ${r.error}`, 'error');
@@ -382,6 +391,7 @@ async function ensureDoc(path) {
     t = setTimeout(() => updateGutter(doc), 250);
   });
   if (model.getLanguageId() === 'python') await ensurePython(repo);
+  if (model.getLanguageId() === 'java') await prepareJava(repo);
   lsp.attachModel(repo, model).catch((e) => console.warn('언어 서버 연결 실패', e));
   loadHead(doc);
   return doc;
@@ -413,6 +423,7 @@ function activate(path) {
   $('#codeEmpty').hidden = true;
   $('#codeEditor').style.visibility = 'visible';
   editor.setModel(doc.model);
+  editor.updateOptions({ readOnly: !!doc.virtual });
   if (doc.viewState) editor.restoreViewState(doc.viewState);
   updateGutter(doc);
   showLanguageNotice(doc);
@@ -448,7 +459,8 @@ function renderTabs() {
       'div',
       { class: `ctab ${keyOf(p) === keyOf(v.active || '') ? 'active' : ''} ${errors ? 'has-error' : ''} ${d.deleted ? 'deleted' : ''}`, title: `${p}${d.deleted ? '\n(디스크에서 삭제됨)' : ''}` },
       h('span', { class: `ft-ico ${fileIcon(baseName(p))}` }),
-      h('span', { class: 'ctab-name', text: baseName(p) }),
+      h('span', { class: 'ctab-name', text: d.virtual ? virtualName(p) : baseName(p) }),
+      d.virtual ? h('span', { class: 'ctab-ro', text: '읽기 전용', title: '라이브러리/JDK 클래스 (수정할 수 없음)' }) : null,
       errors ? h('span', { class: 'ctab-err', text: errors }) : null,
       h('button', { class: `ctab-x ${isDirty(d) ? 'dirty' : ''}`, title: isDirty(d) ? '저장 안 됨 (닫기)' : '닫기 (Ctrl+W)', text: isDirty(d) ? '●' : '✕', onclick: (e) => (e.stopPropagation(), closeTab(p)) })
     );
@@ -522,6 +534,7 @@ function revealInTree(p) {
 // ---------- 저장 / 디스크 변경 감지 ----------
 
 async function saveDoc(d) {
+  if (d.virtual) return true;
   const text = d.model.getValue();
   const version = d.model.getAlternativeVersionId();
   const r = await window.api.fs.write(d.path, text, { bom: d.bom });
@@ -547,6 +560,7 @@ function scheduleRefresh() {
 
 async function checkDiskChanges() {
   for (const d of [...docs.values()]) {
+    if (d.virtual) continue;
     const r = await window.api.fs.stat(d.path);
     if (!r.ok) continue;
     if (!r.data.exists) {
@@ -582,6 +596,7 @@ async function checkDiskChanges() {
 // ---------- Git 변경 표시 (줄 번호 옆 색 막대) ----------
 
 async function loadHead(d) {
+  if (d.virtual) return;
   const rel = relOf(d.repo, d.path);
   const text = await git('headContent', rel).catch(() => null);
   d.headText = text;
@@ -647,8 +662,10 @@ function updateStatus() {
   const lsLang = lsp.serverLangFor(d.model);
   const ls = !lsLang
     ? lang === 'java'
-      ? '<span class="cs-item warn" title="Java 는 코드 검사(오류 표시·자동 완성·어노테이션 확인)를 지원하지 않습니다">Java · 코드 검사 미지원</span>'
+      ? '<span class="cs-item warn" title="Java 언어 팩을 설치하면 오류 표시·자동 완성·어노테이션 확인이 됩니다">Java · 언어 팩 필요</span>'
       : ''
+    : lsLang === 'java'
+      ? ''
     : lsLang === 'python'
       ? !info || info.status === 'starting'
         ? '<span class="cs-item"><span class="spinner"></span> Python 언어 서버 시작 중</span>'
@@ -671,6 +688,7 @@ function updateStatus() {
     h('span', { class: 'tb-spacer' }),
     h('span', { html: ls }),
     lang === 'python' ? pythonStatusItem(d.repo) : null,
+    lsLang === 'java' ? javaStatusItem(d.repo, info) : null,
     h('span', { class: 'cs-item', text: p ? `줄 ${p.lineNumber}, 열 ${p.column}` : '' }),
     h('span', { class: 'cs-item', text: lang }),
     h('span', { class: 'cs-item', text: `UTF-8${d.bom ? ' BOM' : ''}` }),
@@ -740,7 +758,110 @@ function pythonStatusItem(repo) {
   return el;
 }
 
-// ---------- 언어별 안내 (Java 는 코드 검사 미지원) ----------
+// ---------- Java 언어 팩 ----------
+
+let javaPack = null; // 설치 상태 (window.api.java.status)
+let javaInstalling = null;
+
+async function refreshJavaPack() {
+  javaPack = await window.api.java.status();
+  lsp.setJavaEnabled(javaPack.installed);
+  return javaPack;
+}
+
+// jdt://contents/rt.jar/java.util/List.java?... → List.java (소스가 없으면 List.class)
+const virtualName = (uri) => {
+  const m = decodeURIComponent(uri.split('?')[0]).match(/([^/]+?\.(?:java|class))$/);
+  return m ? m[1] : 'class';
+};
+
+// Java 파일을 열기 전: 사용자가 고른 기준 JDK 를 언어 서버에 알려 둔다
+async function prepareJava(repo) {
+  if (!javaPack) await refreshJavaPack();
+  lsp.setPreferredJdk(repo, localStorage.getItem(`java.jdk:${repo.toLowerCase()}`) || null);
+}
+
+// 설정 화면에서도 쓰는 설치 함수
+export async function installJavaPack(onProgress) {
+  if (!javaInstalling) {
+    javaInstalling = (async () => {
+      window.api.java.onProgress((p) => window.dispatchEvent(new CustomEvent('java-progress', { detail: p })));
+      const r = await window.api.java.install();
+      javaInstalling = null;
+      if (!r.ok) throw new Error(r.error);
+      await refreshJavaPack();
+      // 이미 열어 둔 Java 파일들을 언어 서버에 연결
+      for (const d of docs.values()) if (!d.virtual && d.model.getLanguageId() === 'java') prepareJava(d.repo).then(() => lsp.attachModel(d.repo, d.model).catch(() => {}));
+      return r.data;
+    })();
+  }
+  const handler = (e) => onProgress?.(e.detail);
+  window.addEventListener('java-progress', handler);
+  try {
+    return await javaInstalling;
+  } finally {
+    window.removeEventListener('java-progress', handler);
+  }
+}
+
+export async function removeJavaPack() {
+  for (const repo of new Set([...docs.values()].map((d) => d.repo))) await lsp.restartServer(repo, 'java', []);
+  const r = await window.api.java.remove();
+  await refreshJavaPack();
+  return r;
+}
+
+function javaStatusItem(repo, info) {
+  if (!info || info.status === 'starting') return h('span', { class: 'cs-item', html: '<span class="spinner"></span> Java 언어 서버 시작 중 (5~15초)' });
+  if (info.status === 'error') return h('span', { class: 'cs-item err', text: 'Java 언어 서버 오류', title: info.error || '' });
+  if (info.javaState && !info.javaState.ready)
+    return h('span', { class: `cs-item ${info.javaState.error ? 'err' : ''}`, html: `${info.javaState.error ? '' : '<span class="spinner"></span> '}${info.javaState.message}`, title: '처음 여는 프로젝트는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.' });
+  const proj = info.java?.project || {};
+  const level = proj.level ? (proj.level.startsWith('1.') ? proj.level : proj.level.replace(/^(\d+).*/, '$1')) : null;
+  const picked = localStorage.getItem(`java.jdk:${repo.toLowerCase()}`);
+  const want = level ? (level.startsWith('1.') ? `JavaSE-${level}` : `JavaSE-${level}`) : null;
+  const rt = (info.java?.runtimes || []).find((r) => r.name === want);
+  const missing = level && !rt;
+  const el = h('span', {
+    class: `cs-item cs-btn ${missing ? 'warn' : ''}`,
+    text: `☕ Java ${level || '?'}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`,
+    title: missing
+      ? `프로젝트는 Java ${level} 기준인데 해당 JDK 가 PC 에 없습니다. 설치된 다른 JDK 로 검사합니다.`
+      : `검사 기준: ${rt ? rt.path : '언어 서버 기본 JDK'}\n클릭해서 기준 JDK 선택`,
+  });
+  el.onclick = () => openJdkPicker(el, repo, info, level, proj);
+  return el;
+}
+
+async function openJdkPicker(anchor, repo, info, level, proj) {
+  await refreshJavaPack();
+  const picked = localStorage.getItem(`java.jdk:${repo.toLowerCase()}`);
+  const choose = async (home) => {
+    if (home) localStorage.setItem(`java.jdk:${repo.toLowerCase()}`, home);
+    else localStorage.removeItem(`java.jdk:${repo.toLowerCase()}`);
+    lsp.setPreferredJdk(repo, home);
+    const models = [...docs.values()].filter((d) => d.repo === repo && !d.virtual && d.model.getLanguageId() === 'java').map((d) => d.model);
+    toast('기준 JDK 를 바꿔 Java 언어 서버를 다시 시작합니다.', 'info');
+    await lsp.restartServer(repo, 'java', models);
+    updateStatus();
+  };
+  const items = [
+    { header: '프로젝트 기준 JDK' },
+    { header: proj.build ? `${proj.build} 프로젝트: ${proj.file} 의 Java ${level || '?'} 버전을 따릅니다` : '빌드 파일이 없어 선택한 JDK 로 검사합니다' },
+    { label: `${!picked ? '✓ ' : '　'}자동${level ? ` (Java ${level} 에 맞는 JDK)` : ''}`, onClick: () => choose(null) },
+    '-',
+    ...javaPack.jdks.map((j) => ({
+      label: `${picked && picked.toLowerCase() === j.home.toLowerCase() ? '✓ ' : '　'}${j.jdk ? 'JDK' : 'JRE'} ${j.version}`,
+      hint: j.home,
+      onClick: () => choose(j.home),
+    })),
+    javaPack.jdks.length ? null : { label: 'PC 에 설치된 JDK 를 찾지 못했습니다', disabled: true },
+  ];
+  const r = anchor.getBoundingClientRect();
+  contextMenu(r.left, r.top - 8 - items.length * 28, items);
+}
+
+// ---------- Java 파일을 열 때 안내 (언어 팩 미설치 시 설치 제안) ----------
 
 const dismissedNotice = new Set();
 
@@ -749,25 +870,40 @@ function showLanguageNotice(doc) {
   if (!el) return;
   const lang = doc.model.getLanguageId();
   const key = `${doc.repo.toLowerCase()}|${lang}`;
-  if (lang !== 'java' || dismissedNotice.has(key)) {
-    el.hidden = true;
+  if (lang !== 'java' || doc.virtual || javaPack?.installed || dismissedNotice.has(key)) {
+    if (!javaInstalling) el.hidden = true;
     return;
   }
   el.innerHTML = '';
-  el.append(
-    h('span', { class: 'cn-ico', text: '⚠' }),
-    h('span', {
-      html: '<b>Java 는 코드 검사를 지원하지 않습니다.</b> 오류 표시, 자동 완성, 어노테이션·JDK 버전 확인은 되지 않고 편집과 문법 색칠만 가능합니다. 정확한 검사와 Tomcat 실행은 IntelliJ 등 Java 전용 도구를 사용하세요.',
-    }),
-    h('span', { class: 'tb-spacer' }),
-    h('button', {
-      class: 'tb-btn small',
-      text: '닫기',
-      onclick: () => {
-        dismissedNotice.add(key);
-        el.hidden = true;
-      },
-    })
-  );
+  const msg = h('span', {
+    html: '<b>Java 코드 검사를 쓰려면 Java 언어 팩이 필요합니다.</b> 처음 한 번 약 130MB 를 받으면, 프로젝트의 JDK 버전(pom.xml / build.gradle) 기준으로 오류 표시·자동 완성·어노테이션 확인·정의로 이동이 됩니다. (VS Code Java 와 같은 엔진)',
+  });
+  const installBtn = h('button', { class: 'btn small primary', text: '설치' });
+  const closeBtn = h('button', {
+    class: 'tb-btn small',
+    text: '닫기',
+    onclick: () => {
+      dismissedNotice.add(key);
+      el.hidden = true;
+    },
+  });
+  installBtn.onclick = async () => {
+    installBtn.disabled = true;
+    closeBtn.disabled = true;
+    try {
+      await installJavaPack((p) => {
+        msg.innerHTML = `<span class="spinner"></span> ${p.message}${p.percent >= 0 && p.step === 'download' ? ` (${p.percent}%)` : ''}`;
+      });
+      el.hidden = true;
+      toast('Java 언어 팩을 설치했습니다. 열린 Java 파일을 검사합니다.', 'ok', 5000);
+      updateStatus();
+    } catch (e) {
+      msg.innerHTML = `<b>설치하지 못했습니다:</b> ${e.message}`;
+      installBtn.disabled = false;
+      closeBtn.disabled = false;
+      installBtn.textContent = '다시 시도';
+    }
+  };
+  el.append(h('span', { class: 'cn-ico', text: '☕' }), msg, h('span', { class: 'tb-spacer' }), installBtn, closeBtn);
   el.hidden = false;
 }
