@@ -6,7 +6,7 @@ module.exports = [
   'merge', 'mergePreview', 'rebase', 'cherryPick', 'revertCommit', 'reset', 'operation', 'remotes', 'addRemote', 'setRemoteUrl',
   'removeRemote', 'fetchAll', 'pull', 'push', 'outgoing', 'stashList', 'stashSave', 'stashApply', 'stashPop', 'stashDrop',
   'stashFiles', 'conflictInfo', 'resolveWithContent', 'resolveSide', 'createTag', 'deleteTag', 'config', 'setConfig',
-  'addToGitignore', 'fileHunks',
+  'addToGitignore', 'fileHunks', 'headContent',
   // 고급 (git-extra.js)
   'rebaseCommits', 'interactiveRebase', 'cherryPickMany', 'revertMany', 'blame', 'reflog', 'compareRefs', 'refFilePair',
   'bisectReset',

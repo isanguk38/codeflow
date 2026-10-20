@@ -108,6 +108,31 @@ function addRecent(dir) {
   saveSettings(s);
 }
 
+// 코드 화면: 파일 작업
+const files = require('./files');
+for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash']) {
+  ipcMain.handle(`fs:${name}`, async (_e, ...args) => {
+    try {
+      return { ok: true, data: await files[name](...args) };
+    } catch (err) {
+      return { ok: false, error: err.message || String(err) };
+    }
+  });
+}
+
+// 코드 화면: 언어 서버 (오류 표시, 자동 완성 등)
+const lsp = require('./lsp');
+ipcMain.handle('lsp:start', (e, lang, root) => {
+  try {
+    return { ok: true, data: lsp.start(lang, root, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a)) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.on('lsp:send', (_e, id, msg) => lsp.sendTo(id, msg));
+ipcMain.handle('lsp:stop', (_e, id) => lsp.stop(id));
+app.on('before-quit', () => lsp.stopAll());
+
 // 앱 업데이트
 const updater = require('./updater');
 ipcMain.handle('update:check', async () => {

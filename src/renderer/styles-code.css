@@ -1,0 +1,302 @@
+/* 코드 화면: 탐색기 + 파일 탭 + 편집기 */
+
+.code-explorer {
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg2);
+}
+.code-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 2px 0 12px;
+  font-size: 13px;
+}
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ft-row:hover {
+  background: var(--hover);
+}
+.ft-row.active {
+  background: var(--sel);
+}
+.ft-caret {
+  width: 10px;
+  color: var(--text3);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.ft-ico {
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.ft-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding-left: 6px;
+}
+.tree-err {
+  color: var(--danger);
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Git 상태 색 (VS Code 와 비슷하게) */
+.ft-row.g-modified .ft-name,
+.ft-row.g-modified .ft-badge {
+  color: var(--c-modified);
+}
+.ft-row.g-added .ft-name,
+.ft-row.g-added .ft-badge,
+.ft-row.g-untracked .ft-name,
+.ft-row.g-untracked .ft-badge {
+  color: var(--c-added);
+}
+.ft-row.g-renamed .ft-name,
+.ft-row.g-renamed .ft-badge {
+  color: var(--c-renamed);
+}
+.ft-row.g-conflict .ft-name,
+.ft-row.g-conflict .ft-badge {
+  color: var(--c-conflict);
+}
+.ft-row.g-dirchange .ft-badge {
+  color: var(--c-modified);
+}
+
+/* 파일 종류 아이콘 (색 점) */
+.ft-ico[class*='ext-']::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text3);
+}
+.ft-ico.ext-ts::before,
+.ft-ico.ext-tsx::before {
+  background: #3178c6;
+}
+.ft-ico.ext-js::before,
+.ft-ico.ext-jsx::before,
+.ft-ico.ext-mjs::before,
+.ft-ico.ext-cjs::before {
+  background: #e8d44d;
+}
+.ft-ico.ext-json::before {
+  background: #cbcb41;
+}
+.ft-ico.ext-md::before {
+  background: #519aba;
+}
+.ft-ico.ext-css::before,
+.ft-ico.ext-scss::before {
+  background: #a074c4;
+}
+.ft-ico.ext-html::before {
+  background: #e44d26;
+}
+.ft-ico.ext-java::before {
+  background: #cc3e44;
+}
+.ft-ico.ext-py::before {
+  background: #3572a5;
+}
+.ft-ico.ext-yml::before,
+.ft-ico.ext-yaml::before,
+.ft-ico.ext-env::before,
+.ft-ico.ext-none::before {
+  background: #8d8d8d;
+}
+.ft-ico.ext-prisma::before,
+.ft-ico.ext-sql::before {
+  background: #5a67d8;
+}
+
+.code-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.code-tabs {
+  display: flex;
+  overflow-x: auto;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  min-height: 34px;
+  flex-shrink: 0;
+}
+.code-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+.ctab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 12px;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text2);
+  font-size: 12.5px;
+}
+.ctab:hover {
+  background: var(--bg3);
+}
+.ctab.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.ctab.has-error .ctab-name {
+  color: var(--c-conflict);
+}
+.ctab.deleted .ctab-name {
+  text-decoration: line-through;
+}
+.ctab-err {
+  font-size: 10px;
+  background: var(--danger);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 15px;
+}
+.ctab-x {
+  border: 0;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 11px;
+  visibility: hidden;
+}
+.ctab:hover .ctab-x,
+.ctab.active .ctab-x,
+.ctab-x.dirty {
+  visibility: visible;
+}
+.ctab-x.dirty {
+  color: var(--text);
+  font-size: 12px;
+}
+.ctab-x:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+.ctab-x.dirty:hover {
+  font-size: 0;
+}
+.ctab-x.dirty:hover::after {
+  content: '✕';
+  font-size: 11px;
+}
+
+.code-editor-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+.code-editor {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+}
+.code-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text3);
+  line-height: 1.8;
+}
+.code-empty[hidden] {
+  display: none;
+}
+.code-empty b {
+  color: var(--text2);
+  font-size: 15px;
+}
+
+.code-status {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.cs-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+}
+.cs-item .spinner {
+  width: 10px;
+  height: 10px;
+}
+.cs-item.err {
+  color: var(--danger);
+}
+.cs-problems {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cs-problems:hover {
+  background: var(--bg3);
+}
+
+/* Git 변경 표시 (줄 번호 옆) */
+.gut-add,
+.gut-mod {
+  margin-left: 3px;
+  width: 3px !important;
+}
+.gut-add {
+  background: #2ea043;
+}
+.gut-mod {
+  background: #1f6feb;
+}
+.gut-del,
+.gut-del-bottom {
+  margin-left: 2px;
+  width: 0 !important;
+  height: 0 !important;
+  border-left: 5px solid #f85149;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.gut-del {
+  margin-top: -4px;
+}
+.gut-del-bottom {
+  margin-top: 14px;
+}

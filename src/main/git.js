@@ -201,6 +201,13 @@ async function workingFilePair(repo, file) {
   return { left: pack(oldBuf), right: pack(newBuf), leftLabel: oldBuf ? `HEAD: ${oldPath}` : '(없음)', rightLabel: newBuf ? `작업 중: ${file.path}` : '(삭제됨)' };
 }
 
+// 편집기 왼쪽 변경 표시용: HEAD 시점의 파일 내용 (없으면 null = 새 파일)
+async function headContent(repo, relPath) {
+  if (!(await hasHead(repo))) return null;
+  const p = pack(await showBlob(repo, `HEAD:${relPath.replace(/\\/g, '/')}`));
+  return p.exists && !p.binary && !p.tooLarge ? p.text : null;
+}
+
 // 커밋 하나에서 변경된 파일의 이전/이후 내용
 async function commitFilePair(repo, hash, file) {
   const parents = (await run(repo, ['rev-list', '--parents', '-n', '1', hash])).stdout.trim().split(' ').slice(1);
@@ -746,6 +753,7 @@ module.exports = {
   topLevel,
   status,
   workingFilePair,
+  headContent,
   commitFilePair,
   commit,
   lastCommitMessage,

@@ -15,7 +15,10 @@
     "dist": "electron-builder --win"
   },
   "dependencies": {
-    "diff": "^5.2.0"
+    "diff": "^5.2.0",
+    "monaco-editor": "^0.52.2",
+    "typescript": "^5.6.3",
+    "typescript-language-server": "^4.3.4"
   },
   "devDependencies": {
     "electron": "^33.4.11",
@@ -30,7 +33,11 @@
     "files": [
       "src/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/monaco-editor/{esm,dev,min-maps}/**",
+      "!node_modules/monaco-editor/**/*.map",
+      "!node_modules/typescript/lib/{cs,de,es,fr,it,ja,pl,pt-br,ru,tr,zh-cn,zh-tw}/**",
+      "!node_modules/**/*.d.ts.map"
     ],
     "win": {
       "target": [
@@ -51,6 +58,10 @@
     },
     "portable": {
       "artifactName": "CodeFlow-${version}-Portable.exe"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/typescript-language-server/**",
+      "node_modules/typescript/**"
+    ]
   }
 }

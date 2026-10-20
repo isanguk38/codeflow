@@ -8,6 +8,7 @@ import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
 import { startUpdateCheck } from './update.js';
+import { initCode, activateCode, closeActiveTab } from './code.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -19,6 +20,7 @@ function setView(view) {
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'log') activateLog();
   if (view === 'stash') activateStash();
+  if (view === 'code') activateCode();
 }
 
 function applyTheme(theme) {
@@ -107,6 +109,7 @@ async function main() {
   initChanges();
   initLog();
   initStash();
+  initCode();
   setOnOpened(onOpened);
   onRefresh(updateChrome);
 
@@ -127,6 +130,8 @@ async function main() {
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.modal-backdrop')) return;
     const k = e.key.toLowerCase();
+    // 코드 편집기 안에서는 편집기 단축키(Ctrl+K 조합 등)를 우선한다. 탭 닫기/전환만 앱이 처리.
+    if (e.target.closest?.('.monaco-editor') && !(e.ctrlKey && (k === 'w' || e.key === 'Tab'))) return;
     if (e.key === 'F5') {
       e.preventDefault();
       refresh();
@@ -160,7 +165,12 @@ async function main() {
       cycleTab(e.shiftKey ? -1 : 1);
     } else if (e.ctrlKey && k === 'w') {
       e.preventDefault();
-      state.repo && closeTab(state.repo);
+      // 코드 화면에서는 VS Code 처럼 파일 탭을 닫는다
+      if (state.view === 'code') closeActiveTab();
+      else state.repo && closeTab(state.repo);
+    } else if (e.altKey && e.key === '1') {
+      e.preventDefault();
+      setView('code');
     }
   });
 
