@@ -133,6 +133,21 @@ ipcMain.on('lsp:send', (_e, id, msg) => lsp.sendTo(id, msg));
 ipcMain.handle('lsp:stop', (_e, id) => lsp.stop(id));
 app.on('before-quit', () => lsp.stopAll());
 
+// 코드 화면: 터미널
+const terminal = require('./terminal');
+ipcMain.handle('term:shells', () => terminal.shells().map(({ id, name }) => ({ id, name })));
+ipcMain.handle('term:create', (e, opts) => {
+  try {
+    return { ok: true, data: terminal.create(opts, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a)) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.on('term:write', (_e, id, data) => terminal.write(id, data));
+ipcMain.on('term:resize', (_e, id, cols, rows) => terminal.resize(id, cols, rows));
+ipcMain.handle('term:kill', (_e, id) => terminal.kill(id));
+app.on('before-quit', () => terminal.killAll());
+
 // 앱 업데이트
 const updater = require('./updater');
 ipcMain.handle('update:check', async () => {

@@ -8,7 +8,7 @@ import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
 import { startUpdateCheck } from './update.js';
-import { initCode, activateCode, closeActiveTab } from './code.js';
+import { initCode, activateCode, closeActiveTab, toggleTerminalPanel } from './code.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -131,7 +131,14 @@ async function main() {
     if (document.querySelector('.modal-backdrop')) return;
     const k = e.key.toLowerCase();
     // 코드 편집기 안에서는 편집기 단축키(Ctrl+K 조합 등)를 우선한다. 탭 닫기/전환만 앱이 처리.
-    if (e.target.closest?.('.monaco-editor') && !(e.ctrlKey && (k === 'w' || e.key === 'Tab'))) return;
+    // 터미널 안에서도 마찬가지(입력은 셸로 간다).
+    if (e.target.closest?.('.monaco-editor, .xterm') && !(e.ctrlKey && (k === 'w' || e.key === 'Tab' || e.code === 'Backquote'))) return;
+    if (e.ctrlKey && !e.shiftKey && e.code === 'Backquote') {
+      e.preventDefault();
+      if (state.view !== 'code') setView('code');
+      toggleTerminalPanel();
+      return;
+    }
     if (e.key === 'F5') {
       e.preventDefault();
       refresh();

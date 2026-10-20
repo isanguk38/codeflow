@@ -31,7 +31,7 @@ npm run dist
 | 스태시 | 작업 중인 변경 보관, 적용, 꺼내기, 삭제 |
 | 병합 | 병합 방식 선택: 기본 / 항상 병합 커밋(--no-ff) / 하나로 합치기(--squash) / Fast-forward 만(--ff-only), 병합 커밋 메시지 편집 |
 | 원격 | Fetch, Pull(병합 또는 리베이스), Push 전 커밋 목록 확인, 강제 Push(--force-with-lease) |
-| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript 오류 표시(한국어)·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리 |
+| 코드 | VS Code 편집기(Monaco)로 파일 보기·수정·저장, 파일 탐색기(새 파일/폴더, 이름 변경, 휴지통 삭제, Git 상태 표시), 파일 탭, 줄 번호 옆 Git 변경 표시, TypeScript/JavaScript 오류 표시(한국어)·자동 완성·마우스 올림 정보·정의로 이동(F12)·서식 정리, 아래쪽 터미널 패널(PowerShell / 명령 프롬프트 / Git Bash, 여러 개, 프로젝트 폴더에서 시작) |
 
 스마트 모드: 로컬 변경 때문에 체크아웃/Pull 이 막히면 변경 사항을 자동으로 보관했다가 작업 후 다시 적용합니다.
 
@@ -65,6 +65,7 @@ npm run dist
 | Ctrl+Tab / Ctrl+Shift+Tab | 다음/이전 프로젝트 탭 |
 | Ctrl+W | 현재 탭 닫기 (코드 화면에서는 파일 탭 닫기) |
 | Alt+1 | 코드 화면 |
+| Ctrl+` | 터미널 열기/닫기 |
 | Ctrl+S | 파일 저장 (코드 화면) |
 | F12 / Shift+F12 | 정의로 이동 / 참조 찾기 (코드 화면) |
 | Shift+Alt+F | 서식 정리 (코드 화면) |
@@ -80,6 +81,7 @@ src/
   main/channels.js   렌더러에서 호출 가능한 Git 함수 목록
   main/files.js      코드 화면 파일 작업
   main/lsp.js        언어 서버 실행/중계 (TypeScript 는 앱에 포함)
+  main/terminal.js   터미널 (ConPTY 로 셸 실행)
   preload.js         window.api 로 안전하게 노출
   renderer/          화면 (HTML/CSS/바닐라 JS 모듈)
 ```

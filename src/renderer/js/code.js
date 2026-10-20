@@ -2,6 +2,7 @@
 import { $, h, contextMenu, confirmDialog, promptDialog, choiceDialog, toast, splitter } from './ui.js';
 import { state, git, onRefresh, refresh } from './state.js';
 import * as lsp from './lsp-client.js';
+import { initTerminal, showTerminalsFor, toggleTerminal, isTerminalVisible } from './terminal.js';
 
 const MONACO_BASE = '../../node_modules/monaco-editor/min/vs';
 
@@ -50,9 +51,13 @@ export function initCode() {
         <div class="code-editor" id="codeEditor"></div>
         <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Shift+Alt+F 서식 정리</small></div></div>
       </div>
+      <div class="splitter-y" id="termSplit" hidden></div>
+      <div class="term-panel" id="termPanel" hidden></div>
       <div class="code-status" id="codeStatus"></div>
     </div>`;
   emptyHtml = $('#codeEmpty').innerHTML;
+  initTerminal($('#termPanel'), $('#termSplit'));
+  window.addEventListener('terminal-visibility', () => updateStatus());
   splitter($('#codeSplit'), $('#codeExplorer'), { min: 160, max: 600, key: 'codeExplorer' });
   $('#codeReload').onclick = () => renderTree();
   $('#codeCollapse').onclick = () => {
@@ -187,6 +192,7 @@ function showRepo() {
     if (d) d.viewState = editor.saveViewState();
   }
   boundRepo = state.repo;
+  showTerminalsFor();
   renderTree();
   const v = view();
   v.tabs = v.tabs.filter((p) => docs.has(keyOf(p)));
@@ -489,6 +495,11 @@ function closeDoc(d, { force } = {}) {
   else showEmpty();
 }
 
+export function toggleTerminalPanel() {
+  toggleTerminal();
+  updateStatus();
+}
+
 export function closeActiveTab() {
   const v = view();
   if (v.active) closeTab(v.active);
@@ -612,8 +623,14 @@ function updateStatus() {
   const el = $('#codeStatus');
   if (!el) return;
   const d = activeDoc();
+  const termBtn = h('span', { class: `cs-item cs-btn ${isTerminalVisible() ? 'on' : ''}`, title: '터미널 열기/닫기 (Ctrl+`)', text: '⌨ 터미널' });
+  termBtn.onclick = () => {
+    toggleTerminal();
+    updateStatus();
+  };
   if (!d || !editor) {
     el.innerHTML = '';
+    el.append(h('span', { class: 'tb-spacer' }), termBtn);
     return;
   }
   const p = editor.getPosition();
@@ -643,7 +660,8 @@ function updateStatus() {
     h('span', { class: 'cs-item', text: p ? `줄 ${p.lineNumber}, 열 ${p.column}` : '' }),
     h('span', { class: 'cs-item', text: lang }),
     h('span', { class: 'cs-item', text: `UTF-8${d.bom ? ' BOM' : ''}` }),
-    h('span', { class: 'cs-item', text: d.eol })
+    h('span', { class: 'cs-item', text: d.eol }),
+    termBtn
   );
   // 언어 서버 준비 상태가 바뀌면 다시 그린다
   if (info?.status === 'starting' || (lsp.serverLangFor(d.model) && !info)) setTimeout(updateStatus, 800);
