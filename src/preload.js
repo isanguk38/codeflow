@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('api', {
     install: () => ipcRenderer.invoke('java:install'),
     remove: () => ipcRenderer.invoke('java:remove'),
     project: (root) => ipcRenderer.invoke('java:project', root),
+    addJdk: (home) => ipcRenderer.invoke('java:addJdk', home),
     onProgress: (cb) => ipcRenderer.on('java:progress', (_e, p) => cb(p)),
   },
   appVersion: () => ipcRenderer.invoke('app:version'),

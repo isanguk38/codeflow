@@ -20,6 +20,15 @@ const packDir = () => path.join(app.getPath('userData'), 'language-packs', 'java
 const serverDir = () => path.join(packDir(), 'jdtls');
 const jreDir = () => path.join(packDir(), 'jre');
 const lombokJar = () => path.join(packDir(), 'lombok.jar');
+// 사용자가 폴더에서 직접 고른 JDK 목록 (언어 팩을 지워도 남도록 language-packs 바깥에 저장)
+const customFile = () => path.join(app.getPath('userData'), 'custom-jdks.json');
+function customJdks() {
+  try {
+    return JSON.parse(fs.readFileSync(customFile(), 'utf8'));
+  } catch {
+    return [];
+  }
+}
 const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'); // Windows 10 이상 기본 포함 (tar.gz, zip 모두 풂)
 
 // ---------- 설치된 JDK/JRE 찾기 ----------
@@ -54,6 +63,7 @@ function detectJdks() {
   for (const base of pf) for (const vendor of ['Java', 'Eclipse Adoptium', 'Eclipse Foundation', 'Amazon Corretto', 'Zulu', 'Microsoft', 'BellSoft', 'OpenJDK', 'Semeru']) addParent(path.join(base, vendor));
   addParent(path.join(os.homedir(), '.jdks')); // IntelliJ 가 받아 둔 JDK
   if (process.env.JAVA_HOME) roots.add(process.env.JAVA_HOME);
+  for (const c of customJdks()) roots.add(c);
   roots.add(jreDir());
   const list = [];
   const seen = new Set();
@@ -90,6 +100,20 @@ function projectRuntimes(preferredHome) {
     if (p) byName.set(p.name, p);
   }
   return [...byName.values()].map((j) => ({ name: j.name, path: j.home, default: !!preferredHome && j.home.toLowerCase() === preferredHome.toLowerCase() }));
+}
+
+// 폴더에서 직접 고른 JDK 추가 (IntelliJ 의 'Add SDK → JDK' 와 같음). bin/java.exe 와 release 파일로 확인
+function addCustomJdk(home) {
+  let dir = home;
+  // bin 폴더나 그 안의 파일을 골랐어도 JDK 최상위 폴더를 찾아 준다
+  for (let i = 0; i < 2 && !fs.existsSync(path.join(dir, 'bin', 'java.exe')); i++) dir = path.dirname(dir);
+  if (!fs.existsSync(path.join(dir, 'bin', 'java.exe'))) throw new Error('선택한 폴더에서 bin\\java.exe 를 찾을 수 없습니다. JDK 설치 폴더(예: C:\\Program Files\\Java\\jdk-1.8)를 선택하세요.');
+  const version = readRelease(dir);
+  if (!version) throw new Error('JDK 버전을 확인할 수 없습니다 (release 파일 없음).');
+  const list = customJdks().filter((p) => p.toLowerCase() !== dir.toLowerCase());
+  list.push(dir);
+  fs.writeFileSync(customFile(), JSON.stringify(list, null, 2));
+  return { home: dir, version, major: majorOf(version), jdk: fs.existsSync(path.join(dir, 'bin', 'javac.exe')) };
 }
 
 // ---------- 설치 상태 / 설치 / 제거 ----------
@@ -271,4 +295,4 @@ function command(root) {
   };
 }
 
-module.exports = { status, install, remove, command, detectJdks, projectRuntimes, projectInfo };
+module.exports = { status, install, remove, command, detectJdks, projectRuntimes, projectInfo, addCustomJdk };

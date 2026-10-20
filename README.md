@@ -98,7 +98,7 @@ VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류�
 | --- | --- | --- |
 | TypeScript / JavaScript | typescript-language-server | 프로젝트의 `node_modules/typescript`, 없으면 앱에 포함된 TypeScript |
 | Python | Pyright (Pylance 의 무료 엔진) | 상태 표시줄 `🐍 Python` 에서 고른 인터프리터. 처음엔 프로젝트의 `.venv`/`venv` → 시스템 Python 순으로 자동 선택. 열린 파일만 검사해 큰 프로젝트에서도 가볍게 동작 |
-| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | Java 파일을 처음 열 때 설치 안내(약 130MB, 언어 서버 + Java 21 실행 환경 + Lombok). 검사 기준 JDK 는 `pom.xml`/`build.gradle` 의 Java 버전에 맞춰 PC 에 설치된 JDK(Program Files, IntelliJ 의 `~/.jdks` 등) 중에서 자동 선택하고, 상태 표시줄 `☕ Java` 에서 직접 고를 수도 있음. Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
+| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | Java 파일을 처음 열 때 설치 안내(약 130MB, 언어 서버 + Java 21 실행 환경 + Lombok). 검사 기준 JDK 는 `pom.xml`/`build.gradle` 의 Java 버전에 맞춰 PC 에 설치된 JDK(Program Files, IntelliJ 의 `~/.jdks` 등) 중에서 자동 선택하고, 상태 표시줄 `☕ Java` 에서 직접 고르거나 `📁 폴더에서 JDK 선택` 으로 추가할 수도 있음. 자동 완성은 프로젝트 JDK 의 클래스 기준(최대 200개 후보). Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
 
 ## 자동 업데이트
 

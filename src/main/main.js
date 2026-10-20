@@ -151,6 +151,13 @@ ipcMain.handle('java:remove', () => {
   }
 });
 ipcMain.handle('java:project', (_e, root) => javapack.projectInfo(root));
+ipcMain.handle('java:addJdk', (_e, home) => {
+  try {
+    return { ok: true, data: javapack.addCustomJdk(home) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // 코드 화면: Python 인터프리터 목록
 ipcMain.handle('python:interpreters', (_e, root) => require('./python').interpreters(root));

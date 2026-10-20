@@ -37,7 +37,8 @@ function javaSettings(runtimes) {
     },
     autobuild: { enabled: true },
     maxConcurrentBuilds: 1,
-    completion: { enabled: true, guessMethodArguments: 'insertBestGuessedArguments' },
+    // 후보 최대 개수: 기본 50개면 javax.* 등에 밀려 java.util 이 안 보일 수 있어 200개로 늘림
+    completion: { enabled: true, guessMethodArguments: 'insertBestGuessedArguments', maxResults: 200 },
     signatureHelp: { enabled: true },
     format: { enabled: true },
     references: { includeDecompiledSources: true },

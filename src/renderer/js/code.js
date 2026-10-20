@@ -880,6 +880,18 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
       onClick: () => choose(j.home),
     })),
     javaPack.jdks.length ? null : { label: 'PC 에 설치된 JDK 를 찾지 못했습니다', disabled: true },
+    '-',
+    {
+      label: '📁 폴더에서 JDK 선택...',
+      onClick: async () => {
+        const dir = await window.api.pickFolder('JDK 설치 폴더 선택 (예: C:\\Program Files\\Java\\jdk-1.8)');
+        if (!dir) return;
+        const r = await window.api.java.addJdk(dir);
+        if (!r.ok) return toast(r.error, 'error', 6000);
+        toast(`JDK ${r.data.version} 을(를) 추가했습니다.`, 'ok');
+        choose(r.data.home);
+      },
+    },
   ];
   const r = anchor.getBoundingClientRect();
   contextMenu(r.left, r.top - 8 - items.length * 28, items);
