@@ -761,6 +761,8 @@ function pythonStatusItem(repo) {
 // ---------- Java 언어 팩 ----------
 
 let javaPack = null; // 설치 상태 (window.api.java.status)
+const effectiveCache = new Map(); // 파일+기준JDK → 언어 서버가 실제 적용한 { level, jdk }
+const effectivePending = new Set();
 let javaInstalling = null;
 
 async function refreshJavaPack() {
@@ -846,14 +848,44 @@ function javaStatusItem(repo, info) {
   const want = level ? (level.startsWith('1.') ? `JavaSE-${level}` : `JavaSE-${level}`) : null;
   const rt = (info.java?.runtimes || []).find((r) => r.name === want);
   const missing = level && !rt;
+  // 빌드 파일도 IntelliJ/Eclipse 설정도 없고 JDK 도 안 골랐으면: 직접 고르도록 안내
+  const def = (info.java?.runtimes || []).find((r) => r.default);
+  if (!proj.build && !picked && !def) {
+    const el = h('span', { class: 'cs-item cs-btn warn', text: '☕ Java · JDK 선택 필요', title: 'pom.xml / build.gradle / IntelliJ(.idea) / Eclipse 설정이 없어 Java 버전을 알 수 없습니다.\n클릭해서 이 프로젝트의 JDK 를 고르세요.' });
+    el.onclick = () => openJdkPicker(el, repo, info, null, proj);
+    return el;
+  }
   const el = h('span', {
     class: `cs-item cs-btn ${missing ? 'warn' : ''}`,
-    text: `☕ Java ${level || '?'}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`,
+    text: `☕ Java ${level || (def ? def.name.replace(/^JavaSE-/, '') : '?')}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`,
     title: missing
       ? `프로젝트는 Java ${level} 기준인데 해당 JDK 가 PC 에 없습니다. 설치된 다른 JDK 로 검사합니다.`
       : `검사 기준: ${rt ? rt.path : '언어 서버 기본 JDK'}\n클릭해서 기준 JDK 선택`,
   });
   el.onclick = () => openJdkPicker(el, repo, info, level, proj);
+  // 언어 서버가 실제로 적용한 Java 버전/JDK 로 표시를 바로잡는다 (추측이 아닌 실제 값)
+  const d = activeDoc();
+  if (d && info.javaState?.ready) {
+    const key = `${d.path}|${info.java?.runtimes?.find((r) => r.default)?.path || ''}`;
+    const show = (eff) => {
+      if (!eff?.level) return;
+      el.textContent = `☕ Java ${eff.level}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`;
+      el.title = `실제 검사 기준: Java ${eff.level}
+JDK: ${eff.jdk || '-'}
+클릭해서 기준 JDK 선택`;
+      el.classList.toggle('warn', !!level && eff.level !== level);
+    };
+    if (effectiveCache.has(key)) show(effectiveCache.get(key));
+    else if (!effectivePending.has(key)) {
+      effectivePending.add(key);
+      lsp.javaEffectiveSettings(d.model).then((eff) => {
+        effectivePending.delete(key);
+        if (!eff) return;
+        effectiveCache.set(key, eff);
+        updateStatus(); // 실제 값으로 다시 그림
+      });
+    }
+  }
   return el;
 }
 
@@ -864,6 +896,7 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
     if (home) localStorage.setItem(`java.jdk:${repo.toLowerCase()}`, home);
     else localStorage.removeItem(`java.jdk:${repo.toLowerCase()}`);
     lsp.setPreferredJdk(repo, home);
+    effectiveCache.clear();
     const models = [...docs.values()].filter((d) => d.repo === repo && !d.virtual && d.model.getLanguageId() === 'java').map((d) => d.model);
     toast('기준 JDK 를 바꿔 Java 언어 서버를 다시 시작합니다.', 'info');
     await lsp.restartServer(repo, 'java', models);

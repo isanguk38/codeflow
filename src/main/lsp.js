@@ -31,15 +31,15 @@ const javapack = require('./javapack');
 const LANGS = {
   typescript: tsServerCommand,
   python: pyrightCommand,
-  java: (root) => javapack.command(root),
+  java: (root, extra) => javapack.command(root, extra.javaKey),
 };
 
 class Server {
-  constructor(id, lang, root, send) {
+  constructor(id, lang, root, send, extra = {}) {
     this.id = id;
     this.lang = lang;
     this.root = root;
-    const { cmd, args, env } = LANGS[lang](root);
+    const { cmd, args, env } = LANGS[lang](root, extra);
     this.proc = spawn(cmd, args, { cwd: root, env: { ...process.env, ...env }, windowsHide: true });
     this.buf = Buffer.alloc(0);
     this.proc.stdout.on('data', (d) => {
@@ -89,21 +89,32 @@ class Server {
 const servers = new Map(); // id → Server
 let seq = 0;
 
+function javaStartInfo(root, preferredJdk) {
+  const project = javapack.projectInfo(root);
+  return { runtimes: javapack.projectRuntimes(preferredJdk, project), project };
+}
+
 function start(lang, root, send, opts = {}) {
   if (!LANGS[lang]) throw new Error(`지원하지 않는 언어: ${lang}`);
-  for (const s of servers.values()) if (s.lang === lang && s.root.toLowerCase() === root.toLowerCase() && s.proc.exitCode === null) return { id: s.id, reused: true };
+  // Java: 기준 JDK 를 먼저 정해야 색인 폴더(프로젝트+JDK)를 고를 수 있다
+  const java = lang === 'java' ? javaStartInfo(root, opts.preferredJdk) : null;
+  const javaKey = java ? java.runtimes.find((r) => r.default)?.path || '' : '';
+  const info = (id, reused) => ({ id, reused, tsdk: lang === 'typescript' ? tsdkFor(root) : null, java });
+  for (const s of servers.values()) if (s.lang === lang && s.root.toLowerCase() === root.toLowerCase() && s.proc.exitCode === null && (s.javaKey || '') === javaKey) return info(s.id, true);
   const id = ++seq;
-  const s = new Server(id, lang, root, (ch, ...a) => {
-    if (ch === 'lsp:exit') servers.delete(id);
-    send(ch, ...a);
-  });
-  servers.set(id, s);
-  return {
+  const s = new Server(
     id,
-    tsdk: lang === 'typescript' ? tsdkFor(root) : null,
-    // Java: 프로젝트 검사 기준으로 쓸 JDK 목록과 pom.xml/build.gradle 정보
-    java: lang === 'java' ? { runtimes: javapack.projectRuntimes(opts.preferredJdk), project: javapack.projectInfo(root) } : null,
-  };
+    lang,
+    root,
+    (ch, ...a) => {
+      if (ch === 'lsp:exit') servers.delete(id);
+      send(ch, ...a);
+    },
+    { javaKey }
+  );
+  s.javaKey = javaKey;
+  servers.set(id, s);
+  return info(id, false);
 }
 
 function sendTo(id, msg) {

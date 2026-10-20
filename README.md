@@ -98,7 +98,18 @@ VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류�
 | --- | --- | --- |
 | TypeScript / JavaScript | typescript-language-server | 프로젝트의 `node_modules/typescript`, 없으면 앱에 포함된 TypeScript |
 | Python | Pyright (Pylance 의 무료 엔진) | 상태 표시줄 `🐍 Python` 에서 고른 인터프리터. 처음엔 프로젝트의 `.venv`/`venv` → 시스템 Python 순으로 자동 선택. 열린 파일만 검사해 큰 프로젝트에서도 가볍게 동작 |
-| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | Java 파일을 처음 열 때 설치 안내(약 130MB, 언어 서버 + Java 21 실행 환경 + Lombok). 검사 기준 JDK 는 `pom.xml`/`build.gradle` 의 Java 버전에 맞춰 PC 에 설치된 JDK(Program Files, IntelliJ 의 `~/.jdks` 등) 중에서 자동 선택하고, 상태 표시줄 `☕ Java` 에서 직접 고르거나 `📁 폴더에서 JDK 선택` 으로 추가할 수도 있음. 자동 완성은 프로젝트 JDK 의 클래스 기준(최대 200개 후보). Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
+| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | 아래 'Java 프로젝트 설정 찾는 순서' 참고. Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
+
+### Java 프로젝트 설정 찾는 순서 (IntelliJ 방식)
+
+1. `pom.xml` (Maven) / `build.gradle` (Gradle): 적힌 Java 버전에 맞는 JDK 로 검사하고, 의존성 라이브러리를 받아 자동 완성에 포함
+2. `.idea` (IntelliJ 로 열었던 프로젝트): `misc.xml` 의 Project SDK·Language level, IntelliJ 에 등록된 JDK 경로(`jdk.table.xml`), `.idea/libraries`·`.iml` 의 jar, 소스 폴더를 그대로 사용 (CodeFlow 는 `.idea` 를 읽기만 하고 만들지 않음)
+3. `.classpath` (Eclipse 프로젝트): 적힌 Java 버전과 라이브러리 사용
+4. 아무것도 없으면: `lib/`, `libs/`, `WEB-INF/lib/` 의 jar 를 라이브러리로, `package` 선언으로 소스 폴더를 자동으로 찾고, JDK 는 상태 표시줄 `☕ Java · JDK 선택 필요` 에서 고름
+
+- JDK 는 `C:\Program Files` 의 Java 폴더, IntelliJ 가 받은 `~/.jdks`, IntelliJ 에 등록된 JDK, 직접 고른 폴더에서 찾습니다.
+- 상태 표시줄 `☕ Java` 위에 마우스를 올리면 언어 서버가 **실제로 적용한** Java 버전과 JDK 경로가 보입니다.
+- 프로젝트 폴더에 `.project`/`.classpath`/`.settings` 를 만들지 않습니다. (Maven 빌드 결과 `target/` 은 IntelliJ·VS Code 와 같이 생김)
 
 ## 자동 업데이트
 

@@ -27,10 +27,20 @@ export function setPreferredJdk(repo, home) {
   else preferredJdks.delete(repo.toLowerCase());
 }
 
-function javaSettings(runtimes) {
+// 빌드 도구가 없는 프로젝트에서 라이브러리로 잡을 흔한 jar 위치
+const DEFAULT_LIB_GLOBS = ['lib/**/*.jar', 'libs/**/*.jar', '**/WEB-INF/lib/**/*.jar'];
+
+function javaSettings(runtimes, project = {}) {
   return {
     configuration: { runtimes, updateBuildConfiguration: 'automatic' },
+    // Maven/Gradle 이 없는 프로젝트: IntelliJ(.idea) 에 등록된 jar + lib 폴더 jar 를 라이브러리로, 소스 폴더 지정
+    project: {
+      referencedLibraries: [...DEFAULT_LIB_GLOBS, ...(project.libraries || [])],
+      ...(project.sourcePaths?.length ? { sourcePaths: project.sourcePaths } : {}),
+    },
     import: {
+      // 프로젝트 폴더에 .project / .classpath / .settings 를 만들지 않는다 (Git 변경 사항에 섞이지 않게)
+      generatesMetadataFilesAtProjectRoot: false,
       maven: { enabled: true },
       gradle: { enabled: true, wrapper: { enabled: true } },
       exclusions: ['**/node_modules/**', '**/.metadata/**', '**/archetype-resources/**', '**/META-INF/maven/**'],
@@ -138,7 +148,7 @@ class Server {
     this.tsdk = r.data.tsdk;
     if (r.data.java) {
       this.java = r.data.java; // { runtimes, project }
-      this.javaSettings = javaSettings(r.data.java.runtimes);
+      this.javaSettings = javaSettings(r.data.java.runtimes, r.data.java.project);
       this.javaState = { ready: false, message: 'Java 언어 서버 시작 중' };
       // 프로젝트 준비(ServiceReady)가 끝나야 자동 완성 등이 정확하므로, 요청은 이 약속을 기다린다
       this.javaReady = new Promise((res) => (this.resolveJavaReady = res));
@@ -319,6 +329,16 @@ export function serverInfo(repo, lang = 'typescript') {
   const s = servers.get(`${repo.toLowerCase()}|${lang}`);
   if (!s) return null;
   return { status: s.status, ts: s.tsVersion, tsdk: s.tsdk, java: s.java, javaState: s.javaState, error: s.error };
+}
+
+// Java: 언어 서버가 이 파일(프로젝트)에 실제로 적용한 Java 버전과 JDK 경로
+export async function javaEffectiveSettings(model) {
+  const s = await ready(model);
+  if (!s || s.lang !== 'java') return null;
+  const keys = ['org.eclipse.jdt.core.compiler.compliance', 'org.eclipse.jdt.ls.core.vm.location'];
+  const r = await s.request('workspace/executeCommand', { command: 'java.project.getSettings', arguments: [model.uri.toString(), keys] }).catch(() => null);
+  if (!r) return null;
+  return { level: r[keys[0]] || null, jdk: r[keys[1]] || null };
 }
 
 // 프로젝트 탭을 닫으면 그 프로젝트의 언어 서버를 모두 끈다
