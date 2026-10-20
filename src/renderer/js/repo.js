@@ -420,8 +420,8 @@ async function javaPackRow() {
             b.disabled = true;
             const { installJavaPack } = await import('./code.js');
             try {
-              await installJavaPack((p) => (b.textContent = p.step === 'download' && p.percent >= 0 ? `받는 중 ${p.percent}%` : p.message));
-              toast('Java 언어 팩을 설치했습니다.', 'ok');
+              // 다른 곳(코드 화면)에서 이미 설치 중이면 그 진행 상황을 이어서 보여 준다
+              await installJavaPack((p) => (b.textContent = !p ? '설치 준비 중...' : p.step === 'download' && p.percent >= 0 ? `받는 중 ${p.percent}%` : p.message));
             } catch (err) {
               errorDialog(err.message, 'Java 언어 팩 설치 실패');
             }

@@ -1,6 +1,6 @@
 // 코드 화면: 파일 탐색기 + 파일 탭 + Monaco 편집기(VS Code 편집기) + 언어 서버 오류 표시 + Git 변경 표시
 import { $, h, contextMenu, confirmDialog, promptDialog, choiceDialog, toast, splitter } from './ui.js';
-import { state, git, onRefresh, refresh } from './state.js';
+import { state, git, onRefresh, refresh, busy } from './state.js';
 import * as lsp from './lsp-client.js';
 import { initTerminal, showTerminalsFor, toggleTerminal, isTerminalVisible } from './terminal.js';
 
@@ -781,20 +781,44 @@ async function prepareJava(repo) {
   lsp.setPreferredJdk(repo, localStorage.getItem(`java.jdk:${repo.toLowerCase()}`) || null);
 }
 
-// 설정 화면에서도 쓰는 설치 함수
+// 설치 진행 상황 (어느 Java 파일을 보든, 설정 화면이든 같은 값을 보여 준다)
+let javaProgress = null;
+let progressHooked = false;
+const progressText = (p) => (p ? `${p.message}${p.percent >= 0 && p.step === 'download' ? ` (${p.percent}%)` : ''}` : 'Java 언어 팩 설치 준비 중...');
+
+// 설정 화면에서도 쓰는 설치 함수 (이미 설치 중이면 같은 설치를 기다린다)
 export async function installJavaPack(onProgress) {
+  if (!progressHooked) {
+    progressHooked = true;
+    window.api.java.onProgress((p) => {
+      javaProgress = p;
+      window.dispatchEvent(new CustomEvent('java-progress', { detail: p }));
+    });
+  }
   if (!javaInstalling) {
+    javaProgress = null;
+    const done = busy('Java 언어 팩 설치'); // 툴바에 'Java 언어 팩 설치 중... N초'
     javaInstalling = (async () => {
-      window.api.java.onProgress((p) => window.dispatchEvent(new CustomEvent('java-progress', { detail: p })));
-      const r = await window.api.java.install();
-      javaInstalling = null;
-      if (!r.ok) throw new Error(r.error);
-      await refreshJavaPack();
-      // 이미 열어 둔 Java 파일들을 언어 서버에 연결
-      for (const d of docs.values()) if (!d.virtual && d.model.getLanguageId() === 'java') prepareJava(d.repo).then(() => lsp.attachModel(d.repo, d.model).catch(() => {}));
-      return r.data;
+      try {
+        const r = await window.api.java.install();
+        if (!r.ok) throw new Error(r.error);
+        await refreshJavaPack();
+        // 이미 열어 둔 Java 파일들을 언어 서버에 연결
+        for (const d of docs.values()) if (!d.virtual && d.model.getLanguageId() === 'java') prepareJava(d.repo).then(() => lsp.attachModel(d.repo, d.model).catch(() => {}));
+        toast('Java 언어 팩을 설치했습니다. 열린 Java 파일을 검사합니다.', 'ok', 5000);
+        return r.data;
+      } finally {
+        done();
+        javaInstalling = null;
+        javaProgress = null;
+        // 보고 있는 파일의 안내 띠를 상태에 맞게 다시 그린다
+        const d = activeDoc();
+        if (d) showLanguageNotice(d);
+        updateStatus();
+      }
     })();
   }
+  onProgress?.(javaProgress);
   const handler = (e) => onProgress?.(e.detail);
   window.addEventListener('java-progress', handler);
   try {
@@ -864,20 +888,35 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
 // ---------- Java 파일을 열 때 안내 (언어 팩 미설치 시 설치 제안) ----------
 
 const dismissedNotice = new Set();
+let noticeProgressHandler = null;
 
 function showLanguageNotice(doc) {
   const el = $('#codeNotice');
   if (!el) return;
+  if (noticeProgressHandler) {
+    window.removeEventListener('java-progress', noticeProgressHandler);
+    noticeProgressHandler = null;
+  }
   const lang = doc.model.getLanguageId();
   const key = `${doc.repo.toLowerCase()}|${lang}`;
-  if (lang !== 'java' || doc.virtual || javaPack?.installed || dismissedNotice.has(key)) {
-    if (!javaInstalling) el.hidden = true;
+  if (lang !== 'java' || doc.virtual || (javaPack?.installed && !javaInstalling) || (!javaInstalling && dismissedNotice.has(key))) {
+    el.hidden = true;
     return;
   }
   el.innerHTML = '';
-  const msg = h('span', {
-    html: '<b>Java 코드 검사를 쓰려면 Java 언어 팩이 필요합니다.</b> 처음 한 번 약 130MB 를 받으면, 프로젝트의 JDK 버전(pom.xml / build.gradle) 기준으로 오류 표시·자동 완성·어노테이션 확인·정의로 이동이 됩니다. (VS Code Java 와 같은 엔진)',
-  });
+  const msg = h('span');
+  if (javaInstalling) {
+    // 설치 중: 다른 파일을 열어도 같은 진행 상황을 이어서 보여 준다
+    const draw = () => (msg.innerHTML = `<span class="spinner"></span> <b>Java 언어 팩 설치 중</b> · ${progressText(javaProgress)}`);
+    draw();
+    noticeProgressHandler = draw;
+    window.addEventListener('java-progress', noticeProgressHandler);
+    el.append(h('span', { class: 'cn-ico', text: '☕' }), msg);
+    el.hidden = false;
+    return;
+  }
+  msg.innerHTML =
+    '<b>Java 코드 검사를 쓰려면 Java 언어 팩이 필요합니다.</b> 처음 한 번 약 130MB 를 받으면, 프로젝트의 JDK 버전(pom.xml / build.gradle) 기준으로 오류 표시·자동 완성·어노테이션 확인·정의로 이동이 됩니다. (VS Code Java 와 같은 엔진)';
   const installBtn = h('button', { class: 'btn small primary', text: '설치' });
   const closeBtn = h('button', {
     class: 'tb-btn small',
@@ -888,21 +927,17 @@ function showLanguageNotice(doc) {
     },
   });
   installBtn.onclick = async () => {
-    installBtn.disabled = true;
-    closeBtn.disabled = true;
-    try {
-      await installJavaPack((p) => {
-        msg.innerHTML = `<span class="spinner"></span> ${p.message}${p.percent >= 0 && p.step === 'download' ? ` (${p.percent}%)` : ''}`;
-      });
-      el.hidden = true;
-      toast('Java 언어 팩을 설치했습니다. 열린 Java 파일을 검사합니다.', 'ok', 5000);
-      updateStatus();
-    } catch (e) {
-      msg.innerHTML = `<b>설치하지 못했습니다:</b> ${e.message}`;
-      installBtn.disabled = false;
-      closeBtn.disabled = false;
-      installBtn.textContent = '다시 시도';
-    }
+    const p = installJavaPack().catch((e) => {
+      // 실패하면 안내 띠에 이유와 '다시 시도' 를 보여 준다
+      const cur = activeDoc();
+      if (cur) showLanguageNotice(cur);
+      const m = $('#codeNotice span:nth-child(2)');
+      if (m) m.innerHTML = `<b>설치하지 못했습니다:</b> ${e.message}`;
+      const b = $('#codeNotice .btn.primary');
+      if (b) b.textContent = '다시 시도';
+    });
+    showLanguageNotice(doc); // 진행 상황 모드로 다시 그림
+    await p;
   };
   el.append(h('span', { class: 'cn-ico', text: '☕' }), msg, h('span', { class: 'tb-spacer' }), installBtn, closeBtn);
   el.hidden = false;
