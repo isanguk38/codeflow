@@ -31,7 +31,7 @@ const javapack = require('./javapack');
 const LANGS = {
   typescript: tsServerCommand,
   python: pyrightCommand,
-  java: (root, extra) => javapack.command(root, extra.javaKey),
+  java: (root) => javapack.command(root),
 };
 
 class Server {
@@ -97,13 +97,10 @@ async function javaStartInfo(root, legacyJdk) {
 
 async function start(lang, root, send, opts = {}) {
   if (!LANGS[lang]) throw new Error(`지원하지 않는 언어: ${lang}`);
-  // Java: 기준 JDK 를 먼저 정해야 색인 폴더(프로젝트+JDK)를 고를 수 있다
+  // Java: 프로젝트 구조/JDK 를 분석해 둔다. 색인 폴더는 프로젝트마다 하나 (구조·JDK 가 바뀌면 실행 중인 서버에 설정만 다시 보냄)
   const java = lang === 'java' ? await javaStartInfo(root, opts.preferredJdk) : null;
-  // 색인 폴더 키: 기준 JDK + (빌드 파일이 없으면) 프로젝트 구조. 구조가 바뀌면 새 색인을 만든다
-  // (언어 서버는 이미 만든 프로젝트의 라이브러리 목록을 다시 읽지 않아서, 그대로 두면 예전 jar 로 검사한다)
-  const javaKey = java ? JSON.stringify([java.runtimes.find((r) => r.default)?.path || '', java.project.libraries, java.project.sourcePaths]) : '';
   const info = (id, reused) => ({ id, reused, tsdk: lang === 'typescript' ? tsdkFor(root) : null, java });
-  for (const s of servers.values()) if (s.lang === lang && s.root.toLowerCase() === root.toLowerCase() && s.proc.exitCode === null && (s.javaKey || '') === javaKey) return info(s.id, true);
+  for (const s of servers.values()) if (s.lang === lang && s.root.toLowerCase() === root.toLowerCase() && s.proc.exitCode === null) return info(s.id, true);
   const id = ++seq;
   const s = new Server(
     id,
@@ -112,10 +109,8 @@ async function start(lang, root, send, opts = {}) {
     (ch, ...a) => {
       if (ch === 'lsp:exit') servers.delete(id);
       send(ch, ...a);
-    },
-    { javaKey }
+    }
   );
-  s.javaKey = javaKey;
   servers.set(id, s);
   return info(id, false);
 }
@@ -134,4 +129,4 @@ function stopAll() {
   servers.clear();
 }
 
-module.exports = { start, sendTo, stop, stopAll };
+module.exports = { javaStartInfo, start, sendTo, stop, stopAll };

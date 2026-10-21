@@ -151,6 +151,8 @@ ipcMain.handle('java:remove', () => {
   }
 });
 ipcMain.handle('java:project', (_e, root) => javapack.projectInfo(root));
+// 프로젝트 구조/JDK 를 바꾼 뒤: 실행 중인 언어 서버에 보낼 새 설정
+ipcMain.handle('java:startInfo', (_e, root) => lsp.javaStartInfo(root));
 ipcMain.handle('java:jarsIn', (_e, dir) => javapack.jarsIn(dir));
 ipcMain.handle('java:saveConfig', (_e, root, patch) => {
   try {

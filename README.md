@@ -112,7 +112,7 @@ Java 파일을 처음 열면 CodeFlow 가 프로젝트를 분석해서 검사 �
    - **JDK**: 직접 고른 JDK → IntelliJ Project SDK → 설치된 가장 최신 JDK
 3. 분석 결과와 직접 바꾼 설정은 프로젝트의 `.codeflow/java.json` 에 저장됩니다 (`.git/info/exclude` 에 자동 등록돼 Git 변경 사항에 나오지 않음)
 
-상태 표시줄 `☕ Java` → **🧱 프로젝트 구조** 에서 JDK 변경, 소스 폴더 추가/제외, jar 체크 해제(검사에서 빼기), 프로젝트 밖 jar 추가(예: Tomcat 의 `servlet-api.jar` → `+ 폴더의 jar 모두 추가`), 다시 분석을 할 수 있습니다. 적용하면 언어 서버가 새 구조로 다시 시작합니다.
+상태 표시줄 `☕ Java` → **🧱 프로젝트 구조** 에서 JDK 변경, 소스 폴더 추가/제외, jar 체크 해제(검사에서 빼기), 프로젝트 밖 jar 추가(예: Tomcat 의 `servlet-api.jar` → `+ 폴더의 jar 모두 추가`), 다시 분석을 할 수 있습니다. 적용하면 언어 서버를 다시 시작하지 않고 바뀐 부분만 1~2초 안에 다시 검사합니다 (IntelliJ 처럼 색인을 처음부터 만들지 않음).
 
 - JDK 는 `C:\Program Files` 의 Java 폴더, IntelliJ 가 받은 `~/.jdks`, IntelliJ 에 등록된 JDK, 직접 고른 폴더에서 찾습니다.
 - 상태 표시줄 `☕ Java` 위에 마우스를 올리면 언어 서버가 **실제로 적용한** Java 버전과 JDK 경로, jar 개수, 소스 폴더가 보입니다.

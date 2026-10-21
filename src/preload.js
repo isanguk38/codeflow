@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
     install: () => ipcRenderer.invoke('java:install'),
     remove: () => ipcRenderer.invoke('java:remove'),
     project: (root) => ipcRenderer.invoke('java:project', root),
+    startInfo: (root) => ipcRenderer.invoke('java:startInfo', root),
     saveConfig: (root, patch) => ipcRenderer.invoke('java:saveConfig', root, patch),
     jarsIn: (dir) => ipcRenderer.invoke('java:jarsIn', dir),
     addJdk: (home) => ipcRenderer.invoke('java:addJdk', home),

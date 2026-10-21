@@ -844,7 +844,7 @@ function javaStatusItem(repo, info) {
   if (!info || info.status === 'starting') return h('span', { class: 'cs-item', html: '<span class="spinner"></span> Java 프로젝트 분석 · 언어 서버 시작 중' });
   if (info.status === 'error') return h('span', { class: 'cs-item err', text: 'Java 언어 서버 오류', title: info.error || '' });
   if (info.javaState && !info.javaState.ready)
-    return h('span', { class: `cs-item ${info.javaState.error ? 'err' : ''}`, html: `${info.javaState.error ? '' : '<span class="spinner"></span> '}${info.javaState.message}`, title: '처음 여는 프로젝트(또는 구조를 바꾼 직후)는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.' });
+    return h('span', { class: `cs-item ${info.javaState.error ? 'err' : ''}`, html: `${info.javaState.error ? '' : '<span class="spinner"></span> '}${info.javaState.message}`, title: '처음 여는 프로젝트는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.' });
   const proj = info.java?.project || {};
   const managed = ['Maven', 'Gradle'].includes(proj.build);
   const level = proj.level ? (proj.level.startsWith('1.') ? proj.level : proj.level.replace(/^(\d+).*/, '$1')) : null;
@@ -894,13 +894,19 @@ lsp.onJavaJdkFixed(() => {
   setTimeout(updateStatus, 3000);
 });
 
-// 프로젝트 설정이 바뀌면 이 프로젝트의 Java 언어 서버를 다시 시작한다 (열린 Java 파일은 다시 연결)
+// 프로젝트 설정(JDK, jar, 소스 폴더)이 바뀌면 실행 중인 Java 언어 서버에 새 설정만 보낸다 (다시 시작하지 않음, 1~2초)
 async function restartJava(repo, message) {
   localStorage.removeItem(`java.jdk:${repo.toLowerCase()}`); // 예전 버전의 저장 위치 (이제 .codeflow/java.json)
   lsp.setPreferredJdk(repo, null);
   effectiveCache.clear();
+  if (await lsp.updateJavaProject(repo)) {
+    toast(message, 'ok', 4000);
+    updateStatus();
+    setTimeout(updateStatus, 6000); // 실제 적용된 JDK 다시 확인
+    return;
+  }
+  // 서버가 아직 시작 중이거나 꺼져 있으면 다시 시작해서 새 설정으로 연다
   const models = [...docs.values()].filter((d) => d.repo === repo && !d.virtual && d.model.getLanguageId() === 'java').map((d) => d.model);
-  toast(message, 'info', 5000);
   await lsp.restartServer(repo, 'java', models);
   updateStatus();
 }
@@ -933,7 +939,7 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
     } catch (e) {
       return toast(e.message, 'error', 6000);
     }
-    await restartJava(repo, '기준 JDK 를 바꿔 Java 언어 서버를 다시 시작합니다.');
+    await restartJava(repo, '기준 JDK 를 바꿨습니다. 잠시 뒤 새 JDK 기준으로 다시 검사합니다.');
   };
   const items = [
     { label: '🧱 프로젝트 구조 (JDK · 소스 폴더 · 라이브러리 jar)...', onClick: () => openProjectStructure(repo) },
@@ -1163,7 +1169,7 @@ export async function openProjectStructure(repo) {
             toast(e.message, 'error', 6000);
             return false;
           }
-          await restartJava(repo, '프로젝트 구조를 적용했습니다. Java 언어 서버를 다시 시작합니다 (처음 한 번은 색인 때문에 시간이 걸립니다).');
+          await restartJava(repo, '프로젝트 구조를 적용했습니다. 잠시 뒤 바뀐 구조로 다시 검사합니다.');
         },
       },
     ],

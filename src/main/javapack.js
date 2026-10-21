@@ -534,13 +534,13 @@ async function projectInfo(root, opts = {}) {
 
 // ---------- 언어 서버 실행 명령 ----------
 
-// 프로젝트(+기준 JDK)마다 색인 저장 폴더를 따로 둔다 → 두 번째부터는 빨리 열린다.
-// 빌드 파일이 없는 프로젝트는 처음 만들 때의 JDK·라이브러리로 고정되므로, 바뀌면 새 색인을 쓰도록 키에 포함한다.
-const dataDir = (root, jdkKey = '') => path.join(packDir(), 'workspaces', crypto.createHash('sha1').update(`${root.toLowerCase()}|${jdkKey.toLowerCase()}`).digest('hex').slice(0, 16));
+// 프로젝트마다 색인 저장 폴더를 둔다 → 두 번째부터는 빨리 열린다.
+// JDK·라이브러리가 바뀌어도 같은 폴더를 쓰고, 언어 서버에 바뀐 설정을 보내 필요한 부분만 다시 색인한다.
+const dataDir = (root) => path.join(packDir(), 'workspaces', crypto.createHash('sha1').update(`${root.toLowerCase()}|`).digest('hex').slice(0, 16));
 
-// 같은 프로젝트의 예전 색인 폴더(다른 JDK/구조로 만든 것)는 지운다 — 디스크가 계속 늘지 않게
-function workspaceFor(root, jdkKey) {
-  const dir = dataDir(root, jdkKey);
+// 같은 프로젝트의 예전 색인 폴더(예전 버전이 JDK/구조마다 따로 만든 것)는 지운다 — 디스크가 계속 늘지 않게
+function workspaceFor(root) {
+  const dir = dataDir(root);
   const mark = (d) => path.join(d, '.codeflow-root');
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -551,7 +551,7 @@ function workspaceFor(root, jdkKey) {
   return dir;
 }
 
-function command(root, jdkKey) {
+function command(root) {
   const jar = launcherJar();
   if (!jar) throw new Error('Java 언어 팩이 설치되어 있지 않습니다.');
   const rt = findRuntime();
@@ -585,7 +585,7 @@ function command(root, jdkKey) {
       '-configuration',
       path.join(serverDir(), 'config_win'),
       '-data',
-      workspaceFor(root, jdkKey),
+      workspaceFor(root),
     ],
     env: {},
   };

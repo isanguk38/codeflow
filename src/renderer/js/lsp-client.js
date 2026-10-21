@@ -29,13 +29,20 @@ export function setPreferredJdk(repo, home) {
   else preferredJdks.delete(repo.toLowerCase());
 }
 
-function javaSettings(runtimes, project = {}) {
+// 앱을 다시 켰을 때: 언어 서버는 저장된 색인의 예전 jar/소스 폴더 목록을 그대로 쓰고, 같은 설정을 다시 보내도 '안 바뀜' 으로 무시한다.
+// → 시작할 때는 아무것도 가리키지 않는 표시용 항목을 하나 붙여 두고, 준비가 끝나면 진짜 설정을 보내서 다시 읽게 한다 (1~2초)
+const REFRESH_MARK = '.codeflow/__refresh__';
+function javaSettings(runtimes, project = {}, { refresh = false } = {}) {
+  const managed = ['Maven', 'Gradle'].includes(project.build);
+  const libs = project.libraries || [];
+  const src = project.sourcePaths || [];
+  const mark = refresh && !managed;
   return {
     configuration: { runtimes, updateBuildConfiguration: 'automatic' },
     // Maven/Gradle 이 없는 프로젝트: 분석한 프로젝트 구조(.codeflow/java.json)의 jar 와 소스 폴더
     project: {
-      referencedLibraries: project.libraries || [],
-      ...(project.sourcePaths?.length ? { sourcePaths: project.sourcePaths } : {}),
+      referencedLibraries: mark ? [...libs, `${REFRESH_MARK}/*.jar`] : libs,
+      ...(src.length ? { sourcePaths: mark ? [...src, REFRESH_MARK] : src } : {}),
     },
     import: {
       // 프로젝트 폴더에 .project / .classpath / .settings 를 만들지 않는다 (Git 변경 사항에 섞이지 않게)
@@ -147,7 +154,7 @@ class Server {
     this.tsdk = r.data.tsdk;
     if (r.data.java) {
       this.java = r.data.java; // { runtimes, project }
-      this.javaSettings = javaSettings(r.data.java.runtimes, r.data.java.project);
+      this.javaSettings = javaSettings(r.data.java.runtimes, r.data.java.project, { refresh: true });
       this.javaState = { ready: false, message: 'Java 언어 서버 시작 중' };
       // 프로젝트 준비(ServiceReady)가 끝나야 자동 완성 등이 정확하므로, 요청은 이 약속을 기다린다
       this.javaReady = new Promise((res) => (this.resolveJavaReady = res));
@@ -192,10 +199,20 @@ class Server {
 
   // 빌드 파일이 없는 프로젝트: 언어 서버가 고른 JDK 대신 자기 실행용 Java 21 로 프로젝트를 만드는 경우가 가끔 있다
   // (시작 순서 문제) → 실제 적용된 JDK 를 확인하고 다르면 설정을 다시 보내 바로잡는다
+  // 진짜 프로젝트 설정(jar, 소스 폴더, JDK)을 실행 중인 서버에 보낸다 → 바뀐 부분만 1~2초 안에 다시 검사
+  applyJavaSettings() {
+    this.javaSettings = javaSettings(this.java.runtimes, this.java.project);
+    this.notify('workspace/didChangeConfiguration', { settings: { java: this.javaSettings } });
+    this.appliedAt = Date.now();
+    this.jdkChecked = false;
+    clearTimeout(this.verifyTimer);
+    this.verifyTimer = setTimeout(() => this.verifyJdk(), 5000);
+  }
+
   async verifyJdk() {
     const def = this.java?.runtimes?.find((r) => r.default);
     const uri = [...this.docs.keys()].find((u) => u.startsWith('file:'));
-    if (!def || !uri || this.jdkChecked || !this.javaState?.ready || ['Maven', 'Gradle'].includes(this.java.project?.build)) return;
+    if (!def || !uri || this.jdkChecked || !this.javaState?.ready || !this.appliedAt || Date.now() - this.appliedAt < 4000 || ['Maven', 'Gradle'].includes(this.java.project?.build)) return;
     this.jdkChecked = true;
     const key = 'org.eclipse.jdt.ls.core.vm.location';
     const r = await this.request('workspace/executeCommand', { command: 'java.project.getSettings', arguments: [uri, [key]] }).catch(() => null);
@@ -232,7 +249,7 @@ class Server {
       if (type === 'ServiceReady' || type === 'Started') {
         this.javaState = { ready: true, message: '' };
         this.resolveJavaReady?.();
-        this.verifyJdk();
+        if (!this.appliedAt) this.applyJavaSettings();
       }
       else if (type === 'Error') this.javaState = { ready: false, error: true, message: message || '오류' };
       else if (type === 'Starting' && !this.javaState.ready) this.javaState = { ready: false, message: javaStatusText(message) };
@@ -340,6 +357,16 @@ export async function restartServer(repo, lang, models) {
   const s = servers.get(`${repo.toLowerCase()}|${lang}`);
   if (s) await stopServer(s);
   for (const m of models) if (!m.isDisposed()) attachModel(repo, m).catch(() => {});
+}
+
+// 프로젝트 구조/JDK 를 바꾼 뒤: 서버를 다시 시작하지 않고 새 설정만 보낸다. 실행 중인 서버가 없으면 false
+export async function updateJavaProject(repo) {
+  const s = servers.get(`${repo.toLowerCase()}|java`);
+  if (!s || s.status !== 'ready') return false;
+  s.java = await window.api.java.startInfo(repo);
+  s.applyJavaSettings();
+  onStatusChanged();
+  return true;
 }
 
 export function serverInfo(repo, lang = 'typescript') {
