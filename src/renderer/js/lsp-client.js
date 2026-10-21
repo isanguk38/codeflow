@@ -331,8 +331,8 @@ export function detachModel(model) {
   if (s?.docs.has(uri)) {
     s.docs.delete(uri);
     s.notify('textDocument/didClose', { textDocument: { uri } });
-    // Java 는 무거우므로 열린 Java 파일이 없으면 잠시 뒤 서버를 끈다 (다시 열면 저장된 색인으로 빠르게 시작)
-    if (s.lang === 'java' && !s.docs.size) s.idleTimer = setTimeout(() => stopServer(s), JAVA_IDLE_STOP_MS);
+    // Java 는 무거우므로 열린 Java 파일이 없고 다른 프로젝트 탭을 보고 있으면 잠시 뒤 서버를 끈다 (다시 열면 저장된 색인으로 빠르게 시작)
+    if (s.lang === 'java' && !s.docs.size && !sameRepo(s.repo, activeRepo)) s.idleTimer = setTimeout(() => stopServer(s), JAVA_IDLE_STOP_MS);
   }
   monaco.editor.setModelMarkers(model, 'lsp', []);
 }
@@ -367,6 +367,28 @@ export async function updateJavaProject(repo) {
   s.applyJavaSettings();
   onStatusChanged();
   return true;
+}
+
+// ---------- 프로젝트 탭을 열거나 고를 때 Java 언어 서버 미리 켜기 ----------
+let activeRepo = null;
+const sameRepo = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+// 지금 보고 있는 프로젝트 탭. 다른 탭의 Java 서버는 열린 Java 파일이 없으면 5분 뒤 끈다
+export function setActiveRepo(repo) {
+  activeRepo = repo || null;
+  for (const s of servers.values()) {
+    if (s.lang !== 'java') continue;
+    clearTimeout(s.idleTimer);
+    if (!sameRepo(s.repo, activeRepo) && !s.docs.size) s.idleTimer = setTimeout(() => stopServer(s), JAVA_IDLE_STOP_MS);
+  }
+}
+
+// Java 파일을 열기 전에 서버를 켜서 프로젝트 분석·색인을 끝내 둔다 → 파일을 열면 바로 검사·자동 완성
+export function warmJava(repo) {
+  if (!javaEnabled) return;
+  const s = serverFor(repo, 'java');
+  clearTimeout(s.idleTimer);
+  onStatusChanged();
 }
 
 export function serverInfo(repo, lang = 'typescript') {

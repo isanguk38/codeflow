@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('api', {
     startInfo: (root) => ipcRenderer.invoke('java:startInfo', root),
     saveConfig: (root, patch) => ipcRenderer.invoke('java:saveConfig', root, patch),
     jarsIn: (dir) => ipcRenderer.invoke('java:jarsIn', dir),
+    isProject: (root) => ipcRenderer.invoke('java:isProject', root),
     addJdk: (home) => ipcRenderer.invoke('java:addJdk', home),
     onProgress: (cb) => ipcRenderer.on('java:progress', (_e, p) => cb(p)),
   },

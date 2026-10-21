@@ -98,7 +98,7 @@ VS Code 와 같은 방식으로 내 PC 에서 언어 서버를 실행해 오류�
 | --- | --- | --- |
 | TypeScript / JavaScript | typescript-language-server | 프로젝트의 `node_modules/typescript`, 없으면 앱에 포함된 TypeScript |
 | Python | Pyright (Pylance 의 무료 엔진) | 상태 표시줄 `🐍 Python` 에서 고른 인터프리터. 처음엔 프로젝트의 `.venv`/`venv` → 시스템 Python 순으로 자동 선택. 열린 파일만 검사해 큰 프로젝트에서도 가볍게 동작 |
-| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | 아래 'Java 프로젝트 구조' 참고. Java 파일을 열 때만 실행, 마지막 Java 파일을 닫고 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
+| Java | Eclipse JDT LS (VS Code Java 와 같은 엔진) — **언어 팩** | 아래 'Java 프로젝트 구조' 참고. Java 프로젝트 탭을 열거나 고르면 미리 실행(파일을 열면 바로 검사), 다른 탭으로 옮기고 열린 Java 파일이 없으면 5분 뒤 또는 프로젝트 탭을 닫으면 종료, 메모리 최대 1GB, 프로젝트 색인 저장으로 두 번째부터 빠르게 시작. 오류 메시지는 영어 |
 
 ### Java 프로젝트 구조 (IntelliJ 의 Project Structure 와 같은 역할)
 
@@ -108,13 +108,14 @@ Java 파일을 처음 열면 CodeFlow 가 프로젝트를 분석해서 검사 �
 2. 빌드 파일이 없는 프로젝트: 폴더 전체를 분석
    - **소스 폴더**: `.java` 파일의 `package` 선언과 폴더 위치로 찾음 (예: `JavaSource/com/acme/A.java` + `package com.acme;` → `JavaSource`)
    - **라이브러리**: 프로젝트 안의 모든 `.jar` (`WEB-INF/lib`, `lib`, `jars` 등 위치 무관, `target`·`build`·`out`·`bin` 같은 결과물 폴더 제외)
-   - `.idea`(IntelliJ) 나 `.classpath`(Eclipse) 가 있으면 거기 적힌 JDK·Java 버전·jar·소스 폴더도 합침
-   - **JDK**: 직접 고른 JDK → IntelliJ Project SDK → 설치된 가장 최신 JDK
+   - `.classpath`(Eclipse) 가 있으면 거기 적힌 Java 버전·jar·소스 폴더도 합침 (`.idea` 는 읽지 않음)
+   - **JDK**: 직접 고른 JDK → 설치된 가장 최신 JDK
 3. 분석 결과와 직접 바꾼 설정은 프로젝트의 `.codeflow/java.json` 에 저장됩니다 (`.git/info/exclude` 에 자동 등록돼 Git 변경 사항에 나오지 않음)
 
 상태 표시줄 `☕ Java` → **🧱 프로젝트 구조** 에서 JDK 변경, 소스 폴더 추가/제외, jar 체크 해제(검사에서 빼기), 프로젝트 밖 jar 추가(예: Tomcat 의 `servlet-api.jar` → `+ 폴더의 jar 모두 추가`), 다시 분석을 할 수 있습니다. 적용하면 언어 서버를 다시 시작하지 않고 바뀐 부분만 1~2초 안에 다시 검사합니다 (IntelliJ 처럼 색인을 처음부터 만들지 않음).
 
-- JDK 는 `C:\Program Files` 의 Java 폴더, IntelliJ 가 받은 `~/.jdks`, IntelliJ 에 등록된 JDK, 직접 고른 폴더에서 찾습니다.
+- JDK 는 `C:\Program Files` 의 Java 폴더, IntelliJ 가 받은 `~/.jdks`, IntelliJ 에 등록된 JDK 목록, 직접 고른 폴더에서 찾습니다.
+- Java 1.7 이하 JDK 를 고르면 클래스·함수는 그 JDK 기준이지만, 문법 검사는 검사 엔진이 1.7 이하를 지원하지 않아 더 높은 버전 기준입니다.
 - 상태 표시줄 `☕ Java` 위에 마우스를 올리면 언어 서버가 **실제로 적용한** Java 버전과 JDK 경로, jar 개수, 소스 폴더가 보입니다.
 - 프로젝트 폴더에 `.project`/`.classpath`/`.settings` 를 만들지 않습니다. (Maven 빌드 결과 `target/` 은 IntelliJ·VS Code 와 같이 생김)
 

@@ -783,6 +783,20 @@ async function prepareJava(repo) {
   lsp.setPreferredJdk(repo, localStorage.getItem(`java.jdk:${repo.toLowerCase()}`) || null);
 }
 
+// 프로젝트 탭을 열거나 골랐을 때: Java 프로젝트면 Java 언어 서버를 미리 켠다 (언어 팩이 설치된 경우만)
+const javaProjects = new Map(); // 저장소 → Java 프로젝트 여부
+export async function onRepoActivated(repo) {
+  lsp.setActiveRepo(repo);
+  if (!repo) return;
+  if (!javaPack) await refreshJavaPack().catch(() => null);
+  if (!javaPack?.installed) return;
+  const key = repo.toLowerCase();
+  if (!javaProjects.has(key)) javaProjects.set(key, await window.api.java.isProject(repo).catch(() => false));
+  if (!javaProjects.get(key) || state.repo?.toLowerCase() !== key) return;
+  await prepareJava(repo);
+  lsp.warmJava(repo);
+}
+
 // 설치 진행 상황 (어느 Java 파일을 보든, 설정 화면이든 같은 값을 보여 준다)
 let javaProgress = null;
 let progressHooked = false;
@@ -808,6 +822,7 @@ export async function installJavaPack(onProgress) {
         // 이미 열어 둔 Java 파일들을 언어 서버에 연결
         for (const d of docs.values()) if (!d.virtual && d.model.getLanguageId() === 'java') prepareJava(d.repo).then(() => lsp.attachModel(d.repo, d.model).catch(() => {}));
         toast('Java 언어 팩을 설치했습니다. 열린 Java 파일을 검사합니다.', 'ok', 5000);
+        if (state.repo) onRepoActivated(state.repo);
         return r.data;
       } finally {
         done();
@@ -854,11 +869,12 @@ function javaStatusItem(repo, info) {
   const rt = managed ? runtimes.find((r) => r.name === (level ? `JavaSE-${level}` : '')) : def;
   const missing = managed && level && !rt;
   const auto = !managed && !picked && !level; // 버전 정보가 없어 가장 최신 JDK 로 자동 선택
-  const tail = `${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : auto ? ' · 자동' : ''}`;
+  const tail = `${managed && proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : auto ? ' · 자동' : ''}`;
   const libs = managed ? '' : `\n라이브러리 jar ${proj.libraries?.length || 0}개 · 소스 폴더 ${(proj.sourcePaths || []).join(', ') || '-'}`;
   const el = h('span', {
     class: `cs-item cs-btn ${missing ? 'warn' : ''}`,
-    text: `☕ Java ${level || (def ? def.name.replace(/^JavaSE-/, '') : '?')}${tail}`,
+    // 빌드 파일이 없는 프로젝트는 고른(또는 자동으로 정한) JDK 의 버전을 보여 준다
+    text: `☕ Java ${(managed ? level : null) || (def ? def.name.replace(/^JavaSE-/, '') : level || '?')}${tail}`,
     title: missing
       ? `프로젝트는 Java ${level} 기준인데 해당 JDK 가 PC 에 없습니다. 설치된 다른 JDK 로 검사합니다.`
       : `검사 기준 JDK: ${rt ? rt.path : '언어 서버 기본 JDK'}${libs}\n클릭해서 JDK 선택 / 프로젝트 구조`,
@@ -870,9 +886,11 @@ function javaStatusItem(repo, info) {
     const key = `${d.path}|${def?.path || ''}`;
     const show = (eff) => {
       if (!eff?.level) return;
-      el.textContent = `☕ Java ${eff.level}${tail}`;
-      el.title = `실제 검사 기준: Java ${eff.level}\nJDK: ${eff.jdk || '-'}${libs}\n클릭해서 JDK 선택 / 프로젝트 구조`;
-      el.classList.toggle('warn', !!level && eff.level !== level);
+      if (managed) el.textContent = `☕ Java ${eff.level}${tail}`;
+      // Java 1.7 이하 JDK: 함수·클래스는 그 JDK 기준이지만, 문법 검사는 엔진(Eclipse)이 1.7 이하를 지원하지 않아 더 높은 버전 기준
+      const old = /^JavaSE-1\.[0-7]$|^J2SE/.test(def?.name || '');
+      el.title = `${old ? `사용 가능한 클래스·함수: ${def.name.replace(/^JavaSE-/, 'Java ')} JDK 기준\n문법 검사: Java ${eff.level} 기준 (검사 엔진이 1.7 이하 문법 검사를 지원하지 않음)` : `실제 검사 기준: Java ${eff.level}`}\nJDK: ${eff.jdk || '-'}${libs}\n클릭해서 JDK 선택 / 프로젝트 구조`;
+      el.classList.toggle('warn', managed && !!level && eff.level !== level);
     };
     if (effectiveCache.has(key)) show(effectiveCache.get(key));
     else if (!effectivePending.has(key)) {

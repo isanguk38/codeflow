@@ -8,7 +8,7 @@ import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
 import { startUpdateCheck } from './update.js';
-import { initCode, activateCode, closeActiveTab, toggleTerminalPanel } from './code.js';
+import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -72,6 +72,7 @@ function updateChrome(s) {
 }
 
 async function onOpened() {
+  onRepoActivated(state.repo).catch(() => {}); // Java 프로젝트면 Java 언어 서버를 미리 켜 둔다
   if (!state.repo) {
     $('#app').classList.add('no-repo');
     $('#repoName').textContent = '저장소 열기';

@@ -115,7 +115,7 @@ function findRuntime() {
 
 // 프로젝트 검사 기준으로 등록할 JDK 목록 (같은 버전이 여럿이면 JDK 우선, 최신 우선)
 // default: 빌드 도구(Maven/Gradle)가 없는 프로젝트가 쓸 JDK
-//   사용자가 고른 JDK → IntelliJ Project SDK → 설정의 Java 버전(language level)에 맞는 JDK 순서
+//   사용자가 고른 JDK → 설정의 Java 버전에 맞는 JDK → 설치된 가장 최신 JDK 순서
 function projectRuntimes(preferredHome, project = {}) {
   const all = detectJdks().filter((j) => !j.bundled);
   const byName = new Map();
@@ -256,7 +256,7 @@ function remove() {
 
 // ---------- 프로젝트 정보 ----------
 // 1) pom.xml (Maven)  2) build.gradle (Gradle) → 빌드 파일이 라이브러리를 관리
-// 3) 그 밖: 폴더 분석(소스 폴더, 모든 jar) + .idea / .classpath 가 있으면 그 설정도 합친다
+// 3) 그 밖: 폴더 분석(소스 폴더, 모든 jar) + Eclipse .classpath 가 있으면 그 설정도 합친다 (.idea 는 읽지 않음)
 
 const readText = (f) => {
   try {
@@ -265,60 +265,6 @@ const readText = (f) => {
     return null;
   }
 };
-
-// IntelliJ 경로 매크로 풀기
-function expandIdea(url, root, moduleDir) {
-  return url
-    .replace(/^(jar|file):\/\//, '')
-    .replace(/!\/.*$/, '')
-    .replace(/\$PROJECT_DIR\$/g, root)
-    .replace(/\$MODULE_DIR\$/g, moduleDir)
-    .replace(/\$USER_HOME\$/g, os.homedir())
-    .replace(/\//g, path.sep);
-}
-
-function intellijProject(root) {
-  const misc = readText(path.join(root, '.idea', 'misc.xml'));
-  if (!misc) return null;
-  const rm = (misc.match(/<component name="ProjectRootManager"[^>]*>/) || [''])[0];
-  const lang = (rm.match(/languageLevel="JDK_([\dX_]+)"/) || [])[1]; // JDK_1_8, JDK_11, JDK_17
-  const jdkName = (rm.match(/project-jdk-name="([^"]+)"/) || [])[1];
-  const level = lang ? lang.replace(/_X$/, '').replace('_', '.').replace(/^(\d+)\..*$/, (m, a) => (a === '1' ? m : a)) : null;
-  const table = intellijJdkTable();
-  const jdkHome = jdkName ? table.find((j) => j.name === jdkName)?.home || null : null;
-  // 라이브러리 jar: .idea/libraries/*.xml + 모듈 .iml 의 module-library
-  const libraries = new Set();
-  const sourcePaths = new Set();
-  const libDir = path.join(root, '.idea', 'libraries');
-  try {
-    for (const f of fs.readdirSync(libDir).filter((n) => n.endsWith('.xml'))) {
-      const xml = readText(path.join(libDir, f)) || '';
-      const classes = (xml.match(/<CLASSES>([\s\S]*?)<\/CLASSES>/) || [])[1] || '';
-      for (const m of classes.matchAll(/url="(jar:\/\/[^"]+)"/g)) libraries.add(expandIdea(m[1], root, root));
-    }
-  } catch {}
-  const imls = [];
-  const modules = readText(path.join(root, '.idea', 'modules.xml')) || '';
-  for (const m of modules.matchAll(/filepath="([^"]+\.iml)"/g)) imls.push(expandIdea(m[1], root, root));
-  try {
-    for (const f of fs.readdirSync(root).filter((n) => n.endsWith('.iml'))) imls.push(path.join(root, f));
-  } catch {}
-  for (const iml of new Set(imls)) {
-    const xml = readText(iml) || '';
-    const dir = path.dirname(iml);
-    for (const m of xml.matchAll(/<CLASSES>([\s\S]*?)<\/CLASSES>/g)) for (const u of m[1].matchAll(/url="(jar:\/\/[^"]+)"/g)) libraries.add(expandIdea(u[1], root, dir));
-    for (const m of xml.matchAll(/<sourceFolder url="(file:\/\/[^"]+)"(?![^>]*isTestSource="true")/g)) sourcePaths.add(path.relative(root, expandIdea(m[1], root, dir)) || '.');
-  }
-  return {
-    build: 'IntelliJ',
-    file: 'IntelliJ 설정',
-    level,
-    jdkName: jdkName || null,
-    jdkHome,
-    libraries: [...libraries].filter((f) => fs.existsSync(f)),
-    sourcePaths: [...sourcePaths],
-  };
-}
 
 function eclipseProject(root) {
   const cp = readText(path.join(root, '.classpath'));
@@ -487,8 +433,8 @@ function buildToolInfo(root) {
 }
 
 // 프로젝트 정보: Maven/Gradle 이면 빌드 파일이 라이브러리를 관리하고(언어 서버가 직접 읽음),
-// 그 밖의 프로젝트는 폴더 분석 결과 + IntelliJ/Eclipse 설정(있으면) + 사용자 설정을 합친다.
-// 반환: { build, file, level, jdkHome, jdkName, libraries[], sourcePaths[], detected, config }
+// 그 밖의 프로젝트는 폴더 분석 결과 + Eclipse 설정(있으면) + 사용자 설정을 합친다.
+// 반환: { build, file, level, jdkHome, libraries[], sourcePaths[], detected, config }
 async function projectInfo(root, opts = {}) {
   const cfg = readConfig(root);
   if (!cfg.jdk && opts.legacyJdk) cfg.jdk = opts.legacyJdk; // 예전 버전에서 고른 JDK(앱에 저장돼 있던 값) 옮겨 오기
@@ -497,21 +443,20 @@ async function projectInfo(root, opts = {}) {
     if (opts.write !== false && cfg.jdk) writeConfig(root, { ...cfg, detected: { build: tool.build, level: tool.level } });
     return { ...tool, jdkHome: cfg.jdk || null, libraries: [], sourcePaths: [], detected: null, config: cfg };
   }
-  const idea = intellijProject(root);
   const ecl = eclipseProject(root);
   const scan = await scanProject(root);
   const libs = [];
-  for (const f of [...(idea?.libraries || []), ...(ecl?.libraries || []), ...scan.jars]) {
+  for (const f of [...(ecl?.libraries || []), ...scan.jars]) {
     const r = relRef(root, f);
     if (!libs.some((x) => sameRef(x, r))) libs.push(r);
   }
   const src = [];
-  for (const s of [...(idea?.sourcePaths || []), ...(ecl?.sourcePaths || []), ...scan.sourcePaths]) {
+  for (const s of [...(ecl?.sourcePaths || []), ...scan.sourcePaths]) {
     const r = relRef(root, absOf(root, s));
     if (!src.some((x) => sameRef(x, r) || x === '.' || r.toLowerCase().startsWith(x.toLowerCase() + '/'))) src.push(r);
   }
-  const level = idea?.level || ecl?.level || null;
-  const detected = { build: idea ? 'IntelliJ' : ecl ? 'Eclipse' : null, level, jdkName: idea?.jdkName || null, sourcePaths: src, libraries: libs, analyzedAt: new Date().toISOString() };
+  const level = ecl?.level || null;
+  const detected = { build: ecl ? 'Eclipse' : null, level, sourcePaths: src, libraries: libs, analyzedAt: new Date().toISOString() };
   // 분석 결과가 그대로면 분석 시각도 그대로 둔다 (파일이 매번 바뀌지 않게)
   const prev = cfg.detected || {};
   if (JSON.stringify({ ...prev, analyzedAt: 0 }) === JSON.stringify({ ...detected, analyzedAt: 0 })) detected.analyzedAt = prev.analyzedAt;
@@ -520,10 +465,9 @@ async function projectInfo(root, opts = {}) {
   const libraries = [...libs.filter((l) => !excluded.some((x) => sameRef(x, l))), ...cfg.addedLibraries.filter((a) => !libs.some((l) => sameRef(l, a)))].filter((l) => fs.existsSync(absOf(root, l)));
   return {
     build: detected.build,
-    file: idea ? 'IntelliJ 설정' : ecl ? 'Eclipse 설정' : '프로젝트 분석',
+    file: null,
     level,
-    jdkName: detected.jdkName,
-    jdkHome: cfg.jdk || idea?.jdkHome || null,
+    jdkHome: cfg.jdk || null,
     libraries,
     sourcePaths: cfg.sourcePaths?.length ? cfg.sourcePaths : src,
     detected,
@@ -591,6 +535,27 @@ function command(root) {
   };
 }
 
+// 이 폴더가 Java 프로젝트인지 빠르게 확인 (탭을 열 때 Java 언어 서버를 미리 켤지 정하는 용도)
+// pom.xml / build.gradle 이 있거나, .java 파일이 하나라도 있으면 Java 프로젝트
+async function isJavaProject(root) {
+  if (['pom.xml', 'build.gradle', 'build.gradle.kts'].some((f) => fs.existsSync(path.join(root, f)))) return true;
+  let entries = 0;
+  const walk = async (dir, depth) => {
+    if (depth > 10 || entries > 20000) return false;
+    let list;
+    try {
+      list = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    entries += list.length;
+    if (list.some((e) => e.isFile() && e.name.endsWith('.java'))) return true;
+    for (const e of list) if (e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith('.') && (await walk(path.join(dir, e.name), depth + 1))) return true;
+    return false;
+  };
+  return walk(root, 0);
+}
+
 async function jarsIn(dir) {
   const out = [];
   const walk = async (d, depth) => {
@@ -609,4 +574,4 @@ async function jarsIn(dir) {
   return out;
 }
 
-module.exports = { jarsIn, status, install, remove, command, detectJdks, projectRuntimes, projectInfo, saveConfig, addCustomJdk, intellijJdkTable };
+module.exports = { isJavaProject, jarsIn, status, install, remove, command, detectJdks, projectRuntimes, projectInfo, saveConfig, addCustomJdk, intellijJdkTable };
