@@ -480,7 +480,8 @@ async function projectInfo(root, opts = {}) {
 
 // 프로젝트마다 색인 저장 폴더를 둔다 → 두 번째부터는 빨리 열린다.
 // JDK·라이브러리가 바뀌어도 같은 폴더를 쓰고, 언어 서버에 바뀐 설정을 보내 필요한 부분만 다시 색인한다.
-const dataDir = (root) => path.join(packDir(), 'workspaces', crypto.createHash('sha1').update(`${root.toLowerCase()}|`).digest('hex').slice(0, 16));
+// v2: 0.5.5 부터 Eclipse 설정(.project/.classpath)을 가져오지 않으므로, 예전에 Eclipse 프로젝트로 가져온 색인은 버리고 새로 만든다
+const dataDir = (root) => path.join(packDir(), 'workspaces', crypto.createHash('sha1').update(`${root.toLowerCase()}|v2`).digest('hex').slice(0, 16));
 
 // 같은 프로젝트의 예전 색인 폴더(예전 버전이 JDK/구조마다 따로 만든 것)는 지운다 — 디스크가 계속 늘지 않게
 function workspaceFor(root) {

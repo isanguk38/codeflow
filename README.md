@@ -108,7 +108,7 @@ Java 파일을 처음 열면 CodeFlow 가 프로젝트를 분석해서 검사 �
 2. 빌드 파일이 없는 프로젝트: 폴더 전체를 분석
    - **소스 폴더**: `.java` 파일의 `package` 선언과 폴더 위치로 찾음 (예: `JavaSource/com/acme/A.java` + `package com.acme;` → `JavaSource`)
    - **라이브러리**: 프로젝트 안의 모든 `.jar` (`WEB-INF/lib`, `lib`, `jars` 등 위치 무관, `target`·`build`·`out`·`bin` 같은 결과물 폴더 제외)
-   - `.classpath`(Eclipse) 가 있으면 거기 적힌 Java 버전·jar·소스 폴더도 합침 (`.idea` 는 읽지 않음)
+   - `.classpath`(Eclipse) 가 있으면 거기 적힌 Java 버전·jar·소스 폴더도 합침 (`.idea` 는 읽지 않음). 단, 언어 서버가 Eclipse 프로젝트로 직접 가져오지는 않으므로 `.project`·`.classpath`·출력 폴더(`build/classes` 등)는 건드리지 않음
    - **JDK**: 직접 고른 JDK → 설치된 가장 최신 JDK
 3. 분석 결과와 직접 바꾼 설정은 프로젝트의 `.codeflow/java.json` 에 저장됩니다 (`.git/info/exclude` 에 자동 등록돼 Git 변경 사항에 나오지 않음)
 

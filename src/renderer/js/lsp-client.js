@@ -32,7 +32,7 @@ export function setPreferredJdk(repo, home) {
 // 앱을 다시 켰을 때: 언어 서버는 저장된 색인의 예전 jar/소스 폴더 목록을 그대로 쓰고, 같은 설정을 다시 보내도 '안 바뀜' 으로 무시한다.
 // → 시작할 때는 아무것도 가리키지 않는 표시용 항목을 하나 붙여 두고, 준비가 끝나면 진짜 설정을 보내서 다시 읽게 한다 (1~2초)
 const REFRESH_MARK = '.codeflow/__refresh__';
-function javaSettings(runtimes, project = {}, { refresh = false } = {}) {
+function javaSettings(runtimes, project = {}, { refresh = false, root = '' } = {}) {
   const managed = ['Maven', 'Gradle'].includes(project.build);
   const libs = project.libraries || [];
   const src = project.sourcePaths || [];
@@ -49,7 +49,16 @@ function javaSettings(runtimes, project = {}, { refresh = false } = {}) {
       generatesMetadataFilesAtProjectRoot: false,
       maven: { enabled: true },
       gradle: { enabled: true, wrapper: { enabled: true } },
-      exclusions: ['**/node_modules/**', '**/.metadata/**', '**/archetype-resources/**', '**/META-INF/maven/**'],
+      exclusions: [
+        '**/node_modules/**',
+        '**/.metadata/**',
+        '**/archetype-resources/**',
+        '**/META-INF/maven/**',
+        // 빌드 파일이 없는 프로젝트: 프로젝트 폴더의 Eclipse 설정(.project/.classpath)을 가져오지 않는다.
+        // 가져오면 다른 PC 이름의 JDK(예: jre7)를 못 찾아 JDK 클래스가 통째로 빠지고, Eclipse 빌드처럼 출력 폴더(build/classes)를 비우거나 .project 를 고친다.
+        // → CodeFlow 가 분석한 구조(.codeflow/java.json)로만 검사 (프로젝트 파일은 건드리지 않음)
+        ...(!managed && root ? [root.replace(/\\/g, '/')] : []),
+      ],
     },
     autobuild: { enabled: true },
     maxConcurrentBuilds: 1,
@@ -154,7 +163,7 @@ class Server {
     this.tsdk = r.data.tsdk;
     if (r.data.java) {
       this.java = r.data.java; // { runtimes, project }
-      this.javaSettings = javaSettings(r.data.java.runtimes, r.data.java.project, { refresh: true });
+      this.javaSettings = javaSettings(r.data.java.runtimes, r.data.java.project, { refresh: true, root: this.repo });
       this.javaState = { ready: false, message: 'Java 언어 서버 시작 중' };
       // 프로젝트 준비(ServiceReady)가 끝나야 자동 완성 등이 정확하므로, 요청은 이 약속을 기다린다
       this.javaReady = new Promise((res) => (this.resolveJavaReady = res));
@@ -201,7 +210,7 @@ class Server {
   // (시작 순서 문제) → 실제 적용된 JDK 를 확인하고 다르면 설정을 다시 보내 바로잡는다
   // 진짜 프로젝트 설정(jar, 소스 폴더, JDK)을 실행 중인 서버에 보낸다 → 바뀐 부분만 1~2초 안에 다시 검사
   applyJavaSettings() {
-    this.javaSettings = javaSettings(this.java.runtimes, this.java.project);
+    this.javaSettings = javaSettings(this.java.runtimes, this.java.project, { root: this.repo });
     this.notify('workspace/didChangeConfiguration', { settings: { java: this.javaSettings } });
     this.appliedAt = Date.now();
     this.jdkChecked = false;
