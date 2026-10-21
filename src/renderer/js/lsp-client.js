@@ -95,7 +95,35 @@ const LSP_LANGUAGE_ID = (model) => {
 };
 
 export const serverLangFor = (model) => (model.getLanguageId() === 'java' ? (javaEnabled ? 'java' : null) : LANG_OF[model.getLanguageId()] || null);
-const keyOf = (uri) => monaco.Uri.parse(uri).fsPath.toLowerCase();
+// 편집기(Monaco)를 아직 불러오지 않았어도(코드 화면을 안 연 상태) 언어 서버를 미리 켤 수 있도록 URI 처리를 직접 한다
+const keyOf = (uri) => decodeURIComponent(uri.replace(/^file:\/\/\/?/, '').split('?')[0]).replace(/\//g, '\\').toLowerCase();
+// C:\a b\c → file:///c%3A/a%20b/c (Monaco 의 Uri.file 과 같은 모양)
+function fileUri(p) {
+  const s = p.replace(/\\/g, '/');
+  const m = s.match(/^([A-Za-z]):(.*)$/);
+  const path = m ? `/${m[1].toLowerCase()}:${m[2]}` : s.startsWith('/') ? s : `/${s}`;
+  return `file://${path.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+// 언어 서버 메시지 수신은 처음부터 연결해 둔다 (코드 화면을 열기 전에 미리 켠 Java 서버도 동작하게)
+window.api.lsp.onMessage((id, msg) => byId.get(id)?.receive(msg));
+window.api.lsp.onExit((id) => {
+  const s = byId.get(id);
+  if (!s) return;
+  byId.delete(id);
+  servers.delete(s.key);
+  clearMarkers(s);
+  onDiagnosticsChanged();
+  onStatusChanged();
+});
+
+function clearMarkers(s) {
+  if (!monaco) return;
+  for (const uri of s.docs.keys()) {
+    const model = monaco.editor.getModel(monaco.Uri.parse(uri));
+    if (model) monaco.editor.setModelMarkers(model, 'lsp', []);
+  }
+}
 
 export function initLsp(m, { onDiagnostics, openFile, ensureModel }) {
   monaco = m;
@@ -123,18 +151,6 @@ export function initLsp(m, { onDiagnostics, openFile, ensureModel }) {
     });
   }
 
-  window.api.lsp.onMessage((id, msg) => byId.get(id)?.receive(msg));
-  window.api.lsp.onExit((id) => {
-    const s = byId.get(id);
-    if (!s) return;
-    byId.delete(id);
-    servers.delete(s.key);
-    for (const uri of s.docs.keys()) {
-      const model = monaco.editor.getModel(monaco.Uri.parse(uri));
-      if (model) monaco.editor.setModelMarkers(model, 'lsp', []);
-    }
-    onDiagnosticsChanged();
-  });
 
   for (const lang of ['typescript', 'javascript', 'python', 'java']) registerProviders(lang);
 }
@@ -169,7 +185,7 @@ class Server {
       this.javaReady = new Promise((res) => (this.resolveJavaReady = res));
     }
     byId.set(this.id, this);
-    const rootUri = monaco.Uri.file(this.repo).toString();
+    const rootUri = fileUri(this.repo);
     const init = await this.request('initialize', {
       processId: null,
       rootUri,
@@ -349,10 +365,7 @@ export function detachModel(model) {
 async function stopServer(s) {
   clearTimeout(s.idleTimer);
   servers.delete(s.key);
-  for (const uri of s.docs.keys()) {
-    const m = monaco.editor.getModel(monaco.Uri.parse(uri));
-    if (m) monaco.editor.setModelMarkers(m, 'lsp', []);
-  }
+  clearMarkers(s);
   s.docs.clear();
   if (s.id) {
     byId.delete(s.id);
@@ -426,6 +439,7 @@ export async function stopRepoServers(repo) {
 const SEVERITY = () => ({ 1: monaco.MarkerSeverity.Error, 2: monaco.MarkerSeverity.Warning, 3: monaco.MarkerSeverity.Info, 4: monaco.MarkerSeverity.Hint });
 
 function applyDiagnostics({ uri, diagnostics }) {
+  if (!monaco) return pendingDiags.set(keyOf(uri), diagnostics); // 편집기를 열기 전: 파일을 열면 표시
   const model = monaco.editor.getModels().find((m) => keyOf(m.uri.toString()) === keyOf(uri));
   if (!model) {
     pendingDiags.set(keyOf(uri), diagnostics);

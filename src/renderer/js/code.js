@@ -168,7 +168,6 @@ function setupEditor() {
   });
 
   refreshJavaPack();
-  lsp.onServerStatus(() => updateStatus());
   lsp.initLsp(monaco, {
     onDiagnostics: () => {},
     openFile: (p, sel) => openFile(p, sel),
@@ -649,8 +648,11 @@ function updateStatus() {
     updateStatus();
   };
   if (!d || !editor) {
+    // 파일을 열지 않았어도 이 프로젝트의 Java 언어 서버 상태(미리 켜 둔 것)는 보여 준다
+    const jinfo = state.repo ? lsp.serverInfo(state.repo, 'java') : null;
     el.innerHTML = '';
-    el.append(h('span', { class: 'tb-spacer' }), termBtn);
+    el.append(...[h('span', { class: 'tb-spacer' }), jinfo ? javaStatusItem(state.repo, jinfo) : null, termBtn].filter(Boolean));
+    if (jinfo && jinfo.status === 'starting') setTimeout(updateStatus, 800);
     return;
   }
   const p = editor.getPosition();
@@ -787,6 +789,8 @@ async function prepareJava(repo) {
 const javaProjects = new Map(); // 저장소 → Java 프로젝트 여부
 export async function onRepoActivated(repo) {
   lsp.setActiveRepo(repo);
+  updateJavaFooter(); // 탭을 바꾸면 그 프로젝트의 상태로
+  if (state.view === 'code') updateStatus();
   if (!repo) return;
   if (!javaPack) await refreshJavaPack().catch(() => null);
   if (!javaPack?.installed) return;
@@ -905,6 +909,56 @@ function javaStatusItem(repo, info) {
   }
   return el;
 }
+
+// 앱 아래쪽 상태 표시줄(모든 화면 공통): 지금 프로젝트의 Java 언어 서버 준비 상태
+function updateJavaFooter() {
+  const el = $('#statusJava');
+  if (!el) return;
+  const repo = state.repo;
+  const info = repo ? lsp.serverInfo(repo, 'java') : null;
+  el.className = '';
+  el.onclick = null;
+  if (!info) {
+    el.innerHTML = '';
+    el.title = '';
+    return;
+  }
+  const spin = '<span class="spinner"></span> ';
+  if (info.status === 'starting') {
+    el.innerHTML = `${spin}☕ Java 언어 서버 시작 중`;
+    el.title = 'Java 프로젝트라서 미리 켜 두는 중입니다. 준비되면 Java 파일을 열자마자 오류 표시·자동 완성이 됩니다.';
+    setTimeout(updateJavaFooter, 800);
+    return;
+  }
+  if (info.status === 'error') {
+    el.textContent = '☕ Java 언어 서버 오류';
+    el.title = info.error || '';
+    el.className = 'err';
+    return;
+  }
+  if (info.javaState && !info.javaState.ready) {
+    el.innerHTML = info.javaState.error ? `☕ ${info.javaState.message}` : `${spin}☕ ${info.javaState.message}`;
+    el.title = '처음 여는 프로젝트는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.';
+    if (info.javaState.error) el.className = 'err';
+    return;
+  }
+  const proj = info.java?.project || {};
+  const managed = ['Maven', 'Gradle'].includes(proj.build);
+  const def = (info.java?.runtimes || []).find((r) => r.default);
+  const ver = (managed && proj.level) || (def ? def.name.replace(/^JavaSE-/, '') : proj.level || '');
+  el.textContent = `☕ Java ${ver} 준비됨`;
+  el.title = `검사 기준 JDK: ${def?.path || '-'}${managed ? '' : `
+라이브러리 jar ${proj.libraries?.length || 0}개 · 소스 폴더 ${(proj.sourcePaths || []).join(', ') || '-'}`}
+클릭해서 프로젝트 구조 열기`;
+  el.className = 'clickable';
+  el.onclick = () => openProjectStructure(repo);
+}
+
+// 언어 서버 상태가 바뀌면 (코드 화면을 열기 전에도) 상태 표시를 새로 그린다
+lsp.onServerStatus(() => {
+  updateStatus();
+  updateJavaFooter();
+});
 
 // 언어 서버가 JDK 를 다시 적용했으면 표시도 새로 확인
 lsp.onJavaJdkFixed(() => {

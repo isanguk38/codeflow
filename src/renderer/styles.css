@@ -315,6 +315,18 @@ pre,
   white-space: nowrap;
   overflow: hidden;
 }
+#statusJava {
+  cursor: default;
+}
+#statusJava.clickable {
+  cursor: pointer;
+}
+#statusJava.clickable:hover {
+  color: var(--text);
+}
+#statusJava.err {
+  color: var(--danger);
+}
 
 .panel-bar {
   display: flex;
