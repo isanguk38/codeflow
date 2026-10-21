@@ -19,6 +19,8 @@ export function setJavaEnabled(v) {
 const JAVA_IDLE_STOP_MS = 5 * 60 * 1000; // 마지막 Java 파일을 닫고 5분 지나면 서버 종료 (메모리 반환)
 let onStatusChanged = () => {};
 export const onServerStatus = (fn) => (onStatusChanged = fn);
+let onJdkFixed = () => {};
+export const onJavaJdkFixed = (fn) => (onJdkFixed = fn);
 
 // 저장소별로 사용자가 고른 기준 JDK
 const preferredJdks = new Map();
@@ -27,15 +29,12 @@ export function setPreferredJdk(repo, home) {
   else preferredJdks.delete(repo.toLowerCase());
 }
 
-// 빌드 도구가 없는 프로젝트에서 라이브러리로 잡을 흔한 jar 위치
-const DEFAULT_LIB_GLOBS = ['lib/**/*.jar', 'libs/**/*.jar', '**/WEB-INF/lib/**/*.jar'];
-
 function javaSettings(runtimes, project = {}) {
   return {
     configuration: { runtimes, updateBuildConfiguration: 'automatic' },
-    // Maven/Gradle 이 없는 프로젝트: IntelliJ(.idea) 에 등록된 jar + lib 폴더 jar 를 라이브러리로, 소스 폴더 지정
+    // Maven/Gradle 이 없는 프로젝트: 분석한 프로젝트 구조(.codeflow/java.json)의 jar 와 소스 폴더
     project: {
-      referencedLibraries: [...DEFAULT_LIB_GLOBS, ...(project.libraries || [])],
+      referencedLibraries: project.libraries || [],
       ...(project.sourcePaths?.length ? { sourcePaths: project.sourcePaths } : {}),
     },
     import: {
@@ -191,6 +190,22 @@ class Server {
     return this;
   }
 
+  // 빌드 파일이 없는 프로젝트: 언어 서버가 고른 JDK 대신 자기 실행용 Java 21 로 프로젝트를 만드는 경우가 가끔 있다
+  // (시작 순서 문제) → 실제 적용된 JDK 를 확인하고 다르면 설정을 다시 보내 바로잡는다
+  async verifyJdk() {
+    const def = this.java?.runtimes?.find((r) => r.default);
+    const uri = [...this.docs.keys()].find((u) => u.startsWith('file:'));
+    if (!def || !uri || this.jdkChecked || !this.javaState?.ready || ['Maven', 'Gradle'].includes(this.java.project?.build)) return;
+    this.jdkChecked = true;
+    const key = 'org.eclipse.jdt.ls.core.vm.location';
+    const r = await this.request('workspace/executeCommand', { command: 'java.project.getSettings', arguments: [uri, [key]] }).catch(() => null);
+    const norm = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    if (!r?.[key] || norm(r[key]) === norm(def.path)) return;
+    console.warn('[java] JDK 다시 적용', r[key], '→', def.path);
+    this.notify('workspace/didChangeConfiguration', { settings: { java: this.javaSettings } });
+    onJdkFixed(this);
+  }
+
   request(method, params) {
     const id = ++this.seq;
     window.api.lsp.send(this.id, { jsonrpc: '2.0', id, method, params });
@@ -217,6 +232,7 @@ class Server {
       if (type === 'ServiceReady' || type === 'Started') {
         this.javaState = { ready: true, message: '' };
         this.resolveJavaReady?.();
+        this.verifyJdk();
       }
       else if (type === 'Error') this.javaState = { ready: false, error: true, message: message || '오류' };
       else if (type === 'Starting' && !this.javaState.ready) this.javaState = { ready: false, message: javaStatusText(message) };
@@ -269,6 +285,7 @@ export async function attachModel(repo, model) {
   s.docs.set(uri, model.getVersionId());
   model.__lsp = s;
   s.notify('textDocument/didOpen', { textDocument: { uri, languageId: LSP_LANGUAGE_ID(model), version: model.getVersionId(), text: model.getValue() } });
+  if (s.lang === 'java') s.verifyJdk();
   let t;
   // 입력이 잠깐 멈추면 변경 내용을 보낸다. 자동 완성 등 요청 직전에는 즉시 보낸다(__flush).
   const flush = () => {

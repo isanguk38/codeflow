@@ -1,5 +1,5 @@
 // 코드 화면: 파일 탐색기 + 파일 탭 + Monaco 편집기(VS Code 편집기) + 언어 서버 오류 표시 + Git 변경 표시
-import { $, h, contextMenu, confirmDialog, promptDialog, choiceDialog, toast, splitter } from './ui.js';
+import { $, h, modal, contextMenu, confirmDialog, promptDialog, choiceDialog, toast, splitter } from './ui.js';
 import { state, git, onRefresh, refresh, busy } from './state.js';
 import * as lsp from './lsp-client.js';
 import { initTerminal, showTerminalsFor, toggleTerminal, isTerminalVisible } from './terminal.js';
@@ -777,7 +777,7 @@ const virtualName = (uri) => {
   return m ? m[1] : 'class';
 };
 
-// Java 파일을 열기 전: 사용자가 고른 기준 JDK 를 언어 서버에 알려 둔다
+// Java 파일을 열기 전: 예전 버전에서 고른 기준 JDK 가 있으면 넘긴다 (서버 쪽에서 .codeflow/java.json 으로 옮김)
 async function prepareJava(repo) {
   if (!javaPack) await refreshJavaPack();
   lsp.setPreferredJdk(repo, localStorage.getItem(`java.jdk:${repo.toLowerCase()}`) || null);
@@ -837,42 +837,41 @@ export async function removeJavaPack() {
   return r;
 }
 
+// 이 프로젝트에 직접 고른 JDK (.codeflow/java.json 에 저장, 언어 서버가 알려 준 값)
+const pickedJdk = (info) => info?.java?.project?.config?.jdk || null;
+
 function javaStatusItem(repo, info) {
-  if (!info || info.status === 'starting') return h('span', { class: 'cs-item', html: '<span class="spinner"></span> Java 언어 서버 시작 중 (5~15초)' });
+  if (!info || info.status === 'starting') return h('span', { class: 'cs-item', html: '<span class="spinner"></span> Java 프로젝트 분석 · 언어 서버 시작 중' });
   if (info.status === 'error') return h('span', { class: 'cs-item err', text: 'Java 언어 서버 오류', title: info.error || '' });
   if (info.javaState && !info.javaState.ready)
-    return h('span', { class: `cs-item ${info.javaState.error ? 'err' : ''}`, html: `${info.javaState.error ? '' : '<span class="spinner"></span> '}${info.javaState.message}`, title: '처음 여는 프로젝트는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.' });
+    return h('span', { class: `cs-item ${info.javaState.error ? 'err' : ''}`, html: `${info.javaState.error ? '' : '<span class="spinner"></span> '}${info.javaState.message}`, title: '처음 여는 프로젝트(또는 구조를 바꾼 직후)는 라이브러리 색인 때문에 시간이 걸립니다. 두 번째부터는 빨라집니다.' });
   const proj = info.java?.project || {};
+  const managed = ['Maven', 'Gradle'].includes(proj.build);
   const level = proj.level ? (proj.level.startsWith('1.') ? proj.level : proj.level.replace(/^(\d+).*/, '$1')) : null;
-  const picked = localStorage.getItem(`java.jdk:${repo.toLowerCase()}`);
-  const want = level ? (level.startsWith('1.') ? `JavaSE-${level}` : `JavaSE-${level}`) : null;
-  const rt = (info.java?.runtimes || []).find((r) => r.name === want);
-  const missing = level && !rt;
-  // 빌드 파일도 IntelliJ/Eclipse 설정도 없고 JDK 도 안 골랐으면: 직접 고르도록 안내
-  const def = (info.java?.runtimes || []).find((r) => r.default);
-  if (!proj.build && !picked && !def) {
-    const el = h('span', { class: 'cs-item cs-btn warn', text: '☕ Java · JDK 선택 필요', title: 'pom.xml / build.gradle / IntelliJ(.idea) / Eclipse 설정이 없어 Java 버전을 알 수 없습니다.\n클릭해서 이 프로젝트의 JDK 를 고르세요.' });
-    el.onclick = () => openJdkPicker(el, repo, info, null, proj);
-    return el;
-  }
+  const picked = pickedJdk(info);
+  const runtimes = info.java?.runtimes || [];
+  const def = runtimes.find((r) => r.default);
+  const rt = managed ? runtimes.find((r) => r.name === (level ? `JavaSE-${level}` : '')) : def;
+  const missing = managed && level && !rt;
+  const auto = !managed && !picked && !level; // 버전 정보가 없어 가장 최신 JDK 로 자동 선택
+  const tail = `${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : auto ? ' · 자동' : ''}`;
+  const libs = managed ? '' : `\n라이브러리 jar ${proj.libraries?.length || 0}개 · 소스 폴더 ${(proj.sourcePaths || []).join(', ') || '-'}`;
   const el = h('span', {
     class: `cs-item cs-btn ${missing ? 'warn' : ''}`,
-    text: `☕ Java ${level || (def ? def.name.replace(/^JavaSE-/, '') : '?')}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`,
+    text: `☕ Java ${level || (def ? def.name.replace(/^JavaSE-/, '') : '?')}${tail}`,
     title: missing
       ? `프로젝트는 Java ${level} 기준인데 해당 JDK 가 PC 에 없습니다. 설치된 다른 JDK 로 검사합니다.`
-      : `검사 기준: ${rt ? rt.path : '언어 서버 기본 JDK'}\n클릭해서 기준 JDK 선택`,
+      : `검사 기준 JDK: ${rt ? rt.path : '언어 서버 기본 JDK'}${libs}\n클릭해서 JDK 선택 / 프로젝트 구조`,
   });
   el.onclick = () => openJdkPicker(el, repo, info, level, proj);
   // 언어 서버가 실제로 적용한 Java 버전/JDK 로 표시를 바로잡는다 (추측이 아닌 실제 값)
   const d = activeDoc();
   if (d && info.javaState?.ready) {
-    const key = `${d.path}|${info.java?.runtimes?.find((r) => r.default)?.path || ''}`;
+    const key = `${d.path}|${def?.path || ''}`;
     const show = (eff) => {
       if (!eff?.level) return;
-      el.textContent = `☕ Java ${eff.level}${proj.file ? ` (${proj.file})` : ''}${picked ? ' · 직접 선택' : ''}`;
-      el.title = `실제 검사 기준: Java ${eff.level}
-JDK: ${eff.jdk || '-'}
-클릭해서 기준 JDK 선택`;
+      el.textContent = `☕ Java ${eff.level}${tail}`;
+      el.title = `실제 검사 기준: Java ${eff.level}\nJDK: ${eff.jdk || '-'}${libs}\n클릭해서 JDK 선택 / 프로젝트 구조`;
       el.classList.toggle('warn', !!level && eff.level !== level);
     };
     if (effectiveCache.has(key)) show(effectiveCache.get(key));
@@ -889,23 +888,58 @@ JDK: ${eff.jdk || '-'}
   return el;
 }
 
+// 언어 서버가 JDK 를 다시 적용했으면 표시도 새로 확인
+lsp.onJavaJdkFixed(() => {
+  effectiveCache.clear();
+  setTimeout(updateStatus, 3000);
+});
+
+// 프로젝트 설정이 바뀌면 이 프로젝트의 Java 언어 서버를 다시 시작한다 (열린 Java 파일은 다시 연결)
+async function restartJava(repo, message) {
+  localStorage.removeItem(`java.jdk:${repo.toLowerCase()}`); // 예전 버전의 저장 위치 (이제 .codeflow/java.json)
+  lsp.setPreferredJdk(repo, null);
+  effectiveCache.clear();
+  const models = [...docs.values()].filter((d) => d.repo === repo && !d.virtual && d.model.getLanguageId() === 'java').map((d) => d.model);
+  toast(message, 'info', 5000);
+  await lsp.restartServer(repo, 'java', models);
+  updateStatus();
+}
+
+async function saveJavaConfig(repo, patch) {
+  const r = await window.api.java.saveConfig(repo, patch);
+  if (!r.ok) throw new Error(r.error);
+  return r.data;
+}
+
+async function pickJdkFolder() {
+  const dir = await window.api.pickFolder('JDK 설치 폴더 선택 (예: C:\\Program Files\\Java\\jdk-1.8)');
+  if (!dir) return null;
+  const r = await window.api.java.addJdk(dir);
+  if (!r.ok) {
+    toast(r.error, 'error', 6000);
+    return null;
+  }
+  toast(`JDK ${r.data.version} 을(를) 추가했습니다.`, 'ok');
+  return r.data.home;
+}
+
 async function openJdkPicker(anchor, repo, info, level, proj) {
   await refreshJavaPack();
-  const picked = localStorage.getItem(`java.jdk:${repo.toLowerCase()}`);
+  const picked = pickedJdk(info);
+  const managed = ['Maven', 'Gradle'].includes(proj.build);
   const choose = async (home) => {
-    if (home) localStorage.setItem(`java.jdk:${repo.toLowerCase()}`, home);
-    else localStorage.removeItem(`java.jdk:${repo.toLowerCase()}`);
-    lsp.setPreferredJdk(repo, home);
-    effectiveCache.clear();
-    const models = [...docs.values()].filter((d) => d.repo === repo && !d.virtual && d.model.getLanguageId() === 'java').map((d) => d.model);
-    toast('기준 JDK 를 바꿔 Java 언어 서버를 다시 시작합니다.', 'info');
-    await lsp.restartServer(repo, 'java', models);
-    updateStatus();
+    try {
+      await saveJavaConfig(repo, { jdk: home });
+    } catch (e) {
+      return toast(e.message, 'error', 6000);
+    }
+    await restartJava(repo, '기준 JDK 를 바꿔 Java 언어 서버를 다시 시작합니다.');
   };
   const items = [
-    { header: '프로젝트 기준 JDK' },
-    { header: proj.build ? `${proj.build} 프로젝트: ${proj.file} 의 Java ${level || '?'} 버전을 따릅니다` : '빌드 파일이 없어 선택한 JDK 로 검사합니다' },
-    { label: `${!picked ? '✓ ' : '　'}자동${level ? ` (Java ${level} 에 맞는 JDK)` : ''}`, onClick: () => choose(null) },
+    { label: '🧱 프로젝트 구조 (JDK · 소스 폴더 · 라이브러리 jar)...', onClick: () => openProjectStructure(repo) },
+    '-',
+    { header: managed ? `${proj.build} 프로젝트: ${proj.file} 의 Java ${level || '?'} 버전을 따릅니다` : '프로젝트 기준 JDK' },
+    { label: `${!picked ? '✓ ' : '　'}자동${level ? ` (Java ${level} 에 맞는 JDK)` : managed ? '' : ' (설치된 가장 최신 JDK)'}`, onClick: () => choose(null) },
     '-',
     ...javaPack.jdks.map((j) => ({
       label: `${picked && picked.toLowerCase() === j.home.toLowerCase() ? '✓ ' : '　'}${j.jdk ? 'JDK' : 'JRE'} ${j.version}`,
@@ -917,17 +951,223 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
     {
       label: '📁 폴더에서 JDK 선택...',
       onClick: async () => {
-        const dir = await window.api.pickFolder('JDK 설치 폴더 선택 (예: C:\\Program Files\\Java\\jdk-1.8)');
-        if (!dir) return;
-        const r = await window.api.java.addJdk(dir);
-        if (!r.ok) return toast(r.error, 'error', 6000);
-        toast(`JDK ${r.data.version} 을(를) 추가했습니다.`, 'ok');
-        choose(r.data.home);
+        const home = await pickJdkFolder();
+        if (home) choose(home);
       },
     },
-  ];
+  ].filter(Boolean);
   const r = anchor.getBoundingClientRect();
   contextMenu(r.left, r.top - 8 - items.length * 28, items);
+}
+
+// ---------- Java 프로젝트 구조 (IntelliJ 의 Project Structure 와 같은 역할) ----------
+// 프로젝트를 분석한 결과(소스 폴더, jar)를 보여 주고, JDK·소스 폴더·라이브러리를 바꿀 수 있다.
+// 설정은 프로젝트 폴더의 .codeflow/java.json 에 저장된다 (Git 에는 올라가지 않음).
+
+export async function openProjectStructure(repo) {
+  const done = busy('Java 프로젝트 분석');
+  let proj;
+  try {
+    await refreshJavaPack();
+    proj = await window.api.java.project(repo);
+  } finally {
+    done();
+  }
+  const managed = ['Maven', 'Gradle'].includes(proj.build);
+  const rel = (p) => {
+    const a = p.replace(/\\/g, '/');
+    const r = repo.replace(/\\/g, '/').replace(/\/$/, '') + '/';
+    return a.toLowerCase().startsWith(r.toLowerCase()) ? a.slice(r.length) || '.' : a;
+  };
+  const cfg = proj.config || {};
+  const st = {
+    jdk: cfg.jdk || null,
+    srcManual: !!cfg.sourcePaths?.length,
+    src: [...(cfg.sourcePaths?.length ? cfg.sourcePaths : proj.detected?.sourcePaths || [])],
+    libs: [],
+    filter: '',
+  };
+  const excluded = (cfg.excludedLibraries || []).map((x) => x.toLowerCase());
+  for (const l of proj.detected?.libraries || []) st.libs.push({ ref: l, on: !excluded.includes(l.toLowerCase()), added: false });
+  for (const a of cfg.addedLibraries || []) if (!st.libs.some((x) => x.ref.toLowerCase() === a.toLowerCase())) st.libs.push({ ref: a, on: true, added: true });
+
+  const body = h('div', { class: 'ps' });
+  const section = (title, hint) => h('div', { class: 'ps-sec' }, h('div', { class: 'ps-title' }, title, hint ? h('span', { class: 'ps-hint', text: hint }) : ''));
+
+  // JDK
+  const jdkSel = h('select', { class: 'ps-select' });
+  const fillJdks = () => {
+    jdkSel.innerHTML = '';
+    const autoLabel = proj.level ? `자동 (Java ${proj.level} 에 맞는 JDK)` : managed ? `자동 (${proj.file} 기준)` : '자동 (설치된 가장 최신 JDK)';
+    jdkSel.append(h('option', { value: '', text: autoLabel }));
+    for (const j of javaPack.jdks) jdkSel.append(h('option', { value: j.home, text: `${j.jdk ? 'JDK' : 'JRE'} ${j.version}  —  ${j.home}` }));
+    if (st.jdk && !javaPack.jdks.some((j) => j.home.toLowerCase() === st.jdk.toLowerCase())) jdkSel.append(h('option', { value: st.jdk, text: `${st.jdk} (찾을 수 없음)` }));
+    jdkSel.value = st.jdk ? javaPack.jdks.find((j) => j.home.toLowerCase() === st.jdk.toLowerCase())?.home || st.jdk : '';
+  };
+  fillJdks();
+  jdkSel.onchange = () => (st.jdk = jdkSel.value || null);
+  const jdkAdd = h('button', { class: 'tb-btn small', text: '📁 폴더에서 추가...' });
+  jdkAdd.onclick = async () => {
+    const home = await pickJdkFolder();
+    if (!home) return;
+    await refreshJavaPack();
+    st.jdk = home;
+    fillJdks();
+  };
+  const secJdk = section('JDK', managed ? `${proj.file} 의 Java 버전(${proj.level || '?'})을 따르고, 여기서 고르면 그 JDK 로 검사합니다` : '선택한 JDK 의 클래스·함수로 자동 완성과 오류 검사를 합니다');
+  secJdk.append(h('div', { class: 'ps-row' }, jdkSel, jdkAdd));
+  body.append(
+    h('div', {
+      class: 'ps-info',
+      html: managed
+        ? `<b>${proj.build} 프로젝트</b> · 라이브러리와 소스 폴더는 <code>${proj.file}</code> 이 관리합니다 (VS Code Java 와 같은 방식).`
+        : `<b>빌드 파일(pom.xml · build.gradle)이 없는 프로젝트</b>를 분석했습니다${proj.detected?.build ? ` (${proj.detected.build} 설정도 반영)` : ''}. 설정은 <code>.codeflow/java.json</code> 에 저장되며 Git 에는 올라가지 않습니다.${proj.truncated ? '<br>⚠ 파일이 매우 많아 일부 폴더는 분석하지 못했습니다. 빠진 jar 는 직접 추가하세요.' : ''}`,
+    }),
+    secJdk
+  );
+
+  // 소스 폴더
+  const srcList = h('div', { class: 'ps-list ps-list-short' });
+  const srcHint = h('span', { class: 'ps-hint' });
+  const drawSrc = () => {
+    srcList.innerHTML = '';
+    srcHint.textContent = st.srcManual ? '직접 지정함' : '자동으로 찾음 (.java 파일의 package 선언 기준)';
+    if (!st.src.length) srcList.append(h('div', { class: 'ps-empty', text: '찾은 소스 폴더가 없습니다. 폴더 추가로 지정하세요.' }));
+    st.src.forEach((s, i) => {
+      const x = h('button', { class: 'ps-x', title: '빼기', text: '✕' });
+      x.onclick = () => {
+        st.src.splice(i, 1);
+        st.srcManual = true;
+        drawSrc();
+      };
+      srcList.append(h('div', { class: 'ps-item' }, h('span', { class: 'ps-ico', text: '📂' }), h('span', { class: 'ps-path', text: s }), x));
+    });
+  };
+  const srcAdd = h('button', { class: 'tb-btn small', text: '+ 소스 폴더 추가...' });
+  srcAdd.onclick = async () => {
+    const dir = await window.api.pickFolder('소스 폴더 선택 (package 가 시작되는 폴더, 예: src 또는 JavaSource)');
+    if (!dir) return;
+    const r = rel(dir);
+    if (!st.src.some((x) => x.toLowerCase() === r.toLowerCase())) st.src.push(r);
+    st.srcManual = true;
+    drawSrc();
+  };
+  const srcAuto = h('button', { class: 'tb-btn small', text: '자동으로 되돌리기' });
+  srcAuto.onclick = () => {
+    st.src = [...(proj.detected?.sourcePaths || [])];
+    st.srcManual = false;
+    drawSrc();
+  };
+
+  // 라이브러리
+  const libList = h('div', { class: 'ps-list' });
+  const libCount = h('span', { class: 'ps-hint' });
+  const libFilter = h('input', { class: 'ps-filter', placeholder: 'jar 이름으로 찾기' });
+  libFilter.oninput = () => {
+    st.filter = libFilter.value.trim().toLowerCase();
+    drawLibs();
+  };
+  const drawLibs = () => {
+    libList.innerHTML = '';
+    const on = st.libs.filter((l) => l.on).length;
+    libCount.textContent = `사용 ${on}개 / 찾은 jar ${st.libs.filter((l) => !l.added).length}개 · 체크를 끄면 검사에서 뺍니다`;
+    const shown = st.libs.filter((l) => !st.filter || l.ref.toLowerCase().includes(st.filter));
+    if (!st.libs.length) libList.append(h('div', { class: 'ps-empty', text: '프로젝트 안에서 jar 를 찾지 못했습니다. Tomcat 의 servlet-api.jar 처럼 프로젝트 밖에 있는 jar 는 직접 추가하세요.' }));
+    for (const l of shown.slice(0, 500)) {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = l.on;
+      cb.onchange = () => {
+        l.on = cb.checked;
+        drawLibs();
+      };
+      const name = l.ref.split('/').pop();
+      const dir = l.ref.slice(0, l.ref.length - name.length).replace(/\/$/, '') || '.';
+      const row = h('label', { class: `ps-item ${l.on ? '' : 'off'}`, title: l.ref }, cb, h('span', { class: 'ps-ico', text: '☕' }), h('span', { class: 'ps-name', text: name }), h('span', { class: 'ps-dir', text: dir }));
+      if (l.added) {
+        const x = h('button', { class: 'ps-x', title: '목록에서 빼기', text: '✕' });
+        x.onclick = (e) => {
+          e.preventDefault();
+          st.libs.splice(st.libs.indexOf(l), 1);
+          drawLibs();
+        };
+        row.append(h('span', { class: 'ps-tag', text: '직접 추가' }), x);
+      }
+      libList.append(row);
+    }
+    if (shown.length > 500) libList.append(h('div', { class: 'ps-empty', text: `… ${shown.length - 500}개 더 있음 (이름으로 찾기)` }));
+  };
+  const addLibs = (files) => {
+    let n = 0;
+    for (const f of files) {
+      const r = rel(f);
+      const cur = st.libs.find((x) => x.ref.toLowerCase() === r.toLowerCase());
+      if (cur) cur.on = true;
+      else {
+        st.libs.push({ ref: r, on: true, added: true });
+        n++;
+      }
+    }
+    drawLibs();
+    if (files.length) toast(`jar ${n}개를 추가했습니다.`, 'ok');
+  };
+  const libAdd = h('button', { class: 'tb-btn small', text: '+ jar 추가...' });
+  libAdd.onclick = async () => addLibs(await window.api.pickFiles('라이브러리 jar 선택', [{ name: 'Java 라이브러리', extensions: ['jar'] }], repo));
+  const libAddDir = h('button', { class: 'tb-btn small', text: '+ 폴더의 jar 모두 추가...' });
+  libAddDir.onclick = async () => {
+    const dir = await window.api.pickFolder('jar 가 들어 있는 폴더 선택 (예: C:\\tomcat\\lib)');
+    if (dir) addLibs(await window.api.java.jarsIn(dir));
+  };
+
+  if (!managed) {
+    const secSrc = section('소스 폴더', '');
+    secSrc.querySelector('.ps-title').append(srcHint);
+    secSrc.append(srcList, h('div', { class: 'ps-row' }, srcAdd, srcAuto));
+    const secLib = section('라이브러리 (jar)', '');
+    secLib.querySelector('.ps-title').append(libCount);
+    secLib.append(libFilter, libList, h('div', { class: 'ps-row' }, libAdd, libAddDir));
+    body.append(secSrc, secLib);
+    drawSrc();
+    drawLibs();
+  }
+
+  modal({
+    title: '🧱 Java 프로젝트 구조',
+    body,
+    wide: true,
+    buttons: [
+      ...(managed
+        ? []
+        : [
+            {
+              label: '다시 분석',
+              onClick: () => {
+                setTimeout(() => openProjectStructure(repo), 0);
+                return null;
+              },
+            },
+          ]),
+      { label: '취소' },
+      {
+        label: '적용',
+        primary: true,
+        onClick: async () => {
+          const patch = { jdk: st.jdk };
+          if (!managed) {
+            patch.sourcePaths = st.srcManual ? st.src : null;
+            patch.addedLibraries = st.libs.filter((l) => l.added && l.on).map((l) => l.ref);
+            patch.excludedLibraries = st.libs.filter((l) => !l.added && !l.on).map((l) => l.ref);
+          }
+          try {
+            await saveJavaConfig(repo, patch);
+          } catch (e) {
+            toast(e.message, 'error', 6000);
+            return false;
+          }
+          await restartJava(repo, '프로젝트 구조를 적용했습니다. Java 언어 서버를 다시 시작합니다 (처음 한 번은 색인 때문에 시간이 걸립니다).');
+        },
+      },
+    ],
+  });
 }
 
 // ---------- Java 파일을 열 때 안내 (언어 팩 미설치 시 설치 제안) ----------

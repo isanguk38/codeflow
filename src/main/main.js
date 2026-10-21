@@ -122,9 +122,9 @@ for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder
 
 // 코드 화면: 언어 서버 (오류 표시, 자동 완성 등)
 const lsp = require('./lsp');
-ipcMain.handle('lsp:start', (e, lang, root, opts) => {
+ipcMain.handle('lsp:start', async (e, lang, root, opts) => {
   try {
-    return { ok: true, data: lsp.start(lang, root, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a), opts) };
+    return { ok: true, data: await lsp.start(lang, root, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a), opts) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -151,6 +151,14 @@ ipcMain.handle('java:remove', () => {
   }
 });
 ipcMain.handle('java:project', (_e, root) => javapack.projectInfo(root));
+ipcMain.handle('java:jarsIn', (_e, dir) => javapack.jarsIn(dir));
+ipcMain.handle('java:saveConfig', (_e, root, patch) => {
+  try {
+    return { ok: true, data: javapack.saveConfig(root, patch) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 ipcMain.handle('java:addJdk', (_e, home) => {
   try {
     return { ok: true, data: javapack.addCustomJdk(home) };
@@ -212,6 +220,10 @@ ipcMain.handle('recent:remove', (_e, dir) => {
 ipcMain.handle('dialog:folder', async (_e, title) => {
   const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('dialog:files', async (_e, title, filters, defaultPath) => {
+  const r = await dialog.showOpenDialog(win, { title, defaultPath, filters, properties: ['openFile', 'multiSelections'] });
+  return r.canceled ? [] : r.filePaths;
 });
 
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));

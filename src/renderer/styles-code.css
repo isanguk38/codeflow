@@ -445,3 +445,124 @@
 .lp-jdks {
   margin-top: 2px;
 }
+
+/* ---------- Java 프로젝트 구조 ---------- */
+.ps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 12.5px;
+}
+.ps-info {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--text2);
+  line-height: 1.5;
+}
+.ps-info code {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.ps-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ps-title {
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ps-hint {
+  font-weight: 400;
+  color: var(--text3);
+  font-size: 11.5px;
+}
+.ps-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ps-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.ps-filter {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.ps-list {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--bg);
+}
+.ps-list-short {
+  max-height: 110px;
+}
+.ps-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: default;
+}
+.ps-item:hover {
+  background: var(--hover);
+}
+.ps-item.off .ps-name,
+.ps-item.off .ps-dir {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.ps-ico {
+  width: 16px;
+  text-align: center;
+}
+.ps-name,
+.ps-path {
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.ps-path {
+  flex: 1;
+}
+.ps-dir {
+  flex: 1;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.ps-tag {
+  font-size: 10.5px;
+  color: var(--accent2);
+  border: 1px solid var(--accent2);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.ps-x {
+  background: transparent;
+  border: 0;
+  color: var(--text3);
+  cursor: pointer;
+}
+.ps-x:hover {
+  color: var(--danger);
+}
+.ps-empty {
+  padding: 8px;
+  color: var(--text3);
+}

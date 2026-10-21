@@ -125,7 +125,10 @@ function projectRuntimes(preferredHome, project = {}) {
   }
   const want = preferredHome || project.jdkHome;
   let def = want ? all.find((j) => j.home.toLowerCase() === want.toLowerCase()) : null;
-  if (!def && project.level && !['Maven', 'Gradle'].includes(project.build)) def = byName.get(runtimeName(majorOf(project.level))) || null;
+  const managed = ['Maven', 'Gradle'].includes(project.build);
+  if (!def && project.level && !managed) def = byName.get(runtimeName(majorOf(project.level))) || null;
+  // 버전을 알 수 없는 프로젝트: 설치된 JDK 중 가장 최신 것으로 (기준이 없으면 언어 서버가 자기 실행용 Java 21 로 검사해 버린다)
+  if (!def && !managed) def = all.find((j) => j.jdk) || all[0] || null;
   if (def) byName.set(def.name, def);
   // 주의: default:false 를 명시하면 언어 서버가 기본 JDK 를 다시 바꿔 버린다 → 기본인 것에만 default:true 를 붙인다
   return [...byName.values()].map((j) => (def && j.home === def.home ? { name: j.name, path: j.home, default: true } : { name: j.name, path: j.home }));
@@ -251,9 +254,9 @@ function remove() {
   return status();
 }
 
-// ---------- 프로젝트 정보 (IntelliJ 와 같은 순서로 찾기) ----------
-// 1) pom.xml (Maven)  2) build.gradle (Gradle)  3) .idea (IntelliJ 설정)  4) .classpath (Eclipse 설정)  5) 없음
-// 반환: { build, file, level, jdkHome, jdkName, libraries[], sourcePaths[] }
+// ---------- 프로젝트 정보 ----------
+// 1) pom.xml (Maven)  2) build.gradle (Gradle) → 빌드 파일이 라이브러리를 관리
+// 3) 그 밖: 폴더 분석(소스 폴더, 모든 jar) + .idea / .classpath 가 있으면 그 설정도 합친다
 
 const readText = (f) => {
   try {
@@ -322,57 +325,147 @@ function eclipseProject(root) {
   if (!cp || !fs.existsSync(path.join(root, '.project'))) return null;
   const prefs = readText(path.join(root, '.settings', 'org.eclipse.jdt.core.prefs')) || '';
   const level = (prefs.match(/org\.eclipse\.jdt\.core\.compiler\.compliance=([\d.]+)/) || cp.match(/JavaSE-([\d.]+)/) || [])[1] || null;
-  return { build: 'Eclipse', file: 'Eclipse 설정', level, jdkHome: null, libraries: [], sourcePaths: [] };
+  const libraries = [];
+  const sourcePaths = [];
+  for (const m of cp.matchAll(/<classpathentry\b([^>]*)>/g)) {
+    const kind = (m[1].match(/\bkind="([^"]+)"/) || [])[1];
+    const p = (m[1].match(/\bpath="([^"]+)"/) || [])[1];
+    if (!p) continue;
+    if (kind === 'lib') libraries.push(path.resolve(root, p));
+    else if (kind === 'src' && !p.startsWith('/')) sourcePaths.push(p);
+  }
+  return { build: 'Eclipse', file: 'Eclipse 설정', level, jdkHome: null, libraries: libraries.filter((f) => fs.existsSync(f)), sourcePaths };
 }
 
-// 소스 폴더 자동 찾기 (IntelliJ 가 프로젝트를 열 때 하는 것처럼):
-// .java 파일의 package 선언과 폴더 위치를 맞춰서 소스 루트를 알아낸다. 예) src/app/Main.java + package app; → src
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'target', 'build', 'out', 'bin', '.idea', '.gradle', '.settings', 'classes']);
-function inferSourceRoots(root) {
+// ---------- 프로젝트 분석 (IntelliJ 의 'Create project from existing sources' 와 같은 일) ----------
+// 프로젝트 폴더 전체를 훑어서
+//  - 소스 폴더: .java 파일의 package 선언과 폴더 위치를 맞춰 찾는다. 예) JavaSource/com/acme/A.java + package com.acme; → JavaSource
+//  - 라이브러리: 프로젝트 안의 모든 .jar (WEB-INF/lib, lib, jars … 어디에 있든)
+// 빌드 결과물 폴더(target, build, out, bin, classes)와 node_modules 등은 건너뛴다.
+const SKIP_DIRS = new Set(['node_modules', 'target', 'build', 'out', 'bin', 'classes', 'dist']);
+const SCAN_MAX_ENTRIES = 80000;
+
+async function sourceRootOf(file) {
+  let head = '';
+  try {
+    const fh = await fs.promises.open(file, 'r');
+    const { buffer, bytesRead } = await fh.read(Buffer.alloc(8192), 0, 8192, 0);
+    await fh.close();
+    head = buffer.slice(0, bytesRead).toString('utf8');
+  } catch {
+    return null;
+  }
+  const pkg = (head.replace(/\/\*[\s\S]*?\*\//g, '').match(/^\s*package\s+([\w.]+)\s*;/m) || [])[1];
+  const dir = path.dirname(file);
+  if (!pkg) return dir;
+  const pkgPath = path.sep + pkg.split('.').join(path.sep);
+  if (!dir.toLowerCase().endsWith(pkgPath.toLowerCase())) return null; // 위치가 안 맞는 파일은 판단에서 제외
+  return dir.slice(0, dir.length - pkgPath.length);
+}
+
+async function scanProject(root) {
+  const jars = [];
   const roots = new Set();
-  let seen = 0;
-  const walk = (dir, depth) => {
-    if (depth > 8 || seen > 400 || roots.size >= 10) return;
-    let entries = [];
+  let entries = 0;
+  const walk = async (dir, depth) => {
+    if (depth > 14 || entries > SCAN_MAX_ENTRIES) return;
+    let list;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      list = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
-    for (const e of entries) {
+    entries += list.length;
+    let tries = 0; // 한 폴더에서 .java 파일 몇 개만 보면 충분
+    let found = false;
+    for (const e of list) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) walk(p, depth + 1);
-      } else if (e.name.endsWith('.java')) {
-        seen++;
-        let head = '';
-        try {
-          const fd = fs.openSync(p, 'r');
-          const buf = Buffer.alloc(4096);
-          const n = fs.readSync(fd, buf, 0, 4096, 0);
-          fs.closeSync(fd);
-          head = buf.slice(0, n).toString('utf8');
-        } catch {}
-        const pkg = (head.match(/^\s*package\s+([\w.]+)\s*;/m) || [])[1];
-        const fileDir = path.dirname(p);
-        let srcRoot = fileDir;
-        if (pkg) {
-          const pkgPath = pkg.split('.').join(path.sep);
-          if (!fileDir.toLowerCase().endsWith(path.sep + pkgPath.toLowerCase())) continue; // 위치가 안 맞는 파일은 판단에서 제외
-          srcRoot = fileDir.slice(0, fileDir.length - pkgPath.length - 1);
+        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) await walk(p, depth + 1);
+      } else if (/\.jar$/i.test(e.name)) {
+        if (!/-(sources|javadoc)\.jar$/i.test(e.name)) jars.push(p);
+      } else if (!found && tries < 3 && e.name.endsWith('.java')) {
+        tries++;
+        const r = await sourceRootOf(p);
+        if (r) {
+          roots.add(r);
+          found = true;
         }
-        roots.add(path.relative(root, srcRoot) || '.');
-        break; // 한 폴더에서 한 파일만 보면 충분
       }
     }
   };
-  walk(root, 0);
-  // 다른 소스 루트 안에 포함된 경로는 뺀다
-  const list = [...roots].sort((a, b) => a.length - b.length);
-  return list.filter((r, i) => !list.slice(0, i).some((o) => o !== '.' && (r + path.sep).startsWith(o + path.sep)));
+  await walk(root, 0);
+  // 다른 소스 폴더 안에 들어 있는 경로는 뺀다
+  const list = [...roots].map((r) => relRef(root, r)).sort((a, b) => a.length - b.length);
+  const sourcePaths = list.filter((r, i) => !list.slice(0, i).some((o) => o === '.' || r.startsWith(o + '/')));
+  return { jars, sourcePaths, truncated: entries > SCAN_MAX_ENTRIES };
 }
 
-function projectInfo(root) {
+// 경로 표기: 프로젝트 안이면 상대 경로, 밖이면 절대 경로. 구분자는 항상 '/'
+// (언어 서버는 '\' 를 패턴 기호로 읽어서 C:\...\a.jar 같은 경로를 찾지 못한다)
+function relRef(root, p) {
+  const rel = path.relative(root, p);
+  if (rel === '') return '.';
+  const inside = !rel.startsWith('..') && !path.isAbsolute(rel);
+  return (inside ? rel : path.resolve(p)).replace(/\\/g, '/');
+}
+const absOf = (root, ref) => path.resolve(root, ref);
+const sameRef = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+// ---------- 프로젝트 설정 파일 (.codeflow/java.json) ----------
+// 분석 결과와 사용자가 바꾼 설정(JDK, 소스 폴더, 추가/제외한 jar)을 프로젝트 폴더에 저장한다 (IntelliJ 의 .idea 와 같은 역할).
+// Git 에는 올라가지 않도록 .git/info/exclude 에 자동으로 등록한다.
+const configFile = (root) => path.join(root, '.codeflow', 'java.json');
+const EMPTY_CONFIG = { jdk: null, sourcePaths: null, addedLibraries: [], excludedLibraries: [] };
+
+function readConfig(root) {
+  try {
+    const c = JSON.parse(fs.readFileSync(configFile(root), 'utf8'));
+    return { ...EMPTY_CONFIG, ...c, addedLibraries: c.addedLibraries || [], excludedLibraries: c.excludedLibraries || [] };
+  } catch {
+    return { ...EMPTY_CONFIG };
+  }
+}
+
+function gitExclude(root) {
+  const f = path.join(root, '.git', 'info', 'exclude');
+  try {
+    if (!fs.statSync(path.join(root, '.git')).isDirectory()) return;
+    const txt = readText(f) || '';
+    if (/^\/?\.codeflow\/?\s*$/m.test(txt)) return;
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.appendFileSync(f, `${txt && !txt.endsWith('\n') ? '\n' : ''}# CodeFlow 프로젝트 설정 (Java 프로젝트 구조)\n/.codeflow/\n`);
+  } catch {}
+}
+
+function writeConfig(root, cfg) {
+  const out = {
+    설명: 'CodeFlow 가 분석한 Java 프로젝트 구조입니다. 코드 화면 아래 상태 표시줄의 ☕ Java → 프로젝트 구조에서 바꿀 수 있습니다. (Git 에는 올라가지 않습니다)',
+    jdk: cfg.jdk || null,
+    sourcePaths: cfg.sourcePaths?.length ? cfg.sourcePaths : null,
+    addedLibraries: cfg.addedLibraries || [],
+    excludedLibraries: cfg.excludedLibraries || [],
+    detected: cfg.detected || null,
+  };
+  const text = JSON.stringify(out, null, 2);
+  if (readText(configFile(root)) === text) return;
+  fs.mkdirSync(path.dirname(configFile(root)), { recursive: true });
+  fs.writeFileSync(configFile(root), text);
+  gitExclude(root);
+}
+
+// 사용자가 바꾼 설정 저장 (patch: { jdk?, sourcePaths?, addedLibraries?, excludedLibraries? })
+function saveConfig(root, patch) {
+  const cfg = { ...readConfig(root), ...patch };
+  const norm = (list) => (list || []).map((p) => relRef(root, absOf(root, p)));
+  cfg.addedLibraries = norm(cfg.addedLibraries);
+  cfg.excludedLibraries = norm(cfg.excludedLibraries);
+  cfg.sourcePaths = cfg.sourcePaths?.length ? norm(cfg.sourcePaths) : null;
+  writeConfig(root, cfg);
+  return readConfig(root);
+}
+
+function buildToolInfo(root) {
   const pom = readText(path.join(root, 'pom.xml'));
   if (pom) {
     const m =
@@ -381,28 +474,82 @@ function projectInfo(root) {
       pom.match(/<java\.version>\s*([\d.]+)\s*</) ||
       pom.match(/<release>\s*([\d.]+)\s*<\/release>/) ||
       pom.match(/<source>\s*([\d.]+)\s*<\/source>/);
-    return { build: 'Maven', file: 'pom.xml', level: m ? m[1] : null, libraries: [], sourcePaths: [] };
+    return { build: 'Maven', file: 'pom.xml', level: m ? m[1] : null };
   }
   const gradle = readText(path.join(root, 'build.gradle')) || readText(path.join(root, 'build.gradle.kts'));
   if (gradle) {
     const m =
       gradle.match(/languageVersion(?:\.set\()?\s*(?:=\s*)?JavaLanguageVersion\.of\(\s*(\d+)\s*\)/) ||
       gradle.match(/sourceCompatibility\s*=\s*['"]?(?:JavaVersion\.VERSION_)?([\d._]+)['"]?/);
-    return { build: 'Gradle', file: fs.existsSync(path.join(root, 'build.gradle')) ? 'build.gradle' : 'build.gradle.kts', level: m ? m[1].replace('_', '.') : null, libraries: [], sourcePaths: [] };
+    return { build: 'Gradle', file: fs.existsSync(path.join(root, 'build.gradle')) ? 'build.gradle' : 'build.gradle.kts', level: m ? m[1].replace('_', '.') : null };
+  }
+  return null;
+}
+
+// 프로젝트 정보: Maven/Gradle 이면 빌드 파일이 라이브러리를 관리하고(언어 서버가 직접 읽음),
+// 그 밖의 프로젝트는 폴더 분석 결과 + IntelliJ/Eclipse 설정(있으면) + 사용자 설정을 합친다.
+// 반환: { build, file, level, jdkHome, jdkName, libraries[], sourcePaths[], detected, config }
+async function projectInfo(root, opts = {}) {
+  const cfg = readConfig(root);
+  if (!cfg.jdk && opts.legacyJdk) cfg.jdk = opts.legacyJdk; // 예전 버전에서 고른 JDK(앱에 저장돼 있던 값) 옮겨 오기
+  const tool = buildToolInfo(root);
+  if (tool) {
+    if (opts.write !== false && cfg.jdk) writeConfig(root, { ...cfg, detected: { build: tool.build, level: tool.level } });
+    return { ...tool, jdkHome: cfg.jdk || null, libraries: [], sourcePaths: [], detected: null, config: cfg };
   }
   const idea = intellijProject(root);
-  if (idea) {
-    if (!idea.sourcePaths.length) idea.sourcePaths = inferSourceRoots(root);
-    return idea;
+  const ecl = eclipseProject(root);
+  const scan = await scanProject(root);
+  const libs = [];
+  for (const f of [...(idea?.libraries || []), ...(ecl?.libraries || []), ...scan.jars]) {
+    const r = relRef(root, f);
+    if (!libs.some((x) => sameRef(x, r))) libs.push(r);
   }
-  return eclipseProject(root) || { build: null, file: null, level: null, libraries: [], sourcePaths: inferSourceRoots(root) };
+  const src = [];
+  for (const s of [...(idea?.sourcePaths || []), ...(ecl?.sourcePaths || []), ...scan.sourcePaths]) {
+    const r = relRef(root, absOf(root, s));
+    if (!src.some((x) => sameRef(x, r) || x === '.' || r.toLowerCase().startsWith(x.toLowerCase() + '/'))) src.push(r);
+  }
+  const level = idea?.level || ecl?.level || null;
+  const detected = { build: idea ? 'IntelliJ' : ecl ? 'Eclipse' : null, level, jdkName: idea?.jdkName || null, sourcePaths: src, libraries: libs, analyzedAt: new Date().toISOString() };
+  // 분석 결과가 그대로면 분석 시각도 그대로 둔다 (파일이 매번 바뀌지 않게)
+  const prev = cfg.detected || {};
+  if (JSON.stringify({ ...prev, analyzedAt: 0 }) === JSON.stringify({ ...detected, analyzedAt: 0 })) detected.analyzedAt = prev.analyzedAt;
+  if (opts.write !== false) writeConfig(root, { ...cfg, detected });
+  const excluded = cfg.excludedLibraries;
+  const libraries = [...libs.filter((l) => !excluded.some((x) => sameRef(x, l))), ...cfg.addedLibraries.filter((a) => !libs.some((l) => sameRef(l, a)))].filter((l) => fs.existsSync(absOf(root, l)));
+  return {
+    build: detected.build,
+    file: idea ? 'IntelliJ 설정' : ecl ? 'Eclipse 설정' : '프로젝트 분석',
+    level,
+    jdkName: detected.jdkName,
+    jdkHome: cfg.jdk || idea?.jdkHome || null,
+    libraries,
+    sourcePaths: cfg.sourcePaths?.length ? cfg.sourcePaths : src,
+    detected,
+    config: cfg,
+    truncated: scan.truncated,
+  };
 }
 
 // ---------- 언어 서버 실행 명령 ----------
 
 // 프로젝트(+기준 JDK)마다 색인 저장 폴더를 따로 둔다 → 두 번째부터는 빨리 열린다.
-// 빌드 파일이 없는 프로젝트는 처음 만들 때의 JDK 로 고정되므로, JDK 를 바꾸면 새 색인을 쓰도록 키에 포함한다.
+// 빌드 파일이 없는 프로젝트는 처음 만들 때의 JDK·라이브러리로 고정되므로, 바뀌면 새 색인을 쓰도록 키에 포함한다.
 const dataDir = (root, jdkKey = '') => path.join(packDir(), 'workspaces', crypto.createHash('sha1').update(`${root.toLowerCase()}|${jdkKey.toLowerCase()}`).digest('hex').slice(0, 16));
+
+// 같은 프로젝트의 예전 색인 폴더(다른 JDK/구조로 만든 것)는 지운다 — 디스크가 계속 늘지 않게
+function workspaceFor(root, jdkKey) {
+  const dir = dataDir(root, jdkKey);
+  const mark = (d) => path.join(d, '.codeflow-root');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(mark(dir), root.toLowerCase());
+    const base = path.dirname(dir);
+    for (const d of fs.readdirSync(base).map((n) => path.join(base, n))) if (d !== dir && readText(mark(d)) === root.toLowerCase()) rmQuiet(d);
+  } catch {}
+  return dir;
+}
 
 function command(root, jdkKey) {
   const jar = launcherJar();
@@ -438,10 +585,28 @@ function command(root, jdkKey) {
       '-configuration',
       path.join(serverDir(), 'config_win'),
       '-data',
-      dataDir(root, jdkKey),
+      workspaceFor(root, jdkKey),
     ],
     env: {},
   };
 }
 
-module.exports = { status, install, remove, command, detectJdks, projectRuntimes, projectInfo, addCustomJdk, intellijJdkTable };
+async function jarsIn(dir) {
+  const out = [];
+  const walk = async (d, depth) => {
+    if (depth > 6 || out.length > 2000) return;
+    let list = [];
+    try {
+      list = await fs.promises.readdir(d, { withFileTypes: true });
+    } catch {}
+    for (const e of list) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) await walk(p, depth + 1);
+      else if (/\.jar$/i.test(e.name) && !/-(sources|javadoc)\.jar$/i.test(e.name)) out.push(p);
+    }
+  };
+  await walk(dir, 0);
+  return out;
+}
+
+module.exports = { jarsIn, status, install, remove, command, detectJdks, projectRuntimes, projectInfo, saveConfig, addCustomJdk, intellijJdkTable };
