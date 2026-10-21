@@ -1,0 +1,597 @@
+// 오른쪽 AI 패널: 외부 AI(Claude Code 등)를 골라 설치·로그인한 뒤 프로젝트에 대해 대화하고 CodeFlow 를 직접 다루게 한다.
+// - 위쪽에서 AI 선택 → 설치 안 됐으면 '설치', 로그인 안 됐으면 '로그인' 화면 → 대화
+// - 대화는 프로젝트 탭마다 따로 (AI 는 그 프로젝트 폴더에서 실행)
+// - 파일 수정·명령 실행 등은 대화 안에 '허용 / 거부' 카드로 묻는다
+import { $, h, esc, toast, menuAt, splitter, modal } from './ui.js';
+import { state } from './state.js';
+import { activateCode, openFile } from './code.js';
+import { runInTerminal, readTerminal, listTerminals } from './terminal.js';
+
+const AIS = [
+  { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', ready: true, login: 'Claude 계정(Pro/Max 구독) 또는 Anthropic Console 계정' },
+  { id: 'codex', name: 'Codex', vendor: 'OpenAI', ready: false, login: 'ChatGPT 계정' },
+];
+
+let panel;
+let visible = localStorage.getItem('ai.visible') === '1';
+let provider = localStorage.getItem('ai.provider') || 'claude';
+let info = null; // 설치/로그인 상태
+let phase = 'checking'; // checking | install | installing | login | logging-in | ready | error
+let logLines = [];
+const chats = new Map(); // repo(소문자) → chat
+const byChatId = new Map(); // 실행 중인 AI 프로세스 id → chat
+
+const repoKey = (r) => (r || '').toLowerCase();
+
+// ---------- 패널 열기/닫기 ----------
+
+export function initAi() {
+  panel = $('#aiPanel');
+  splitter($('#aiSplit'), panel, { axis: 'x', min: 300, max: 900, invert: true, key: 'aiPanel' });
+  window.api.ai.onLog((line) => {
+    logLines.push(line);
+    if (logLines.length > 200) logLines = logLines.slice(-200);
+    const box = $('#aiLog');
+    if (box) {
+      box.textContent = logLines.join('\n');
+      box.scrollTop = box.scrollHeight;
+    }
+    // 로그인 화면에 나온 주소는 바로 누를 수 있게
+    const url = line.match(/https:\/\/\S+/);
+    if (url && phase === 'logging-in') showLoginUrl(url[0]);
+  });
+  window.api.ai.onEvent(onAiEvent);
+  window.api.ai.onTool(onToolRequest);
+  setVisible(visible);
+}
+
+export function setVisible(v) {
+  visible = v;
+  localStorage.setItem('ai.visible', v ? '1' : '0');
+  panel.hidden = !v;
+  $('#aiSplit').hidden = !v;
+  $('#aiBtn')?.classList.toggle('on', v);
+  if (v) {
+    render();
+    if (phase === 'checking' || !info) refreshStatus();
+    setTimeout(() => $('#aiInput')?.focus(), 50);
+  }
+}
+export const toggleAi = () => setVisible(!visible);
+
+// 프로젝트 탭이 바뀌면 그 프로젝트의 대화를 보여 준다
+export function onAiRepoChanged() {
+  if (visible) render();
+}
+
+// ---------- 설치 / 로그인 상태 ----------
+
+async function refreshStatus() {
+  const ai = AIS.find((a) => a.id === provider);
+  if (!ai.ready) {
+    phase = 'soon';
+    return render();
+  }
+  phase = 'checking';
+  render();
+  const r = await window.api.ai.status(provider);
+  if (!r.ok) {
+    phase = 'error';
+    info = { error: r.error };
+  } else {
+    info = r.data;
+    phase = !info.installed ? 'install' : !info.loggedIn ? 'login' : 'ready';
+  }
+  render();
+}
+
+async function doInstall() {
+  phase = 'installing';
+  logLines = [];
+  render();
+  const r = await window.api.ai.install(provider);
+  if (!r.ok) {
+    toast(r.error, 'error', 8000);
+    phase = 'install';
+    return render();
+  }
+  toast(`${aiName()} 를 설치했습니다.`, 'ok');
+  info = r.data;
+  phase = info.loggedIn ? 'ready' : 'login';
+  render();
+}
+
+async function doLogin() {
+  phase = 'logging-in';
+  logLines = [];
+  render();
+  const r = await window.api.ai.login(provider);
+  if (phase !== 'logging-in') return; // 취소함
+  info = r.ok ? r.data.status : info;
+  if (info?.loggedIn) {
+    toast(`${aiName()} 에 로그인했습니다.`, 'ok');
+    phase = 'ready';
+  } else {
+    phase = 'login';
+    if (!r.ok) toast(r.error, 'error', 6000);
+  }
+  render();
+}
+
+async function doLogout() {
+  for (const c of chats.values()) if (c.procId) window.api.ai.stop(c.procId);
+  const r = await window.api.ai.logout(provider);
+  if (r.ok) info = r.data;
+  phase = info?.installed ? 'login' : 'install';
+  render();
+}
+
+const aiName = () => AIS.find((a) => a.id === provider)?.name || provider;
+
+// ---------- 그리기 ----------
+
+function render() {
+  if (!panel || panel.hidden) return;
+  panel.innerHTML = '';
+  const sel = h('select', { class: 'ai-select', title: '사용할 AI' });
+  for (const a of AIS) sel.append(h('option', { value: a.id, text: `${a.name} (${a.vendor})${a.ready ? '' : ' — 준비 중'}` }));
+  sel.value = provider;
+  sel.onchange = () => {
+    provider = sel.value;
+    localStorage.setItem('ai.provider', provider);
+    refreshStatus();
+  };
+  const newBtn = h('button', { class: 'tb-btn small', text: '＋ 새 대화', title: '이 프로젝트의 대화를 새로 시작' });
+  newBtn.onclick = () => newChat();
+  const more = h('button', { class: 'tb-btn small', text: '⋯', title: '더 보기' });
+  more.onclick = () =>
+    menuAt(more, [
+      { header: info?.installed ? `${aiName()} ${info.version || ''}${info.loggedIn ? ' · 로그인됨' : ''}` : aiName() },
+      { label: '상태 다시 확인', onClick: refreshStatus },
+      info?.loggedIn ? { label: '로그아웃', onClick: doLogout } : null,
+    ].filter(Boolean));
+  const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 패널 닫기 (Ctrl+Shift+A)' });
+  close.onclick = () => setVisible(false);
+  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), phase === 'ready' ? newBtn : null, more, close));
+
+  const body = h('div', { class: 'ai-body' });
+  panel.append(body);
+  if (!state.repo && phase === 'ready') {
+    body.append(h('div', { class: 'ai-card', html: '<b>프로젝트를 먼저 여세요.</b><br>AI 는 열린 프로젝트 폴더 기준으로 동작합니다.' }));
+    return;
+  }
+  if (phase === 'checking') return body.append(h('div', { class: 'ai-card', html: '<span class="spinner"></span> 확인하는 중...' }));
+  if (phase === 'soon')
+    return body.append(
+      h('div', {
+        class: 'ai-card',
+        html: `<b>${esc(aiName())} 연결은 다음 업데이트에서 지원합니다.</b><br>지금은 Claude Code 를 사용할 수 있습니다.`,
+      })
+    );
+  if (phase === 'error') return body.append(h('div', { class: 'ai-card err', text: info?.error || '오류' }));
+  if (phase === 'install' || phase === 'installing') return body.append(installCard());
+  if (phase === 'login' || phase === 'logging-in') return body.append(loginCard());
+  body.append(chatView());
+}
+
+function stepper(active) {
+  const steps = ['설치', '로그인', '사용'];
+  return h('div', { class: 'ai-steps' }, ...steps.map((s, i) => h('span', { class: `ai-step ${i < active ? 'done' : i === active ? 'now' : ''}`, text: `${i < active ? '✓' : i + 1} ${s}` })));
+}
+
+function installCard() {
+  const busy = phase === 'installing';
+  const btn = h('button', { class: 'btn primary', text: busy ? '설치 중...' : `${aiName()} 설치` });
+  btn.disabled = busy;
+  btn.onclick = doInstall;
+  return h(
+    'div',
+    { class: 'ai-card' },
+    stepper(0),
+    h('div', {
+      class: 'ai-p',
+      html: `<b>${esc(aiName())}</b> 가 이 PC 에 설치되어 있지 않습니다.<br>VS Code 확장처럼 CodeFlow 가 공식 설치 프로그램으로 설치합니다 (사용자 폴더에 설치, 관리자 권한 불필요, 약 1분).`,
+    }),
+    btn,
+    h('pre', { class: 'ai-log', id: 'aiLog', text: logLines.join('\n') })
+  );
+}
+
+function loginCard() {
+  const busy = phase === 'logging-in';
+  const ai = AIS.find((a) => a.id === provider);
+  const btn = h('button', { class: 'btn primary', text: busy ? '브라우저에서 로그인 중...' : `${ai.vendor} 계정으로 로그인` });
+  btn.disabled = busy;
+  btn.onclick = doLogin;
+  const parts = [
+    stepper(1),
+    h('div', {
+      class: 'ai-p',
+      html: `${esc(aiName())} ${esc(info?.version || '')} 설치됨.<br><b>${esc(ai.login)}</b> 으로 로그인하세요. 버튼을 누르면 브라우저가 열립니다.<br><span class="ai-dim">로그인 정보는 ${esc(aiName())} 가 직접 보관합니다 (CodeFlow 는 비밀번호를 보거나 저장하지 않음).</span>`,
+    }),
+    btn,
+  ];
+  if (busy) {
+    const code = h('input', { class: 'ai-code', placeholder: '브라우저에 표시된 코드를 붙여 넣으라고 하면 여기에 입력 후 Enter' });
+    code.onkeydown = (e) => {
+      if (e.key === 'Enter' && code.value.trim()) {
+        window.api.ai.loginInput(`${code.value.trim()}\r`);
+        code.value = '';
+      }
+    };
+    const cancel = h('button', { class: 'tb-btn small', text: '취소' });
+    cancel.onclick = async () => {
+      phase = 'login';
+      await window.api.ai.cancelLogin();
+      render();
+    };
+    const recheck = h('button', { class: 'tb-btn small', text: '로그인 확인' });
+    recheck.onclick = refreshStatus;
+    parts.push(h('div', { class: 'ai-p ai-dim', id: 'aiLoginUrl' }), code, h('div', { class: 'ai-row' }, recheck, cancel));
+  }
+  parts.push(h('pre', { class: 'ai-log', id: 'aiLog', text: logLines.join('\n') }));
+  return h('div', { class: 'ai-card' }, ...parts);
+}
+
+function showLoginUrl(url) {
+  const el = $('#aiLoginUrl');
+  if (!el) return;
+  el.innerHTML = '';
+  const a = h('a', { href: '#', text: '브라우저가 안 열리면 여기를 눌러 로그인 페이지 열기' });
+  a.onclick = (e) => {
+    e.preventDefault();
+    window.api.openExternal(url);
+  };
+  el.append(a);
+}
+
+// ---------- 대화 ----------
+
+function chatFor(repo) {
+  const k = repoKey(repo);
+  if (!chats.has(k)) chats.set(k, { repo, procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), alwaysAllow: new Set() });
+  return chats.get(k);
+}
+
+function chatView() {
+  const c = chatFor(state.repo);
+  const wrap = h('div', { class: 'ai-chat' });
+  if (!c.list.childElementCount) c.list.append(welcomeNote());
+  const input = h('textarea', { class: 'ai-input', id: 'aiInput', rows: 3, placeholder: '무엇을 도와드릴까요? (Enter 보내기, Shift+Enter 줄바꿈)\n예) 이 프로젝트 실행시켜줘 / CodeFlow 에서 브랜치 합치려면?' });
+  const send = h('button', { class: 'btn primary small', id: 'aiSend', text: c.busy ? '■ 중지' : '보내기' });
+  send.onclick = () => (c.busy ? stopChat(c) : submit(c, input));
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (!c.busy) submit(c, input);
+    }
+  };
+  wrap.append(c.list, h('div', { class: 'ai-compose' }, input, h('div', { class: 'ai-row' }, h('span', { class: 'ai-dim', text: `${aiName()} · ${state.repo.split(/[\\/]/).pop()}` }), h('span', { class: 'tb-spacer' }), send)));
+  requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
+  return wrap;
+}
+
+function welcomeNote() {
+  return h('div', {
+    class: 'ai-note',
+    html:
+      '이 프로젝트 폴더에서 AI 가 실행됩니다. 코드 질문, 수정, 실행은 물론 <b>CodeFlow 사용법</b>도 물어보세요.<br>' +
+      'AI 가 CodeFlow 터미널에서 명령을 실행하거나 파일을 열 수 있고, 파일 수정·명령 실행 전에는 허용 여부를 묻습니다.',
+  });
+}
+
+function newChat() {
+  const c = chatFor(state.repo);
+  if (c.procId) window.api.ai.stop(c.procId);
+  chats.delete(repoKey(state.repo));
+  render();
+}
+
+function updateSendButton(c) {
+  if (repoKey(c.repo) !== repoKey(state.repo)) return;
+  const b = $('#aiSend');
+  if (b) b.textContent = c.busy ? '■ 중지' : '보내기';
+}
+
+function scrollDown(c) {
+  const l = c.list;
+  if (l.scrollHeight - l.scrollTop - l.clientHeight < 200) l.scrollTop = l.scrollHeight;
+}
+
+async function submit(c, input) {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  c.list.append(h('div', { class: 'ai-msg user', text }));
+  c.list.scrollTop = c.list.scrollHeight;
+  c.busy = true;
+  updateSendButton(c);
+  try {
+    if (!c.procId) {
+      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined });
+      if (!r.ok) throw new Error(r.error);
+      c.procId = r.data.id;
+      byChatId.set(c.procId, c);
+    }
+    const r = await window.api.ai.send(c.procId, text);
+    if (!r.ok) throw new Error(r.error);
+  } catch (e) {
+    c.busy = false;
+    updateSendButton(c);
+    c.list.append(h('div', { class: 'ai-msg err', text: `보내지 못했습니다: ${e.message}` }));
+  }
+}
+
+function stopChat(c) {
+  if (c.procId) window.api.ai.stop(c.procId); // 프로세스를 끝내고, 다음 질문 때 같은 대화를 이어서 시작
+  c.stopped = true;
+}
+
+// 아주 작은 마크다운: 코드 블록, 인라인 코드, 굵게, 제목, 목록, 링크
+function md(text) {
+  const blocks = [];
+  let src = text.replace(/```(\w*)\r?\n([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push(`<pre class="ai-code-block"><code>${esc(code.replace(/\n$/, ''))}</code></pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  });
+  src = esc(src)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="#" data-url="$2">$1</a>')
+    .replace(/^#{1,4} (.+)$/gm, '<div class="ai-h">$1</div>')
+    .replace(/^\s*[-*] (.+)$/gm, '<div class="ai-li">• $1</div>')
+    .replace(/^\s*(\d+)\. (.+)$/gm, '<div class="ai-li">$1. $2</div>')
+    .replace(/\n/g, '<br>')
+    .replace(/(<\/div>)<br>/g, '$1');
+  return src.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
+}
+
+function bindLinks(el) {
+  el.querySelectorAll('a[data-url]').forEach((a) => (a.onclick = (e) => (e.preventDefault(), window.api.openExternal(a.dataset.url))));
+}
+
+// 도구 호출을 사람이 읽기 쉬운 한 줄로
+function describeTool(name, input = {}) {
+  const short = (s, n = 90) => (String(s || '').length > n ? `${String(s).slice(0, n)}…` : String(s || ''));
+  const rel = (p) => short(String(p || '').replace(state.repo || '', '').replace(/^[\\/]/, ''));
+  switch (name) {
+    case 'Bash':
+    case 'PowerShell':
+      return `명령 실행: ${short(input.command)}`;
+    case 'Read':
+      return `파일 읽기: ${rel(input.file_path)}`;
+    case 'Edit':
+    case 'MultiEdit':
+      return `파일 수정: ${rel(input.file_path)}`;
+    case 'Write':
+      return `파일 쓰기: ${rel(input.file_path)}`;
+    case 'Grep':
+      return `검색: ${short(input.pattern)}`;
+    case 'Glob':
+      return `파일 찾기: ${short(input.pattern)}`;
+    case 'WebFetch':
+      return `웹 페이지 읽기: ${short(input.url)}`;
+    case 'WebSearch':
+      return `웹 검색: ${short(input.query)}`;
+    case 'TodoWrite':
+      return '할 일 목록 정리';
+    case 'mcp__codeflow__run_in_terminal':
+      return `CodeFlow 터미널에서 실행: ${short(input.command)}`;
+    case 'mcp__codeflow__read_terminal':
+      return 'CodeFlow 터미널 출력 확인';
+    case 'mcp__codeflow__list_terminals':
+      return 'CodeFlow 터미널 목록 확인';
+    case 'mcp__codeflow__open_file':
+      return `파일 열기: ${rel(input.path)}${input.line ? `:${input.line}` : ''}`;
+    case 'mcp__codeflow__show_view':
+      return `화면 이동: ${{ changes: '커밋', log: '히스토리', stash: '스태시', code: '코드' }[input.view] || input.view}`;
+    case 'mcp__codeflow__git_status':
+      return 'Git 상태 확인';
+    default:
+      return `${name.replace(/^mcp__/, '').replace(/__/g, ' · ')}`;
+  }
+}
+
+function msgEntry(c, id) {
+  let m = c.msgs.get(id);
+  if (!m) {
+    m = { el: h('div', { class: 'ai-msg assistant' }), blocks: [] };
+    c.msgs.set(id, m);
+    c.list.append(m.el);
+  }
+  return m;
+}
+
+function renderBlocks(c, m) {
+  m.el.innerHTML = '';
+  for (const b of m.blocks) {
+    if (b.type === 'text') {
+      if (!b.text.trim()) continue;
+      const t = h('div', { class: 'ai-text', html: md(b.text) });
+      bindLinks(t);
+      m.el.append(t);
+    } else if (b.type === 'tool_use') {
+      let chip = c.tools.get(b.id);
+      if (!chip) {
+        chip = h('div', { class: 'ai-tool running' }, h('span', { class: 'ai-tool-ico' }), h('span', { class: 'ai-tool-txt', text: describeTool(b.name, b.input) }));
+        c.tools.set(b.id, chip);
+      } else chip.querySelector('.ai-tool-txt').textContent = describeTool(b.name, b.input);
+      m.el.append(chip);
+    } else if (b.type === 'thinking' && b.thinking?.trim()) {
+      m.el.append(h('div', { class: 'ai-thinking', text: '생각하는 중…' }));
+    }
+  }
+}
+
+function onAiEvent(procId, ev) {
+  const c = byChatId.get(procId);
+  if (!c) return;
+  if (ev.type === 'system' && ev.subtype === 'init') {
+    c.sessionId = ev.session_id;
+    return;
+  }
+  if (ev.type === 'stream_event') {
+    const e = ev.event || {};
+    if (e.type === 'message_start') {
+      c.cur = e.message?.id;
+      msgEntry(c, c.cur).blocks = [];
+    } else if (e.type === 'content_block_start' && c.cur) {
+      const m = msgEntry(c, c.cur);
+      m.blocks[e.index] = { ...e.content_block, text: e.content_block.text || '' };
+      renderBlocks(c, m);
+    } else if (e.type === 'content_block_delta' && c.cur) {
+      const m = msgEntry(c, c.cur);
+      const b = m.blocks[e.index];
+      if (b && e.delta?.type === 'text_delta') {
+        b.text += e.delta.text;
+        renderBlocks(c, m);
+      }
+    }
+    scrollDown(c);
+    return;
+  }
+  if (ev.type === 'assistant') {
+    const msg = ev.message || {};
+    if (ev.error === 'authentication_failed' || /Failed to authenticate|Invalid API key|Please run \/login/i.test(JSON.stringify(msg.content || ''))) {
+      c.busy = false;
+      updateSendButton(c);
+      toast(`${aiName()} 로그인이 필요합니다.`, 'warn', 6000);
+      phase = 'login';
+      info = { ...(info || {}), loggedIn: false };
+      if (c.procId) window.api.ai.stop(c.procId);
+      return render();
+    }
+    const m = msgEntry(c, msg.id || `m${Date.now()}`);
+    // 한 메시지가 블록별로 나뉘어 올 수 있으므로 같은 id 는 합친다
+    for (const b of msg.content || []) {
+      const i = m.blocks.findIndex((x) => x && ((b.id && x.id === b.id) || (b.type === 'text' && x.type === 'text' && x.text === b.text)));
+      if (i >= 0) m.blocks[i] = b;
+      else if (b.type === 'text' && m.blocks.some((x) => x?.type === 'text' && b.text.startsWith(x.text))) m.blocks[m.blocks.findIndex((x) => x?.type === 'text' && b.text.startsWith(x.text))] = b;
+      else m.blocks.push(b);
+    }
+    m.blocks = m.blocks.filter(Boolean);
+    renderBlocks(c, m);
+    scrollDown(c);
+    return;
+  }
+  if (ev.type === 'user') {
+    // 도구 실행 결과 → 해당 도구 표시를 완료/실패로
+    for (const b of ev.message?.content || []) {
+      if (b.type !== 'tool_result') continue;
+      const chip = c.tools.get(b.tool_use_id);
+      if (!chip) continue;
+      chip.classList.remove('running');
+      chip.classList.add(b.is_error ? 'failed' : 'done');
+      const out = Array.isArray(b.content) ? b.content.map((x) => x.text || '').join('\n') : String(b.content || '');
+      if (out.trim()) chip.title = out.slice(0, 2000);
+    }
+    return;
+  }
+  if (ev.type === 'result') {
+    c.busy = false;
+    updateSendButton(c);
+    for (const chip of c.tools.values()) chip.classList.remove('running');
+    if (ev.is_error && ev.result && !/authenticate/i.test(ev.result)) c.list.append(h('div', { class: 'ai-msg err', text: ev.result }));
+    const secs = ev.duration_ms ? `${(ev.duration_ms / 1000).toFixed(0)}초` : '';
+    if (secs) c.list.append(h('div', { class: 'ai-foot', text: `완료 · ${secs}` }));
+    scrollDown(c);
+    return;
+  }
+  if (ev.type === 'exit') {
+    byChatId.delete(procId);
+    if (c.procId === procId) c.procId = null;
+    const wasBusy = c.busy;
+    c.busy = false;
+    updateSendButton(c);
+    for (const chip of c.tools.values()) chip.classList.remove('running');
+    if (c.stopped) {
+      c.stopped = false;
+      c.list.append(h('div', { class: 'ai-foot', text: '중지했습니다. 이어서 질문하면 같은 대화로 계속합니다.' }));
+    } else if (wasBusy || ev.code) {
+      c.list.append(h('div', { class: 'ai-msg err', text: `${aiName()} 가 종료되었습니다 (코드 ${ev.code}). ${ev.stderr ? ev.stderr.split('\n').slice(-3).join(' ') : ''}` }));
+    }
+  }
+}
+
+// ---------- AI 가 부르는 CodeFlow 도구 ----------
+
+async function onToolRequest(reqId, repo, action, args) {
+  const reply = (result) => window.api.ai.toolResult(reqId, result);
+  try {
+    if (action === 'approve') return reply(await askApproval(repo, args));
+    if (repoKey(repo) !== repoKey(state.repo) && action !== 'list_terminals')
+      return reply({ error: `사용자가 지금 다른 프로젝트 탭(${(state.repo || '').split(/[\\/]/).pop()})을 보고 있습니다. 원래 프로젝트 탭으로 돌아오면 다시 시도하세요.` });
+    if (action === 'show_view') {
+      window.dispatchEvent(new CustomEvent('cf-set-view', { detail: args.view }));
+      return reply({ result: `화면을 ${args.view} 로 바꿨습니다.` });
+    }
+    if (action === 'open_file') {
+      const p = /^[a-zA-Z]:[\\/]|^\\\\/.test(args.path) ? args.path : `${repo.replace(/[\\/]$/, '')}\\${String(args.path).replace(/\//g, '\\')}`;
+      if (!(await window.api.exists(p))) return reply({ error: `파일이 없습니다: ${p}` });
+      window.dispatchEvent(new CustomEvent('cf-set-view', { detail: 'code' }));
+      await activateCode();
+      await openFile(p, args.line ? { lineNumber: args.line, column: 1 } : undefined);
+      return reply({ result: `열었습니다: ${p}` });
+    }
+    if (action === 'run_in_terminal' || action === 'read_terminal' || action === 'list_terminals') {
+      if (action === 'list_terminals') return reply({ result: listTerminals() });
+      window.dispatchEvent(new CustomEvent('cf-set-view', { detail: 'code' }));
+      await activateCode();
+      if (action === 'read_terminal') return reply({ result: readTerminal(args.terminal_id, args.lines || 80) });
+      const shell = { cmd: 'cmd', gitbash: 'gitbash' }[args.shell] || 'powershell';
+      return reply({ result: await runInTerminal(args.command, shell, Math.min(120, Math.max(1, Number(args.wait_seconds) || 5))) });
+    }
+    reply({ error: `알 수 없는 요청: ${action}` });
+  } catch (e) {
+    reply({ error: e.message || String(e) });
+  }
+}
+
+// 파일 수정·명령 실행 등 권한이 필요한 작업: 대화 안에 허용/거부 카드
+function askApproval(repo, { tool_name: tool, input = {} }) {
+  const c = chatFor(repo);
+  if (c.alwaysAllow.has(tool)) return Promise.resolve({ allow: true });
+  if (!visible) setVisible(true);
+  return new Promise((resolve) => {
+    const detail =
+      tool === 'Edit' || tool === 'MultiEdit' || tool === 'Write'
+        ? (input.new_string ?? input.content ?? (input.edits || []).map((e) => e.new_string).join('\n---\n') ?? '').slice(0, 1500)
+        : tool === 'Bash' || tool === 'PowerShell' || tool === 'mcp__codeflow__run_in_terminal'
+          ? input.command
+          : JSON.stringify(input, null, 2).slice(0, 1500);
+    const card = h('div', { class: 'ai-approve' }, h('div', { class: 'ai-approve-title', text: `허용할까요? ${describeTool(tool, input)}` }), detail ? h('pre', { class: 'ai-code-block', text: detail }) : null);
+    let dlg = null;
+    const done = (allow, always) => {
+      if (card.classList.contains('allowed') || card.classList.contains('denied')) return;
+      dlg?.close?.();
+      if (always) c.alwaysAllow.add(tool);
+      card.classList.add(allow ? 'allowed' : 'denied');
+      card.querySelector('.ai-row')?.remove();
+      card.append(h('div', { class: 'ai-dim', text: allow ? (always ? '허용함 (이 대화에서 계속 허용)' : '허용함') : '거부함' }));
+      resolve(allow ? { allow: true } : { allow: false, message: '사용자가 거부했습니다. 다른 방법을 제안하거나 무엇을 원하는지 물어보세요.' });
+    };
+    const yes = h('button', { class: 'btn primary small', text: '허용' });
+    const always = h('button', { class: 'tb-btn small', text: '이 대화에서 항상 허용' });
+    const no = h('button', { class: 'btn danger small', text: '거부' });
+    yes.onclick = () => done(true, false);
+    always.onclick = () => done(true, true);
+    no.onclick = () => done(false, false);
+    card.append(h('div', { class: 'ai-row' }, yes, always, h('span', { class: 'tb-spacer' }), no));
+    c.list.append(card);
+    c.list.scrollTop = c.list.scrollHeight;
+    // 대화가 화면에 안 보이면(다른 프로젝트 탭 등) 창으로 묻는다
+    if (!c.list.isConnected) {
+      const body = h('div', { class: 'ai-approve-dlg' }, h('div', { class: 'ai-dim', text: `${(repo || '').split(/[\\/]/).pop()} 프로젝트의 ${aiName()}` }), h('div', { class: 'ai-approve-title', text: describeTool(tool, input) }), detail ? h('pre', { class: 'ai-code-block', text: detail }) : null);
+      dlg = modal({
+        title: '✦ AI 가 허용을 요청합니다',
+        body,
+        dismissable: false,
+        buttons: [
+          { label: '거부', danger: true, onClick: () => done(false, false) },
+          { label: '이 대화에서 항상 허용', onClick: () => done(true, true) },
+          { label: '허용', primary: true, onClick: () => done(true, false) },
+        ],
+      });
+    }
+  });
+}

@@ -170,6 +170,48 @@ ipcMain.handle('java:addJdk', (_e, home) => {
   }
 });
 
+// AI 패널: 외부 AI 도구(Claude Code 등) 설치·로그인·대화, CodeFlow 도구 서버
+const ai = require('./ai');
+const aiTools = require('./ai-tools');
+{
+  // AI 가 CodeFlow 도구를 부르면 화면(렌더러)에 요청하고 결과를 기다린다
+  const pending = new Map();
+  let reqSeq = 0;
+  ipcMain.on('ai:toolResult', (_e, reqId, result) => {
+    const p = pending.get(reqId);
+    if (!p) return;
+    pending.delete(reqId);
+    clearTimeout(p.timer);
+    p.resolve(result || {});
+  });
+  aiTools.setRendererBridge((repo, action, args, timeoutMs) => {
+    if (!win || win.isDestroyed()) return Promise.reject(new Error('CodeFlow 창이 닫혀 있습니다.'));
+    const reqId = ++reqSeq;
+    return new Promise((resolve) => {
+      const timer = timeoutMs ? setTimeout(() => (pending.delete(reqId), resolve({ error: '시간 안에 응답이 없습니다.' })), timeoutMs) : null;
+      pending.set(reqId, { resolve, timer });
+      win.webContents.send('ai:tool', reqId, repo, action, args);
+    });
+  });
+}
+const aiSafe = (fn) => async (...a) => {
+  try {
+    return { ok: true, data: await fn(...a) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+};
+ipcMain.handle('ai:status', aiSafe((_e, id) => ai.status(id)));
+ipcMain.handle('ai:install', aiSafe((e, id) => ai.install(id, (l) => !e.sender.isDestroyed() && e.sender.send('ai:log', l))));
+ipcMain.handle('ai:login', aiSafe((e, id) => ai.login(id, (l) => !e.sender.isDestroyed() && e.sender.send('ai:log', l))));
+ipcMain.on('ai:loginInput', (_e, text) => ai.loginInput(text));
+ipcMain.handle('ai:cancelLogin', () => ai.cancelLogin());
+ipcMain.handle('ai:logout', aiSafe((_e, id) => ai.logout(id)));
+ipcMain.handle('ai:start', aiSafe((e, opts) => ai.startChat(opts, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a))));
+ipcMain.handle('ai:send', aiSafe((_e, id, content) => ai.sendChat(id, content)));
+ipcMain.handle('ai:stop', (_e, id) => ai.stopChat(id));
+app.on('before-quit', () => ai.stopAll());
+
 // 코드 화면: Python 인터프리터 목록
 ipcMain.handle('python:interpreters', (_e, root) => require('./python').interpreters(root));
 

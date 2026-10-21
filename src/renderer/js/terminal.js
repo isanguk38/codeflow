@@ -118,6 +118,7 @@ export async function newTerminal(shellId) {
   const t = { id: r.data.id, repo: state.repo, shell: r.data.shell, xterm, fit, el, exited: false };
   terms.push(t);
   xterm.onData((d) => {
+    t.used = true;
     if (t.exited) return killTerm(t);
     window.api.term.write(t.id, d);
   });
@@ -149,6 +150,40 @@ export async function newTerminal(shellId) {
   });
   activate(t.id);
   xterm.focus();
+  return t;
+}
+
+// ---------- AI 패널이 쓰는 기능 (CodeFlow 도구) ----------
+
+// 새 터미널을 열고 명령 실행 → wait 초 뒤 지금까지의 출력
+export async function runInTerminal(command, shellId = 'powershell', waitSec = 5) {
+  if (!inited) throw new Error('터미널을 열 수 없습니다 (코드 화면이 준비되지 않음).');
+  // 패널을 열면서 자동으로 생긴, 아직 아무것도 안 한 터미널이 있으면 그걸 쓴다 (같은 셸일 때)
+  let t = terms.find((x) => x.repo === state.repo && !x.used && !x.exited && x.shell.id === shellId);
+  if (t) activate(t.id);
+  else {
+    t = await newTerminal(shellId);
+    if (!t) throw new Error('터미널을 시작하지 못했습니다.');
+    await new Promise((r) => setTimeout(r, 600)); // 셸이 프롬프트를 띄울 시간
+  }
+  t.used = true;
+  window.api.term.write(t.id, `${command}\r`);
+  await new Promise((r) => setTimeout(r, waitSec * 1000));
+  return { terminal_id: t.id, shell: t.shell.name, output: readTerminal(t.id, 80).output };
+}
+
+export function readTerminal(id, lines = 80) {
+  const t = id ? terms.find((x) => x.id === id) : activeTerm() || terms.filter((x) => x.repo === state.repo).pop();
+  if (!t) throw new Error('열린 터미널이 없습니다.');
+  const b = t.xterm.buffer.active;
+  const out = [];
+  for (let i = Math.max(0, b.length - Math.max(lines, 1) - 50); i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '');
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  return { terminal_id: t.id, exited: t.exited, output: out.slice(-lines).join('\n') };
+}
+
+export function listTerminals() {
+  return terms.filter((t) => t.repo === state.repo).map((t) => ({ terminal_id: t.id, shell: t.shell.name, exited: t.exited, active: t.id === activeByRepo.get(state.repo) }));
 }
 
 function activate(id) {

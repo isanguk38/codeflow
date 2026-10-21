@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="styles-advanced.css" />
   <link rel="stylesheet" href="styles-code.css" />
+  <link rel="stylesheet" href="styles-ai.css" />
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
 </head>
 <body>
@@ -25,6 +26,7 @@
       <div class="tb-spacer"></div>
       <span id="busy" class="busy" hidden><span class="spinner"></span><span id="busyText"></span></span>
       <button id="updateBtn" class="tb-btn update-btn" hidden>⬇ 업데이트</button>
+      <button id="aiBtn" class="tb-btn ai-btn" title="AI 패널 열기/닫기 (Ctrl+Shift+A)">✦ AI</button>
       <button id="refreshBtn" class="tb-btn icon" title="새로고침 (F5)">⟳</button>
       <button id="themeBtn" class="tb-btn icon" title="테마 전환">◐</button>
       <button id="settingsBtn" class="tb-btn icon" title="설정">⚙</button>
@@ -49,6 +51,8 @@
         <section id="view-code" class="view"></section>
         <section id="welcome" class="view"></section>
       </main>
+      <div id="aiSplit" class="ai-split" hidden></div>
+      <aside id="aiPanel" class="ai-panel" hidden></aside>
     </div>
 
     <footer id="statusbar">

@@ -9,6 +9,7 @@ import { doFetch, doPull, doPush } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
 import { startUpdateCheck } from './update.js';
 import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
+import { initAi, toggleAi, onAiRepoChanged } from './ai.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -73,6 +74,7 @@ function updateChrome(s) {
 
 async function onOpened() {
   onRepoActivated(state.repo).catch(() => {}); // Java 프로젝트면 Java 언어 서버를 미리 켜 둔다
+  onAiRepoChanged(); // AI 패널: 이 프로젝트의 대화로
   if (!state.repo) {
     $('#app').classList.add('no-repo');
     $('#repoName').textContent = '저장소 열기';
@@ -111,6 +113,9 @@ async function main() {
   initLog();
   initStash();
   initCode();
+  initAi();
+  // AI 가 화면 이동을 요청할 때 (CodeFlow 도구)
+  window.addEventListener('cf-set-view', (e) => state.repo && setView(e.detail));
   setOnOpened(onOpened);
   onRefresh(updateChrome);
 
@@ -127,13 +132,19 @@ async function main() {
     state.settings = await window.api.setSettings({ theme: t });
   };
   $$('.rail-btn').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+  $('#aiBtn').onclick = toggleAi;
 
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.modal-backdrop')) return;
     const k = e.key.toLowerCase();
     // 코드 편집기 안에서는 편집기 단축키(Ctrl+K 조합 등)를 우선한다. 탭 닫기/전환만 앱이 처리.
     // 터미널 안에서도 마찬가지(입력은 셸로 간다).
-    if (e.target.closest?.('.monaco-editor, .xterm') && !(e.ctrlKey && (k === 'w' || e.key === 'Tab' || e.code === 'Backquote'))) return;
+    if (e.ctrlKey && e.shiftKey && k === 'a') {
+      e.preventDefault();
+      toggleAi();
+      return;
+    }
+    if (e.target.closest?.('.monaco-editor, .xterm, .ai-panel') && !(e.ctrlKey && (k === 'w' || e.key === 'Tab' || e.code === 'Backquote'))) return;
     if (e.ctrlKey && !e.shiftKey && e.code === 'Backquote') {
       e.preventDefault();
       if (state.view !== 'code') setView('code');
