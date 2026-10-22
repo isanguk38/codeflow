@@ -2,6 +2,7 @@
 import { $, h, modal, contextMenu, confirmDialog, promptDialog, choiceDialog, toast, splitter } from './ui.js';
 import { state, git, onRefresh, refresh, busy } from './state.js';
 import * as lsp from './lsp-client.js';
+import { IMG_RE, showImage } from './preview.js';
 import { initTerminal, showTerminalsFor, toggleTerminal, isTerminalVisible } from './terminal.js';
 
 const MONACO_BASE = '../../node_modules/monaco-editor/min/vs';
@@ -396,7 +397,8 @@ async function ensureDoc(path) {
   return doc;
 }
 
-export async function openFile(path, selection) {
+export async function openFile(path, selection, opts = {}) {
+  if (IMG_RE.test(path) && !opts.code) return showImage(path, { openCode: /\.svg$/i.test(path) ? () => openFile(path, selection, { code: true }) : null });
   if (!monaco) await activateCode();
   const doc = await ensureDoc(path);
   if (!doc) return;

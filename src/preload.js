@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('api', {
   copy: (text) => clipboard.writeText(text),
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
   fs: Object.fromEntries(['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash'].map((n) => [n, (...a) => ipcRenderer.invoke(`fs:${n}`, ...a)])),
+  file: {
+    preview: (p) => ipcRenderer.invoke('file:preview', p),
+    saveCopy: (p) => ipcRenderer.invoke('file:saveCopy', p),
+  },
   issues: {
     list: (repo, opts) => ipcRenderer.invoke('issues:list', repo, opts),
     setToken: (repo, token) => ipcRenderer.invoke('issues:setToken', repo, token),

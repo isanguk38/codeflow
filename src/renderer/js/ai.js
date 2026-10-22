@@ -7,6 +7,7 @@ import { state, refresh } from './state.js';
 import { activateCode, openFile } from './code.js';
 import { runInTerminal, readTerminal, listTerminals } from './terminal.js';
 import { tabs, switchTab } from './repo.js';
+import { fileCard } from './preview.js';
 
 const openDirs = () => tabs.map((t) => t.path);
 const dirsKey = () => openDirs().map((d) => d.toLowerCase()).sort().join('|');
@@ -404,11 +405,13 @@ async function loadSession(id) {
     else if (it.role === 'assistant') {
       const m = msgEntry(c, it.id || `h${Math.random()}`);
       m.blocks.push(...it.blocks);
+      for (const b of it.blocks) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name), (c.toolInputs ||= new Map()).set(b.id, b.input);
       renderBlocks(c, m);
     } else if (it.role === 'tool_result') {
       const chip = c.tools.get(it.id);
       chip?.classList.remove('running');
       chip?.classList.add(it.error ? 'failed' : 'done');
+      if (!it.error) addFileCard(c, it.id);
     }
   }
   for (const chip of c.tools.values()) chip.classList.remove('running');
@@ -719,6 +722,20 @@ function describeTool(name, input = {}) {
   }
 }
 
+// AI 가 파일을 만들거나 고치면 그 도구 표시 아래에 파일 카드 (이미지는 미리보기) — 같은 파일은 마지막 것만
+const FILE_TOOLS = { Write: '만듦/덮어씀', Edit: '수정함', MultiEdit: '수정함', NotebookEdit: '수정함' };
+function addFileCard(c, toolId) {
+  const name = c.toolNames.get(toolId);
+  const p = c.toolInputs?.get(toolId)?.file_path || c.toolInputs?.get(toolId)?.notebook_path;
+  const chip = c.tools.get(toolId);
+  if (!FILE_TOOLS[name] || !p || !chip) return;
+  c.fileCards ||= new Map();
+  c.fileCards.get(p.toLowerCase())?.remove();
+  const card = fileCard(p, { verb: FILE_TOOLS[name], openFile: (f, sel, o) => (window.dispatchEvent(new CustomEvent('cf-set-view', { detail: 'code' })), activateCode().then(() => openFile(f, sel, o))) });
+  c.fileCards.set(p.toLowerCase(), card);
+  chip.after(card);
+}
+
 function msgEntry(c, id) {
   let m = c.msgs.get(id);
   if (!m) {
@@ -819,7 +836,7 @@ function onAiEvent(procId, ev) {
     }
     m.blocks = m.blocks.filter(Boolean);
     renderBlocks(c, m);
-    for (const b of msg.content || []) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name);
+    for (const b of msg.content || []) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name), (c.toolInputs ||= new Map()).set(b.id, b.input);
     const tool = [...(msg.content || [])].reverse().find((b) => b.type === 'tool_use');
     if (tool && c.busy) setActivity(c, 'tool', { text: `실행 중: ${describeTool(tool.name, tool.input)}` });
     scrollDown(c);
@@ -835,6 +852,7 @@ function onAiEvent(procId, ev) {
       chip.classList.add(b.is_error ? 'failed' : 'done');
       const out = Array.isArray(b.content) ? b.content.map((x) => x.text || '').join('\n') : String(b.content || '');
       if (out.trim()) chip.title = out.slice(0, 2000);
+      if (!b.is_error) addFileCard(c, b.tool_use_id);
       // 파일을 바꾸는 도구가 끝나면 CodeFlow 화면(열린 파일, 변경 목록)을 바로 새로 읽는다 (예전 내용으로 덮어쓰지 않게)
       if (!b.is_error && /^(Edit|MultiEdit|Write|NotebookEdit|Bash|PowerShell)$/.test(c.toolNames.get(b.tool_use_id) || '')) {
         clearTimeout(c.refreshTimer);

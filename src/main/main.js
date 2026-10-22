@@ -215,6 +215,22 @@ ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
 ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
 app.on('before-quit', () => ai.stopAll());
 
+// 파일 미리보기(이미지) · 다른 이름으로 저장 — AI 대화의 파일 카드, 코드 화면 이미지 보기
+const PREVIEW_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml' };
+ipcMain.handle('file:preview', aiSafe((_e, p) => {
+  const mime = PREVIEW_MIME[path.extname(p).toLowerCase()];
+  if (!mime) throw new Error('미리 볼 수 없는 파일입니다.');
+  const st = fs.statSync(p);
+  if (st.size > 30 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (30MB 초과).');
+  return { url: `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`, size: st.size };
+}));
+ipcMain.handle('file:saveCopy', aiSafe(async (_e, p) => {
+  const r = await dialog.showSaveDialog(win, { title: '다른 이름으로 저장', defaultPath: path.join(app.getPath('downloads'), path.basename(p)) });
+  if (r.canceled || !r.filePath) return null;
+  fs.copyFileSync(p, r.filePath);
+  return r.filePath;
+}));
+
 // 이슈 보드 (GitHub / GitLab)
 const issues = require('./issues');
 ipcMain.handle('issues:list', aiSafe((_e, repo, opts) => issues.list(repo, opts)));
