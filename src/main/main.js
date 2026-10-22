@@ -212,6 +212,11 @@ ipcMain.handle('ai:send', aiSafe((_e, id, content) => ai.sendChat(id, content)))
 ipcMain.handle('ai:stop', (_e, id) => ai.stopChat(id));
 app.on('before-quit', () => ai.stopAll());
 
+// 이슈 보드 (GitHub / GitLab)
+const issues = require('./issues');
+ipcMain.handle('issues:list', aiSafe((_e, repo, opts) => issues.list(repo, opts)));
+ipcMain.handle('issues:setToken', aiSafe((_e, repo, token) => issues.setToken(repo, token)));
+
 // 코드 화면: Python 인터프리터 목록
 ipcMain.handle('python:interpreters', (_e, root) => require('./python').interpreters(root));
 

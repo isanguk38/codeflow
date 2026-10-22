@@ -153,9 +153,9 @@ function guideFile() {
 }
 
 // 승인 없이 써도 되는 CodeFlow 도구 (읽기·화면 이동만). 터미널 실행·파일 수정·명령 실행은 사용자 승인 필요
-const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status'];
+const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project'];
 
-async function startChat({ provider = 'claude', repo, resume, model }, send) {
+async function startChat({ provider = 'claude', repo, resume, model, addDirs = [] }, send) {
   const exe = findExe(provider);
   if (!exe) throw new Error('AI 도구가 설치되어 있지 않습니다.');
   const sessionKey = tools.registerSession(repo);
@@ -179,6 +179,8 @@ async function startChat({ provider = 'claude', repo, resume, model }, send) {
     'mcp__codeflow__approve',
     '--allowedTools',
     SAFE_TOOLS.join(','),
+    // CodeFlow 에 열린 다른 프로젝트 탭들도 읽고 수정할 수 있게 (Cursor 의 여러 폴더 작업 공간처럼)
+    ...addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)).flatMap((d) => ['--add-dir', d]),
     ...(model ? ['--model', model] : []),
     ...(resume ? ['--resume', resume] : []),
   ];

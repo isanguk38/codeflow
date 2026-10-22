@@ -41,9 +41,20 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { view: { type: 'string', enum: ['changes', 'log', 'stash', 'code'] } }, required: ['view'] },
   },
   {
-    name: 'git_status',
-    description: '현재 프로젝트의 Git 상태 (브랜치, 원격과 차이, 변경된 파일 목록)',
+    name: 'list_projects',
+    description:
+      'CodeFlow 에 탭으로 열려 있는 프로젝트 목록 (이름, 폴더 경로, 현재 보고 있는 탭인지, 브랜치, 변경 파일 수). 다른 프로젝트의 파일도 이 경로(절대 경로)로 읽고 수정할 수 있다.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'switch_project',
+    description: 'CodeFlow 에서 다른 프로젝트 탭으로 전환해 사용자에게 보여 준다 (path 는 list_projects 의 경로).',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  },
+  {
+    name: 'git_status',
+    description: '프로젝트의 Git 상태 (브랜치, 원격과 차이, 변경된 파일 목록). path 를 주면 그 프로젝트 (list_projects 의 경로), 없으면 대화를 시작한 프로젝트.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
   },
   {
     name: 'approve',
@@ -80,7 +91,7 @@ const text = (t, isError = false) => ({ content: [{ type: 'text', text: typeof t
 async function callTool(name, args, ctx) {
   if (name === 'git_status') {
     const git = require('./git');
-    const s = await git.status(ctx.repo);
+    const s = await git.status(args.path || ctx.repo);
     return text({
       branch: s.branch,
       upstream: s.upstream,

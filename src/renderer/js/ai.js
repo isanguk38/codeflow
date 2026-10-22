@@ -6,6 +6,10 @@ import { $, h, esc, toast, menuAt, splitter, modal } from './ui.js';
 import { state } from './state.js';
 import { activateCode, openFile } from './code.js';
 import { runInTerminal, readTerminal, listTerminals } from './terminal.js';
+import { tabs, switchTab } from './repo.js';
+
+const openDirs = () => tabs.map((t) => t.path);
+const dirsKey = () => openDirs().map((d) => d.toLowerCase()).sort().join('|');
 
 const AIS = [
   { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', ready: true, login: 'Claude 계정(Pro/Max 구독) 또는 Anthropic Console 계정' },
@@ -307,8 +311,15 @@ async function submit(c, input) {
   c.busy = true;
   updateSendButton(c);
   try {
+    // 대화 시작 뒤 프로젝트 탭이 늘거나 줄었으면, 같은 대화를 이어서 새 폴더 목록으로 다시 시작
+    if (c.procId && c.dirsKey !== dirsKey()) {
+      await window.api.ai.stop(c.procId);
+      byChatId.delete(c.procId);
+      c.procId = null;
+    }
     if (!c.procId) {
-      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined });
+      c.dirsKey = dirsKey();
+      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined, addDirs: openDirs() });
       if (!r.ok) throw new Error(r.error);
       c.procId = r.data.id;
       byChatId.set(c.procId, c);
@@ -328,7 +339,7 @@ function stopChat(c) {
 }
 
 // 아주 작은 마크다운: 코드 블록, 인라인 코드, 굵게, 제목, 목록, 링크
-function md(text) {
+export function md(text) {
   const blocks = [];
   let src = text.replace(/```(\w*)\r?\n([\s\S]*?)```/g, (_, lang, code) => {
     blocks.push(`<pre class="ai-code-block"><code>${esc(code.replace(/\n$/, ''))}</code></pre>`);
@@ -346,7 +357,7 @@ function md(text) {
   return src.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
 }
 
-function bindLinks(el) {
+export function bindLinks(el) {
   el.querySelectorAll('a[data-url]').forEach((a) => (a.onclick = (e) => (e.preventDefault(), window.api.openExternal(a.dataset.url))));
 }
 
@@ -386,7 +397,11 @@ function describeTool(name, input = {}) {
     case 'mcp__codeflow__show_view':
       return `화면 이동: ${{ changes: '커밋', log: '히스토리', stash: '스태시', code: '코드' }[input.view] || input.view}`;
     case 'mcp__codeflow__git_status':
-      return 'Git 상태 확인';
+      return `Git 상태 확인${input.path ? `: ${input.path.split(/[\\/]/).pop()}` : ''}`;
+    case 'mcp__codeflow__list_projects':
+      return '열린 프로젝트 탭 확인';
+    case 'mcp__codeflow__switch_project':
+      return `프로젝트 탭 전환: ${String(input.path || '').split(/[\\/]/).pop()}`;
     default:
       return `${name.replace(/^mcp__/, '').replace(/__/g, ' · ')}`;
   }
@@ -519,6 +534,27 @@ async function onToolRequest(reqId, repo, action, args) {
   const reply = (result) => window.api.ai.toolResult(reqId, result);
   try {
     if (action === 'approve') return reply(await askApproval(repo, args));
+    if (action === 'list_projects') {
+      const cur = (state.repo || '').toLowerCase();
+      // 아직 한 번도 안 연 탭은 상태가 없으므로 바로 조회
+      await Promise.all(tabs.filter((t) => !t.status).map(async (t) => (t.status = await window.api.git.status(t.path).catch(() => null))));
+      return reply({
+        result: tabs.map((t) => ({
+          name: t.path.split(/[\\/]/).pop(),
+          path: t.path,
+          active: t.path.toLowerCase() === cur,
+          conversation_started_here: t.path.toLowerCase() === repoKey(repo),
+          branch: t.status?.branch || null,
+          changed_files: t.status?.files?.length ?? null,
+        })),
+      });
+    }
+    if (action === 'switch_project') {
+      const t = tabs.find((x) => x.path.toLowerCase() === String(args.path || '').toLowerCase());
+      if (!t) return reply({ error: `열린 탭에 없는 프로젝트입니다: ${args.path}` });
+      await switchTab(t.path);
+      return reply({ result: `'${t.path.split(/[\\/]/).pop()}' 탭으로 전환했습니다.` });
+    }
     if (repoKey(repo) !== repoKey(state.repo) && action !== 'list_terminals')
       return reply({ error: `사용자가 지금 다른 프로젝트 탭(${(state.repo || '').split(/[\\/]/).pop()})을 보고 있습니다. 원래 프로젝트 탭으로 돌아오면 다시 시도하세요.` });
     if (action === 'show_view') {

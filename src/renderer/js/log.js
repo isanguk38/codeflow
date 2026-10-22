@@ -2,7 +2,8 @@
 import { $, h, esc, fmtDate, splitPath, STATUS_LABEL, contextMenu, menuAt, confirmDialog, choiceDialog, promptDialog, splitter, toast, modal } from './ui.js';
 import { state, git, op, onRefresh } from './state.js';
 import { renderDiff, emptyDiff } from './diff.js';
-import { branchMenuItems, newBranch, checkout, checkoutRemote } from './branches.js';
+import { branchMenuItems, newBranch, checkout, checkoutRemote, updateBranches } from './branches.js';
+import { initIssues, refreshIssues } from './issues.js';
 
 const PAGE = 400;
 const ROW_H = 26;
@@ -41,7 +42,11 @@ const viewOpt = {
 export function initLog() {
   root = $('#view-log');
   root.innerHTML = `
-    <div class="log-branches" id="logBranches"></div>
+    <div class="log-side" id="logSide">
+      <div class="log-branches" id="logBranches"></div>
+      <div class="splitter-y" id="logSplitIssues"></div>
+      <div class="log-issues" id="logIssues"></div>
+    </div>
     <div class="splitter-x" id="logSplitBranches"></div>
     <div class="log-main">
       <div class="panel-bar">
@@ -63,7 +68,9 @@ export function initLog() {
         <div class="log-detail-diff" id="logDetailDiff"></div>
       </div>
     </div>`;
-  splitter($('#logSplitBranches'), $('#logBranches'), { min: 160, max: 500, key: 'logBranches' });
+  splitter($('#logSplitBranches'), $('#logSide'), { min: 160, max: 600, key: 'logBranches' });
+  // 브랜치 아래 이슈 패널 (위아래 크기 조절, 접기)
+  initIssues($('#logIssues'), $('#logSplitIssues'));
   splitter($('#logSplitDetail'), $('#logDetail'), { axis: 'y', min: 120, max: 900, invert: true, key: 'logDetail' });
   splitter($('#logSplitFiles'), $('#logDetailFiles'), { min: 220, max: 800, key: 'logFiles' });
 
@@ -105,6 +112,7 @@ export function initLog() {
 }
 
 export function activateLog() {
+  refreshIssues();
   if (dirty || boundRepo !== state.repo) load();
 }
 
@@ -235,6 +243,7 @@ async function loadMore() {
 // ---------- 브랜치 트리 ----------
 
 let selectMode = false; // '골라 보기' 모드 (체크박스 표시)
+let anchorKey = null; // Shift+클릭 범위 선택의 시작점
 
 // 원격 추적 상태 표시: ↑보낼 커밋, ↓받을 커밋, gone → 원격 삭제됨
 function trackHint(b) {
@@ -285,17 +294,29 @@ function renderBranches(br) {
         toggle();
       };
     row.onclick = (e) => {
-      // 골라 보기 모드에서는 줄을 눌러도 체크가 토글된다
+      // Shift+클릭: 같은 그룹에서 시작점부터 여기까지 여러 개 선택 (함께 보기 + 우클릭으로 한꺼번에 작업)
+      if (e.shiftKey && opts.groupKeys && anchorKey && opts.groupKeys.includes(anchorKey)) {
+        const a = opts.groupKeys.indexOf(anchorKey);
+        const b = opts.groupKeys.indexOf(key(ref, opts));
+        filter.refs = opts.groupKeys.slice(Math.min(a, b), Math.max(a, b) + 1);
+        filter.file = null;
+        return load();
+      }
+      anchorKey = key(ref, opts);
+      // 골라 보기 모드 또는 Ctrl+클릭: 하나씩 더하거나 빼기
       if (selectMode || e.ctrlKey || e.metaKey) return toggle();
       // 그냥 클릭: 이 브랜치만 보기
       filter.refs = [key(ref, opts)];
       filter.file = null;
       load();
     };
+    // 체크아웃은 우클릭 메뉴에서만 (더블클릭으로 실수로 바뀌지 않게)
     if (opts.kind) {
-      row.ondblclick = () => (opts.kind === 'remote' ? checkoutRemote(ref) : !opts.current && checkout(ref));
       row.oncontextmenu = (e) => {
         e.preventDefault();
+        // 여러 로컬 브랜치를 선택한 상태에서 그중 하나를 우클릭: 선택한 브랜치들에 한꺼번에
+        const selLocal = selectedLocal(br);
+        if (opts.kind === 'local' && selLocal.length > 1 && selLocal.includes(opts.branch.name)) return contextMenu(e.clientX, e.clientY, multiBranchMenu(selLocal, br));
         contextMenu(e.clientX, e.clientY, branchMenuItems(opts.branch, opts.kind));
       };
     }
@@ -342,6 +363,7 @@ function renderBranches(br) {
   };
   el.prepend(allRow);
   if (state.status?.detached) el.append(item(`HEAD (${state.status.headShort})`, CUR, { ico: '●', current: true, title: '분리된 HEAD (특정 커밋을 체크아웃한 상태)' }));
+  const localKeys = br.local.map((b) => (b.current ? CUR : b.name));
   group(
     '로컬',
     br.local.map((b) =>
@@ -349,24 +371,48 @@ function renderBranches(br) {
         kind: 'local',
         branch: b,
         current: b.current,
+        groupKeys: localKeys,
         ico: b.current ? '★' : '⑂',
         ...trackHint(b),
-        title: `${b.name}${b.upstream ? ` → ${b.upstream}` : ''}\n더블클릭: 체크아웃 / 우클릭: 메뉴`,
+        title: `${b.name}${b.upstream ? ` → ${b.upstream}` : ''}\n우클릭: 체크아웃·업데이트(Pull) 등\nCtrl+클릭 / Shift+클릭: 여러 개 선택`,
       })
     )
   );
   const byRemote = {};
   for (const b of br.remote) (byRemote[b.name.split('/')[0]] ||= []).push(b);
   for (const [remote, list] of Object.entries(byRemote)) {
+    const keys = list.map((b) => b.name);
     group(
       `원격: ${remote}`,
-      list.map((b) => item(b.name.slice(remote.length + 1), b.name, { kind: 'remote', branch: b, title: `${b.name}\n더블클릭: 체크아웃` }))
+      list.map((b) => item(b.name.slice(remote.length + 1), b.name, { kind: 'remote', branch: b, groupKeys: keys, title: `${b.name}\n우클릭: 체크아웃 등` }))
     );
   }
   group(
     '태그',
     br.tags.map((b) => item(b.name, b.name, { kind: 'tag', branch: b, ico: '⌂' }))
   );
+}
+
+// 지금 선택(함께 보기)된 로컬 브랜치 이름들
+function selectedLocal(br) {
+  if (isAll()) return [];
+  return br.local.filter((b) => filter.refs.includes(b.name) || (b.current && filter.refs.includes(CUR))).map((b) => b.name);
+}
+
+function multiBranchMenu(names, br) {
+  const withUp = names.filter((n) => br.local.find((b) => b.name === n)?.upstream);
+  return [
+    { header: `선택한 로컬 브랜치 ${names.length}개` },
+    { label: `모두 업데이트 (Pull)${withUp.length < names.length ? ` — 원격 연결된 ${withUp.length}개` : ''}`, disabled: !withUp.length, onClick: () => updateBranches(withUp) },
+    '-',
+    {
+      label: '선택 해제',
+      onClick: () => {
+        filter.refs = [ALL];
+        load();
+      },
+    },
+  ];
 }
 
 // ---------- 그래프 ----------

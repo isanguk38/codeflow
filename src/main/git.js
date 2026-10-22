@@ -461,6 +461,46 @@ async function branches(repo) {
   return { local, remote, tags };
 }
 
+// 체크아웃하지 않은 로컬 브랜치도 원격 내용으로 업데이트 (Fast-forward 만, 작업 폴더는 건드리지 않음)
+// 현재 브랜치는 여기서 다루지 않는다 (화면에서 일반 Pull 로 처리)
+async function updateBranches(repo, names) {
+  const { local } = await branches(repo);
+  const results = [];
+  for (const name of names) {
+    const b = local.find((x) => x.name === name);
+    if (!b) {
+      results.push({ name, ok: false, message: '브랜치를 찾을 수 없습니다' });
+      continue;
+    }
+    if (b.current) {
+      results.push({ name, ok: false, current: true, message: '현재 브랜치' });
+      continue;
+    }
+    if (!b.upstream) {
+      results.push({ name, ok: false, message: '연결된 원격 브랜치가 없습니다' });
+      continue;
+    }
+    const remotes = (await run(repo, ['remote'])).stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    const remote = remotes.filter((r) => b.upstream.startsWith(`${r}/`)).sort((a, c) => c.length - a.length)[0];
+    if (!remote) {
+      results.push({ name, ok: false, message: `원격 '${b.upstream}' 을 찾을 수 없습니다` });
+      continue;
+    }
+    const rb = b.upstream.slice(remote.length + 1);
+    const before = b.sha;
+    const r = await run(repo, ['fetch', remote, `refs/heads/${rb}:refs/heads/${name}`], { allowFail: true });
+    if (r.code === 0) {
+      const after = (await run(repo, ['rev-parse', '--short', `refs/heads/${name}`])).stdout.trim();
+      results.push({ name, ok: true, changed: after !== before, message: after !== before ? `${before} → ${after}` : '이미 최신' });
+    } else if (/non-fast-forward|rejected/i.test(r.stderr)) {
+      results.push({ name, ok: false, message: '로컬에만 있는 커밋이 있어 자동으로 합칠 수 없습니다 (체크아웃한 뒤 Pull 하세요)' });
+    } else if (/couldn't find remote ref/i.test(r.stderr)) {
+      results.push({ name, ok: false, message: '원격 브랜치가 삭제되었습니다' });
+    } else results.push({ name, ok: false, message: r.stderr.trim().split('\n').pop() || `실패 (code ${r.code})` });
+  }
+  return results;
+}
+
 async function checkout(repo, name) {
   await run(repo, ['checkout', name]);
 }
@@ -798,4 +838,5 @@ module.exports = {
   config,
   setConfig,
   addToGitignore,
+  updateBranches,
 };

@@ -5,9 +5,10 @@ import { state, git, op } from './state.js';
 // 브랜치 목록이 바뀌는 작업 뒤에 히스토리 왼쪽 목록을 즉시 갱신
 const treeNow = async () => (await import('./log.js')).reloadBranchTree();
 
-export async function newBranch(start, { checkout = true } = {}) {
+export async function newBranch(start, { checkout = true, name: suggested = '' } = {}) {
   const r = await promptDialog(start ? `'${start}' 에서 새 브랜치 만들기` : '현재 위치에서 새 브랜치 만들기', {
     title: '새 브랜치',
+    value: suggested,
     placeholder: '예: feature/login',
     okLabel: '만들기',
     checkbox: { label: '만든 후 체크아웃', checked: checkout },
@@ -145,6 +146,33 @@ export async function checkoutRevision() {
 }
 
 // 브랜치 하나에 대한 작업 메뉴
+// 로컬 브랜치 업데이트 (체크아웃하지 않은 브랜치도): 원격 내용으로 Fast-forward. 현재 브랜치가 섞여 있으면 그건 일반 Pull
+export async function updateBranches(names) {
+  const cur = state.status?.branch;
+  const others = names.filter((n) => n !== cur);
+  let results = [];
+  if (others.length) {
+    const r = await op(`브랜치 업데이트 (${others.length}개)`, async () => {
+      await git('fetchAll');
+      return git('updateBranches', others);
+    });
+    if (!Array.isArray(r)) return; // 실패 (오류는 op 가 표시)
+    results = r;
+  }
+  if (names.includes(cur)) await (await import('./remote.js')).doPull();
+  if (!results.length) return;
+  const ok = results.filter((x) => x.ok && x.changed).length;
+  const same = results.filter((x) => x.ok && !x.changed).length;
+  const fail = results.filter((x) => !x.ok);
+  if (!fail.length && results.length === 1) return toast(`'${results[0].name}': ${results[0].changed ? `업데이트했습니다 (${results[0].message})` : '이미 최신입니다'}`, 'ok');
+  if (!fail.length) return toast(`업데이트 ${ok}개, 이미 최신 ${same}개`, 'ok', 4000);
+  const lines = results.map((x) => `${x.ok ? (x.changed ? '✓' : '·') : '✕'} ${x.name} — ${x.ok && !x.changed ? '이미 최신' : x.message}`).join('\n');
+  const { errorDialog } = await import('./ui.js');
+  errorDialog(`업데이트 ${ok}개, 이미 최신 ${same}개, 실패 ${fail.length}개
+
+${lines}`, '브랜치 업데이트 결과');
+}
+
 export function branchMenuItems(b, kind) {
   const cur = state.status?.branch;
   if (kind === 'local' && b.current) {
@@ -161,6 +189,7 @@ export function branchMenuItems(b, kind) {
     return [
       { header: b.name },
       { label: '체크아웃', onClick: () => checkout(b.name) },
+      { label: '업데이트 (Pull, 체크아웃 없이)', disabled: !b.upstream, onClick: () => updateBranches([b.name]) },
       { label: '여기서 새 브랜치...', onClick: () => newBranch(b.name) },
       '-',
       { label: `'${b.name}' 을(를) '${cur}' 에 병합`, disabled: !cur, onClick: () => mergeInto(b.name) },
