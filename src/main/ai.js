@@ -9,12 +9,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const tools = require('./ai-tools');
+const codex = require('./codex');
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
 
 // ---------- 지원하는 AI ----------
 
 const PROVIDERS = {
+  codex: { name: 'Codex', vendor: 'OpenAI', candidates: () => [] },
   claude: {
     name: 'Claude Code',
     vendor: 'Anthropic',
@@ -41,6 +43,7 @@ function run(exe, args, timeout = 20000) {
 
 // 설치 여부 + 버전 + 로그인 상태
 async function status(id) {
+  if (id === 'codex') return codex.status();
   const exe = findExe(id);
   if (!exe) return { id, installed: false };
   const v = await run(exe, ['--version']);
@@ -64,6 +67,7 @@ async function status(id) {
 
 let installing = null;
 function install(id, onLog) {
+  if (id === 'codex') return codex.install(onLog);
   if (installing) return installing;
   const p = PROVIDERS[id];
   if (!p) return Promise.reject(new Error('지원하지 않는 AI'));
@@ -91,6 +95,7 @@ function install(id, onLog) {
 
 let loginProc = null;
 function login(id, onLog) {
+  if (id === 'codex') return codex.login(onLog);
   const exe = findExe(id);
   if (!exe) return Promise.reject(new Error('먼저 설치하세요.'));
   cancelLogin();
@@ -115,8 +120,10 @@ function login(id, onLog) {
 // 로그인 화면에서 코드를 붙여 넣어야 하는 경우 등
 function loginInput(text) {
   loginProc?.write(text);
+  codex.loginInput(text);
 }
 function cancelLogin() {
+  codex.cancelLogin();
   try {
     loginProc?.kill();
   } catch {}
@@ -124,6 +131,7 @@ function cancelLogin() {
 }
 
 async function logout(id) {
+  if (id === 'codex') return codex.logout();
   const exe = findExe(id);
   if (exe) await run(exe, ['auth', 'logout']);
   return status(id);
@@ -156,6 +164,22 @@ function guideFile() {
 const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project'];
 
 async function startChat({ provider = 'claude', repo, resume, model, addDirs = [] }, send) {
+  if (provider === 'codex') {
+    const id = ++chatSeq;
+    const c = new codex.CodexChat(id, repo, (ev) => send('ai:event', id, ev));
+    chats.set(id, { codex: c, repo });
+    c.proc = null;
+    const guide = fs.readFileSync(guideFile(), 'utf8');
+    try {
+      await c.start({ resume, model, addDirs: addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)), guide });
+    } catch (e) {
+      c.stop();
+      chats.delete(id);
+      throw e;
+    }
+    c.proc.on('exit', () => chats.delete(id));
+    return { id };
+  }
   const exe = findExe(provider);
   if (!exe) throw new Error('AI 도구가 설치되어 있지 않습니다.');
   const sessionKey = tools.registerSession(repo);
@@ -312,12 +336,14 @@ function transcript(repo, id) {
 function sendChat(id, textOrContent) {
   const c = chats.get(id);
   if (!c) throw new Error('대화가 끝났습니다. 다시 보내 주세요.');
+  if (c.codex) return c.codex.sendTurn(textOrContent);
   c.proc.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: textOrContent } })}\n`);
 }
 
 function stopChat(id) {
   const c = chats.get(id);
   if (!c) return;
+  if (c.codex) return c.codex.stop();
   try {
     c.proc.kill();
   } catch {}

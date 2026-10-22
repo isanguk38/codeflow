@@ -43,6 +43,10 @@ contextBridge.exposeInMainWorld('api', {
     send: (id, content) => ipcRenderer.invoke('ai:send', id, content),
     stop: (id) => ipcRenderer.invoke('ai:stop', id),
     sessions: (repo) => ipcRenderer.invoke('ai:sessions', repo),
+    convList: (repo) => ipcRenderer.invoke('ai:convList', repo),
+    convLoad: (repo, id) => ipcRenderer.invoke('ai:convLoad', repo, id),
+    convSave: (repo, conv) => ipcRenderer.invoke('ai:convSave', repo, conv),
+    convRemove: (repo, id) => ipcRenderer.invoke('ai:convRemove', repo, id),
     readAttachment: (file) => ipcRenderer.invoke('ai:readAttachment', file),
     // 끌어다 놓은 파일의 실제 경로
     filePath: (file) => {

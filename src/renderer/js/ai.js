@@ -14,19 +14,30 @@ const dirsKey = () => openDirs().map((d) => d.toLowerCase()).sort().join('|');
 
 const AIS = [
   { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', ready: true, login: 'Claude 계정(Pro/Max 구독) 또는 Anthropic Console 계정' },
-  { id: 'codex', name: 'Codex', vendor: 'OpenAI', ready: false, login: 'ChatGPT 계정' },
+  { id: 'codex', name: 'Codex', vendor: 'OpenAI', ready: true, login: 'ChatGPT 계정' },
 ];
 
-// 모델 (빈 값 = Claude Code 기본값)
-const MODELS = [
+// 모델 (빈 값 = 그 AI 의 기본값). Codex 는 계정 플랜마다 쓸 수 있는 모델이 달라서 Codex 가 알려 준 목록을 쓴다
+const CLAUDE_MODELS = [
   ['', '기본값'],
   ['claude-opus-5-5', 'Opus 5.5'],
   ['claude-sonnet-5-5', 'Sonnet 5.5'],
   ['claude-haiku-5-5', 'Haiku 5.5'],
   ['claude-fable-5-1', 'Fable 5.1 (사용 크레딧 필요)'],
 ];
-let model = localStorage.getItem('ai.model') || '';
-let rateInfo = null; // 플랜 사용량 { five_hour: {utilization, resetsAt}, seven_day: ... }
+let codexModels = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('ai.codexModels') || '[]');
+  } catch {
+    return [];
+  }
+})();
+const modelsFor = (p) => (p === 'codex' ? [['', '기본값'], ...codexModels.map((m) => [m.id, `${m.name}${m.isDefault ? ' (기본)' : ''}`])] : CLAUDE_MODELS);
+const getModel = (p) => localStorage.getItem(`ai.model.${p}`) ?? (p === 'claude' ? localStorage.getItem('ai.model') || '' : '');
+const setModel = (p, m) => localStorage.setItem(`ai.model.${p}`, m);
+const nameOf = (p) => AIS.find((a) => a.id === p)?.name || p;
+// 플랜 사용량 (AI 마다): [{ label, utilization, resetsAt }]
+const rateInfo = {};
 let lastMcp = null; // 연결된 MCP 서버·커넥터 [{ name, status, source }]
 
 let panel;
@@ -156,6 +167,9 @@ function render() {
   sel.onchange = () => {
     provider = sel.value;
     localStorage.setItem('ai.provider', provider);
+    // 대화는 그대로 두고, 다음 질문부터 새 AI 가 이어서 답한다
+    const c = state.repo ? chats.get(repoKey(state.repo)) : null;
+    if (c?.conv.entries.length) toast(`다음 질문부터 ${aiName()} 가 지금 대화를 이어서 답합니다.`, 'info', 4000);
     refreshStatus();
   };
   const newBtn = h('button', { class: 'tb-btn small', text: '＋', title: '새 대화 (지금 대화는 기록에 남음)' });
@@ -281,9 +295,55 @@ function showLoginUrl(url) {
 
 function chatFor(repo) {
   const k = repoKey(repo);
-  if (!chats.has(k)) chats.set(k, { repo, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
+  if (!chats.has(k)) chats.set(k, { repo, conv: newConv(), procProvider: null, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
   return chats.get(k);
 }
+
+// ---------- 공유 대화 (AI 를 바꿔도 같은 대화) ----------
+
+function newConv() {
+  return { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, title: '', created: Date.now(), updated: Date.now(), entries: [], native: {} };
+}
+
+function saveConv(c) {
+  if (!c.conv.entries.length) return;
+  window.api.ai.convSave(c.repo, c.conv).catch?.(() => {});
+}
+
+// 이 AI 가 아직 모르는 내용(다른 AI 와 나눈 대화)을 글로 정리해서 질문 앞에 붙인다
+const HANDOFF_LIMIT = 16000;
+function handoffText(c, p) {
+  const seen = c.conv.native[p]?.seen || 0;
+  const unseen = c.conv.entries.slice(seen);
+  if (!unseen.length) return '';
+  const lines = [];
+  for (const e of unseen) {
+    if (e.role === 'user') lines.push(`[사용자]${e.attachments?.length ? ` (첨부: ${e.attachments.join(', ')})` : ''}\n${e.text}`);
+    else lines.push(`[${nameOf(e.provider)}]\n${e.text || '(글 없이 작업만 함)'}${e.tools?.length ? `\n(한 작업: ${e.tools.map((t) => t.desc).join(' / ')})` : ''}`);
+  }
+  let body = lines.join('\n\n');
+  if (body.length > HANDOFF_LIMIT) body = `(앞부분 생략)\n…${body.slice(-HANDOFF_LIMIT)}`;
+  const first = !c.conv.native[p];
+  return (
+    `[CodeFlow 안내] 이 대화는 CodeFlow 에서 사용자가 여러 AI(Claude Code, Codex)를 바꿔 가며 이어 온 하나의 대화입니다. ` +
+    `${first ? '당신은 이 대화에 처음 참여합니다. 지금까지' : '당신이 마지막으로 답한 뒤'} 오간 내용은 아래와 같습니다. 이 내용을 알고 있는 것처럼 자연스럽게 이어서 답하세요 (이미 한 작업을 반복하지 말 것).\n` +
+    `--- 이전 대화 ---\n${body}\n--- 끝 ---\n\n[사용자의 새 메시지]\n`
+  );
+}
+
+// 한 번의 질문-답변이 끝나면 대화에 기록하고 저장
+function finishTurn(c) {
+  const t = c.turn;
+  if (!t) return;
+  c.turn = null;
+  const text = [...t.texts.values()].filter((x) => x && x.trim()).join('\n\n');
+  if (text || t.tools.length) c.conv.entries.push({ role: 'assistant', provider: t.provider, text, tools: t.tools, at: Date.now() });
+  c.conv.native[t.provider] = { ...(c.conv.native[t.provider] || {}), seen: c.conv.entries.length };
+  saveConv(c);
+}
+
+// 도구 기록용: 다시 그릴 때 필요한 값만
+const toolRec = (id, name, input = {}) => ({ id, name, desc: describeTool(name, input), input: Object.fromEntries(['file_path', 'command', 'pattern', 'path', 'query', 'url', 'view', 'line'].filter((k) => input[k] !== undefined).map((k) => [k, typeof input[k] === 'string' ? input[k].slice(0, 300) : input[k]])) });
 
 function chatView() {
   const c = chatFor(state.repo);
@@ -329,14 +389,12 @@ function chatView() {
     }
   };
   // 모델 선택 (바꾸면 다음 질문부터 같은 대화를 그 모델로 이어 감)
-  const msel = h('select', { class: 'ai-model', title: '모델 (다음 질문부터 적용)' });
-  for (const [id, label] of MODELS) msel.append(h('option', { value: id, text: label }));
-  msel.value = model;
+  const msel = h('select', { class: 'ai-model', id: 'aiModel', title: '모델 (다음 질문부터 적용)' });
+  fillModels(msel);
   msel.onchange = () => {
-    model = msel.value;
-    localStorage.setItem('ai.model', model);
+    setModel(provider, msel.value);
     for (const ch of chats.values()) ch.restartForModel = true;
-    toast(`다음 질문부터 ${MODELS.find((m) => m[0] === model)[1]} 모델로 답합니다.`, 'info');
+    toast(`다음 질문부터 ${msel.selectedOptions[0]?.textContent || '기본값'} 모델로 답합니다.`, 'info');
   };
   wrap.append(
     c.list,
@@ -356,12 +414,22 @@ function chatView() {
   return wrap;
 }
 
+function fillModels(msel = $('#aiModel')) {
+  if (!msel) return;
+  msel.innerHTML = '';
+  for (const [id, label] of modelsFor(provider)) msel.append(h('option', { value: id, text: label }));
+  const cur = getModel(provider);
+  msel.value = modelsFor(provider).some((m) => m[0] === cur) ? cur : '';
+  if (provider === 'codex' && !codexModels.length) msel.title = '모델 목록은 Codex 와 처음 대화하면 표시됩니다';
+}
+
 function welcomeNote() {
   return h('div', {
     class: 'ai-note',
     html:
       '이 프로젝트 폴더에서 AI 가 실행됩니다. 코드 질문, 수정, 실행은 물론 <b>CodeFlow 사용법</b>도 물어보세요.<br>' +
-      'AI 가 CodeFlow 터미널에서 명령을 실행하거나 파일을 열 수 있고, 파일 수정·명령 실행 전에는 허용 여부를 묻습니다.',
+      'AI 가 CodeFlow 터미널에서 명령을 실행하거나 파일을 열 수 있고, 파일 수정·명령 실행 전에는 허용 여부를 묻습니다.<br>' +
+      '위쪽에서 <b>AI 를 바꿔도 대화는 그대로</b> 이어집니다 — 새 AI 에게 지금까지의 대화를 넘겨 줍니다.',
   });
 }
 
@@ -374,49 +442,101 @@ function newChat() {
   render();
 }
 
-// 지난 대화 목록 → 고르면 내용을 보여 주고, 이어서 질문하면 그 대화로 계속
+// 지난 대화 목록 (CodeFlow 대화 — AI 를 바꿔 가며 한 대화 포함) + 예전 Claude Code 기록
+const ago = (t) => {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`;
+};
 async function openHistory(anchor) {
-  const r = await window.api.ai.sessions(state.repo);
-  const list = r.ok ? r.data : [];
-  const cur = chatFor(state.repo).sessionId;
-  const ago = (t) => {
-    const m = Math.round((Date.now() - t) / 60000);
-    return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`;
-  };
+  const [a, b] = await Promise.all([window.api.ai.convList(state.repo), window.api.ai.sessions(state.repo)]);
+  const convs = a.ok ? a.data : [];
+  const linked = new Set(convs.map((x) => x.native?.claude?.id).filter(Boolean));
+  const legacy = (b.ok ? b.data : []).filter((s) => !linked.has(s.id));
+  const cur = chatFor(state.repo).conv.id;
+  const short = { claude: 'Claude', codex: 'Codex' };
   menuAt(anchor, [
     { header: `지난 대화 · ${state.repo.split(/[\\/]/).pop()}` },
-    ...(list.length
-      ? list.slice(0, 25).map((s) => ({ label: `${s.id === cur ? '✓ ' : ''}${s.title}`, hint: `${ago(s.updated)} · ${s.count}개`, onClick: () => loadSession(s.id) }))
-      : [{ label: '지난 대화가 없습니다', disabled: true }]),
+    ...(convs.length
+      ? convs.slice(0, 25).map((s) => ({ label: `${s.id === cur ? '✓ ' : ''}${s.title || '(제목 없음)'}`, hint: `${s.providers.map((p) => short[p] || p).join('+') || '-'} · ${ago(s.updated)} · ${s.count}개`, onClick: () => loadConv(s.id) }))
+      : [{ label: 'CodeFlow 에서 나눈 대화가 없습니다', disabled: true }]),
+    ...(legacy.length ? ['-', { header: '예전 Claude Code 기록' }, ...legacy.slice(0, 15).map((s) => ({ label: s.title, hint: `${ago(s.updated)} · ${s.count}개`, onClick: () => loadSession(s.id) }))] : []),
   ]);
 }
 
-async function loadSession(id) {
+// 저장된 대화를 화면에 다시 그리기
+function drawConv(c) {
+  let prev = null;
+  c.conv.entries.forEach((e, i) => {
+    if (e.role === 'user') {
+      const bubble = h('div', { class: 'ai-msg user' });
+      if (e.attachments?.length) bubble.append(h('div', { class: 'ai-attach in-msg' }, ...e.attachments.map((n) => h('div', { class: 'ai-chip', text: `📎 ${n}` }))));
+      bubble.append(h('div', { text: e.text }));
+      c.list.append(bubble);
+      return;
+    }
+    if (prev && prev !== e.provider) c.list.append(h('div', { class: 'ai-switch', text: `${nameOf(prev)} → ${nameOf(e.provider)} 로 이어서 대화` }));
+    prev = e.provider;
+    const m = msgEntry(c, `h${i}`, e.provider);
+    for (const t of e.tools || []) {
+      m.blocks.push({ type: 'tool_use', id: t.id || `t${i}${Math.random()}`, name: t.name, input: t.input || {} });
+      if (t.id) c.toolNames.set(t.id, t.name), (c.toolInputs ||= new Map()).set(t.id, t.input || {});
+    }
+    if (e.text) m.blocks.push({ type: 'text', text: e.text });
+    renderBlocks(c, m);
+    for (const t of e.tools || []) {
+      const chip = c.tools.get(t.id);
+      chip?.classList.remove('running');
+      chip?.classList.add(t.ok === false ? 'failed' : 'done');
+      if (t.ok !== false && t.id) addFileCard(c, t.id);
+    }
+  });
+  for (const chip of c.tools.values()) chip.classList.remove('running');
+}
+
+function resetChat() {
   const old = chatFor(state.repo);
   if (old.procId) window.api.ai.stop(old.procId);
   clearActivity(old);
   chats.delete(repoKey(state.repo));
-  const c = chatFor(state.repo);
-  c.sessionId = id;
+  return chatFor(state.repo);
+}
+
+async function loadConv(id) {
+  const r = await window.api.ai.convLoad(state.repo, id);
+  if (!r.ok) return toast(r.error, 'error');
+  const c = resetChat();
+  c.conv = r.data;
+  c.list.append(welcomeNote());
+  drawConv(c);
+  const used = [...new Set(c.conv.entries.filter((e) => e.role === 'assistant').map((e) => nameOf(e.provider)))];
+  c.list.append(h('div', { class: 'ai-foot', text: `지난 대화를 불러왔습니다${used.length ? ` (${used.join(', ')})` : ''}. 이어서 질문하면 지금 고른 AI(${aiName()})가 이 대화를 이어 갑니다.` }));
+  render();
+}
+
+// 예전(0.6.x) Claude Code 기록 → CodeFlow 대화로 옮겨서 열기
+async function loadSession(id) {
   const r = await window.api.ai.transcript(state.repo, id);
   if (!r.ok) return toast(r.error, 'error');
+  const conv = newConv();
+  let cur = null;
+  const ok = new Map();
+  for (const it of r.data) if (it.role === 'tool_result') ok.set(it.id, !it.error);
   for (const it of r.data) {
-    if (it.role === 'user') c.list.append(h('div', { class: 'ai-msg user', text: it.text }));
-    else if (it.role === 'assistant') {
-      const m = msgEntry(c, it.id || `h${Math.random()}`);
-      m.blocks.push(...it.blocks);
-      for (const b of it.blocks) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name), (c.toolInputs ||= new Map()).set(b.id, b.input);
-      renderBlocks(c, m);
-    } else if (it.role === 'tool_result') {
-      const chip = c.tools.get(it.id);
-      chip?.classList.remove('running');
-      chip?.classList.add(it.error ? 'failed' : 'done');
-      if (!it.error) addFileCard(c, it.id);
+    if (it.role === 'user') {
+      cur = null;
+      conv.entries.push({ role: 'user', text: it.text, at: Date.now() });
+      if (!conv.title) conv.title = it.text.replace(/\s+/g, ' ').slice(0, 60);
+    } else if (it.role === 'assistant') {
+      if (!cur) conv.entries.push((cur = { role: 'assistant', provider: 'claude', text: '', tools: [] }));
+      for (const b of it.blocks) {
+        if (b.type === 'text') cur.text = cur.text ? `${cur.text}\n\n${b.text}` : b.text;
+        else if (b.type === 'tool_use') cur.tools.push({ ...toolRec(b.id, b.name, b.input), ok: ok.get(b.id) });
+      }
     }
   }
-  for (const chip of c.tools.values()) chip.classList.remove('running');
-  c.list.append(h('div', { class: 'ai-foot', text: '지난 대화를 불러왔습니다. 이어서 질문하면 이 대화로 계속합니다.' }));
-  render();
+  conv.native.claude = { id, seen: conv.entries.length };
+  await window.api.ai.convSave(state.repo, conv);
+  loadConv(conv.id);
 }
 
 // ---------- 진행 상태 (생각 중 / 답변 작성 중 / 도구 실행 중 / 허용 대기) ----------
@@ -473,24 +593,24 @@ function drawMeters(c) {
     m.onclick = () =>
       menuAt(m, [
         { header: `컨텍스트 ${fmtTok(c.ctx.used)} / ${fmtTok(c.ctx.window)} 토큰 (${pct}%)` },
-        { label: '지금 정리하기 (/compact) — 지난 내용을 요약해서 공간 확보', disabled: c.busy || !c.procId, onClick: () => compact(c) },
-        { header: '가득 차면 Claude Code 가 자동으로 정리합니다' },
+        { label: '지금 정리하기 (/compact) — 지난 내용을 요약해서 공간 확보', disabled: c.busy || !c.procId || c.procProvider !== 'claude', onClick: () => compact(c) },
+        { header: `가득 차면 ${nameOf(c.procProvider || provider)} 가 자동으로 정리합니다` },
       ]);
     el.append(m);
   }
-  if (rateInfo) {
-    const win = (k, name) => {
-      const w = rateInfo[k];
+  if (rateInfo[provider]) {
+    const win = (w) => {
       if (!w) return null;
+      const name = w.label;
       const pct = Math.round((w.utilization || 0) * 100);
       const left = w.resetsAt ? Math.max(0, w.resetsAt * 1000 - Date.now()) : 0;
       const when = left < 3600e3 ? `${Math.round(left / 60000)}분 후` : left < 86400e3 ? `${Math.floor(left / 3600e3)}시간 ${Math.round((left % 3600e3) / 60000)}분 후` : new Date(w.resetsAt * 1000).toLocaleString('ko-KR', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
       return h('span', { class: `ai-meter ${pct >= 80 ? 'warn' : ''}`, title: `${name} 사용량 ${pct}% · ${when} 초기화` }, h('span', { text: `${name} ${pct}%` }), h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } })));
     };
-    const a = win('five_hour', '세션');
-    const b = win('seven_day', '주간');
-    if (a) el.append(a);
-    if (b) el.append(b);
+    for (const w of rateInfo[provider]) {
+      const x = win(w);
+      if (x) el.append(x);
+    }
   }
 }
 
@@ -531,11 +651,30 @@ async function submit(c, input) {
     ...att.filter((a) => a.kind === 'pdf').map((a) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data }, title: a.name })),
     { type: 'text', text: others.length ? `${text}\n\n[첨부 파일 — Read 도구로 읽어 주세요]\n${others.map((a) => a.path).join('\n')}` : text },
   ];
+  // AI 를 바꿨으면: 새 AI 에게 그동안의 대화를 넘겨 준다
+  const lastAi = [...c.conv.entries].reverse().find((e) => e.role === 'assistant')?.provider;
+  const handoff = handoffText(c, provider);
+  if (lastAi && lastAi !== provider) c.list.insertBefore(h('div', { class: 'ai-switch', text: `${nameOf(lastAi)} → ${aiName()} 로 이어서 대화 (지난 대화를 넘겨 줌)` }), bubble);
+  if (handoff) {
+    const tb = content.find((b) => b.type === 'text');
+    tb.text = handoff + tb.text;
+    text = handoff + text;
+  }
+  c.conv.entries.push({ role: 'user', text: input.dataset.sent || bubble.lastChild.textContent, attachments: att.map((a) => a.name), at: Date.now() });
+  if (!c.conv.title) c.conv.title = bubble.lastChild.textContent.replace(/\s+/g, ' ').slice(0, 60);
+  c.turn = { provider, texts: new Map(), tools: [] };
+  saveConv(c);
   c.list.scrollTop = c.list.scrollHeight;
   c.busy = true;
   updateSendButton(c);
   setActivity(c, 'requesting', { start: Date.now(), tokens: 0 });
   try {
+    // 다른 AI 로 바꿨으면 이전 AI 프로그램은 끝낸다
+    if (c.procId && c.procProvider !== provider) {
+      await window.api.ai.stop(c.procId);
+      byChatId.delete(c.procId);
+      c.procId = null;
+    }
     // 대화 시작 뒤 프로젝트 탭이 늘거나 줄었으면, 같은 대화를 이어서 새 폴더 목록으로 다시 시작
     if (c.procId && (c.dirsKey !== dirsKey() || c.restartForModel)) {
       await window.api.ai.stop(c.procId);
@@ -546,9 +685,10 @@ async function submit(c, input) {
       setActivity(c, 'starting');
       c.dirsKey = dirsKey();
       c.restartForModel = false;
-      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined, addDirs: openDirs(), model: model || undefined });
+      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.conv.native[provider]?.id || undefined, addDirs: openDirs(), model: getModel(provider) || undefined });
       if (!r.ok) throw new Error(r.error);
       c.procId = r.data.id;
+      c.procProvider = provider;
       byChatId.set(c.procId, c);
     }
     const r = await window.api.ai.send(c.procId, att.length ? content : text);
@@ -557,6 +697,7 @@ async function submit(c, input) {
     c.busy = false;
     updateSendButton(c);
     clearActivity(c);
+    finishTurn(c);
     c.list.append(h('div', { class: 'ai-msg err', text: `보내지 못했습니다: ${e.message}` }));
   }
 }
@@ -736,10 +877,10 @@ function addFileCard(c, toolId) {
   chip.after(card);
 }
 
-function msgEntry(c, id) {
+function msgEntry(c, id, who = c.procProvider || provider) {
   let m = c.msgs.get(id);
   if (!m) {
-    m = { el: h('div', { class: 'ai-msg assistant' }), blocks: [] };
+    m = { el: h('div', { class: 'ai-msg assistant' }), blocks: [], who };
     c.msgs.set(id, m);
     c.list.append(m.el);
   }
@@ -748,6 +889,7 @@ function msgEntry(c, id) {
 
 function renderBlocks(c, m) {
   m.el.innerHTML = '';
+  if (m.who) m.el.append(h('div', { class: `ai-who ${m.who}`, text: nameOf(m.who) }));
   for (const b of m.blocks) {
     if (b.type === 'text') {
       if (!b.text.trim()) continue;
@@ -770,15 +912,18 @@ function renderBlocks(c, m) {
 function onAiEvent(procId, ev) {
   const c = byChatId.get(procId);
   if (!c) return;
+  if (ev.type === 'cf') return onCfEvent(c, ev);
   if (ev.type === 'system' && ev.subtype === 'init') {
     c.sessionId = ev.session_id;
+    c.conv.native.claude = { ...(c.conv.native.claude || {}), id: ev.session_id };
     c.mcp = lastMcp = ev.mcp_servers || [];
     return;
   }
   if (ev.type === 'system' && ev.subtype === 'status' && ev.status === 'requesting' && c.busy) return setActivity(c, c.activity?.kind === 'compacting' ? 'compacting' : 'requesting');
   if (ev.type === 'system' && ev.subtype === 'thinking_tokens' && c.busy) return setActivity(c, 'thinking', { tokens: (c.activity?.base || 0) + (ev.estimated_tokens || 0) });
   if (ev.type === 'rate_limit_event') {
-    rateInfo = ev.rate_limit_info?.unifiedWindows || rateInfo;
+    const w = ev.rate_limit_info?.unifiedWindows;
+    if (w) rateInfo.claude = [w.five_hour && { label: '세션', ...w.five_hour }, w.seven_day && { label: '주간', ...w.seven_day }].filter(Boolean);
     return drawMeters(c);
   }
   if (ev.type === 'stream_event') {
@@ -837,6 +982,12 @@ function onAiEvent(procId, ev) {
     m.blocks = m.blocks.filter(Boolean);
     renderBlocks(c, m);
     for (const b of msg.content || []) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name), (c.toolInputs ||= new Map()).set(b.id, b.input);
+    // 대화 기록용
+    if (c.turn) {
+      const txt = (msg.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+      if (txt) c.turn.texts.set(msg.id || `m${c.turn.texts.size}`, txt);
+      for (const b of msg.content || []) if (b.type === 'tool_use' && !c.turn.tools.some((t) => t.id === b.id)) c.turn.tools.push(toolRec(b.id, b.name, b.input));
+    }
     const tool = [...(msg.content || [])].reverse().find((b) => b.type === 'tool_use');
     if (tool && c.busy) setActivity(c, 'tool', { text: `실행 중: ${describeTool(tool.name, tool.input)}` });
     scrollDown(c);
@@ -853,6 +1004,8 @@ function onAiEvent(procId, ev) {
       const out = Array.isArray(b.content) ? b.content.map((x) => x.text || '').join('\n') : String(b.content || '');
       if (out.trim()) chip.title = out.slice(0, 2000);
       if (!b.is_error) addFileCard(c, b.tool_use_id);
+      const rec = c.turn?.tools.find((t) => t.id === b.tool_use_id);
+      if (rec) rec.ok = !b.is_error;
       // 파일을 바꾸는 도구가 끝나면 CodeFlow 화면(열린 파일, 변경 목록)을 바로 새로 읽는다 (예전 내용으로 덮어쓰지 않게)
       if (!b.is_error && /^(Edit|MultiEdit|Write|NotebookEdit|Bash|PowerShell)$/.test(c.toolNames.get(b.tool_use_id) || '')) {
         clearTimeout(c.refreshTimer);
@@ -874,6 +1027,7 @@ function onAiEvent(procId, ev) {
     if (ev.is_error && ev.result && !/authenticate/i.test(ev.result)) c.list.append(h('div', { class: 'ai-msg err', text: ev.result }));
     const secs = ev.duration_ms ? `${(ev.duration_ms / 1000).toFixed(0)}초` : '';
     if (secs) c.list.append(h('div', { class: 'ai-foot', text: `완료 · ${secs}` }));
+    finishTurn(c);
     scrollDown(c);
     return;
   }
@@ -884,6 +1038,7 @@ function onAiEvent(procId, ev) {
     c.busy = false;
     updateSendButton(c);
     clearActivity(c);
+    finishTurn(c);
     for (const chip of c.tools.values()) chip.classList.remove('running');
     if (c.stopped) {
       c.stopped = false;
@@ -891,6 +1046,106 @@ function onAiEvent(procId, ev) {
     } else if (wasBusy || ev.code) {
       c.list.append(h('div', { class: 'ai-msg err', text: `${aiName()} 가 종료되었습니다 (코드 ${ev.code}). ${ev.stderr ? ev.stderr.split('\n').slice(-3).join(' ') : ''}` }));
     }
+  }
+}
+
+// ---------- Codex 이벤트 (main/codex.js 가 공통 모양으로 바꿔 보냄) ----------
+
+function onCfEvent(c, ev) {
+  switch (ev.kind) {
+    case 'init':
+      c.sessionId = ev.sessionId;
+      c.conv.native.codex = { ...(c.conv.native.codex || {}), id: ev.sessionId };
+      return;
+    case 'models':
+      codexModels = ev.models;
+      localStorage.setItem('ai.codexModels', JSON.stringify(ev.models));
+      if (provider === 'codex') fillModels();
+      return;
+    case 'mcp':
+      c.mcp = ev.servers;
+      return;
+    case 'turn_start':
+      c.cur = `turn-${ev.turnId}`;
+      msgEntry(c, c.cur, 'codex');
+      return;
+    case 'thinking':
+      if (c.busy) setActivity(c, 'thinking', { tokens: (c.activity?.tokens || 0) + Math.round((ev.delta || 0) / 3) });
+      return;
+    case 'text_start':
+    case 'text_delta':
+    case 'text_done': {
+      const m = msgEntry(c, c.cur || `turn-${Date.now()}`, 'codex');
+      let b = m.blocks.find((x) => x.id === ev.itemId);
+      if (!b) m.blocks.push((b = { type: 'text', id: ev.itemId, text: '' }));
+      if (ev.kind === 'text_delta') b.text += ev.delta;
+      if (ev.kind === 'text_done') {
+        b.text = ev.text;
+        c.turn?.texts.set(ev.itemId, ev.text);
+      }
+      renderBlocks(c, m);
+      if (c.busy && ev.kind !== 'text_done') setActivity(c, 'writing', { tokens: (c.activity?.tokens || 0) + Math.max(1, Math.round((ev.delta || '').length / 2)) });
+      scrollDown(c);
+      return;
+    }
+    case 'tool_start': {
+      const m = msgEntry(c, c.cur || `turn-${Date.now()}`, 'codex');
+      if (!m.blocks.some((x) => x.id === ev.itemId)) m.blocks.push({ type: 'tool_use', id: ev.itemId, name: ev.name, input: ev.input });
+      c.toolNames.set(ev.itemId, ev.name);
+      (c.toolInputs ||= new Map()).set(ev.itemId, ev.input);
+      renderBlocks(c, m);
+      if (c.busy) setActivity(c, 'tool', { text: `실행 중: ${describeTool(ev.name, ev.input)}` });
+      scrollDown(c);
+      return;
+    }
+    case 'tool_done': {
+      if (!c.tools.has(ev.itemId)) onCfEvent(c, { ...ev, kind: 'tool_start' });
+      const chip = c.tools.get(ev.itemId);
+      chip?.classList.remove('running');
+      chip?.classList.add(ev.ok ? 'done' : 'failed');
+      if (chip && ev.output) chip.title = ev.output.slice(0, 2000);
+      if (ev.ok) addFileCard(c, ev.itemId);
+      if (c.turn && !c.turn.tools.some((t) => t.id === ev.itemId)) c.turn.tools.push({ ...toolRec(ev.itemId, ev.name, ev.input), ok: ev.ok });
+      if (ev.ok && /^(Edit|Write|Bash)$/.test(ev.name)) {
+        clearTimeout(c.refreshTimer);
+        c.refreshTimer = setTimeout(() => refresh(), 300);
+      }
+      if (c.busy) setActivity(c, 'requesting');
+      return;
+    }
+    case 'usage':
+      if (ev.used) c.ctx = { used: ev.used, window: ev.window || c.ctx?.window || 200000 };
+      return drawMeters(c);
+    case 'rate': {
+      const lab = (w) => (!w.mins ? '사용량' : w.mins <= 300 ? `${Math.round(w.mins / 60)}시간` : w.mins <= 10080 ? '주간' : w.mins <= 44640 ? '월간' : '사용량');
+      rateInfo.codex = [ev.windows.primary, ev.windows.secondary].filter(Boolean).map((w) => ({ label: lab(w), ...w }));
+      return drawMeters(c);
+    }
+    case 'compacted':
+      c.list.append(h('div', { class: 'ai-foot', text: '지난 대화를 요약해서 컨텍스트를 정리했습니다.' }));
+      return;
+    case 'error':
+      if (ev.auth) {
+        toast('Codex 로그인이 필요합니다.', 'warn', 6000);
+        phase = 'login';
+        info = { ...(info || {}), loggedIn: false };
+        if (c.procId) window.api.ai.stop(c.procId);
+        return render();
+      }
+      c.list.append(h('div', { class: 'ai-msg err', text: ev.message }));
+      return scrollDown(c);
+    case 'result':
+      c.busy = false;
+      updateSendButton(c);
+      clearActivity(c);
+      for (const chip of c.tools.values()) chip.classList.remove('running');
+      if (ev.error && !c.list.lastElementChild?.classList.contains('err')) c.list.append(h('div', { class: 'ai-msg err', text: ev.error }));
+      if (ev.interrupted) c.list.append(h('div', { class: 'ai-foot', text: '중지했습니다.' }));
+      else if (ev.durationMs) c.list.append(h('div', { class: 'ai-foot', text: `완료 · ${(ev.durationMs / 1000).toFixed(0)}초` }));
+      finishTurn(c);
+      drawMeters(c);
+      return scrollDown(c);
+    default:
   }
 }
 

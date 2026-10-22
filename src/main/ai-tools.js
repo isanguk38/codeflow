@@ -70,6 +70,8 @@ let askRenderer = async () => {
 function setRendererBridge(fn) {
   askRenderer = fn;
 }
+// 사용자에게 허용/거부 묻기 (Codex 의 승인 요청도 같은 카드로) → { allow, message }
+const approve = (repo, args) => askRenderer(repo, 'approve', args, 0);
 
 let server = null;
 let port = 0;
@@ -189,4 +191,4 @@ function stopServer() {
   server = null;
 }
 
-module.exports = { mcpConfig, registerSession, unregisterSession, setRendererBridge, stopServer, TOOLS };
+module.exports = { approve, mcpConfig, registerSession, unregisterSession, setRendererBridge, stopServer, TOOLS };

@@ -211,6 +211,11 @@ ipcMain.handle('ai:start', aiSafe((e, opts) => ai.startChat(opts, (ch, ...a) => 
 ipcMain.handle('ai:send', aiSafe((_e, id, content) => ai.sendChat(id, content)));
 ipcMain.handle('ai:stop', (_e, id) => ai.stopChat(id));
 ipcMain.handle('ai:readAttachment', aiSafe((_e, file) => ai.readAttachment(file)));
+const aiStore = require('./ai-store');
+ipcMain.handle('ai:convList', aiSafe((_e, repo) => aiStore.list(repo)));
+ipcMain.handle('ai:convLoad', aiSafe((_e, repo, id) => aiStore.load(repo, id)));
+ipcMain.handle('ai:convSave', aiSafe((_e, repo, conv) => aiStore.save(repo, conv)));
+ipcMain.handle('ai:convRemove', aiSafe((_e, repo, id) => aiStore.remove(repo, id)));
 ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
 ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
 app.on('before-quit', () => ai.stopAll());

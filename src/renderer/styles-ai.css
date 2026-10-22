@@ -681,3 +681,24 @@
   font-size: 12px;
   word-break: break-all;
 }
+
+/* 어느 AI 가 답했는지 · AI 전환 표시 */
+.ai-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+}
+.ai-who.claude {
+  color: #d97757;
+}
+.ai-who.codex {
+  color: #10a37f;
+}
+.ai-switch {
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--text2);
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 2px 10px;
+}
