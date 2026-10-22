@@ -514,9 +514,12 @@
 }
 .ai-meters {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 3px 12px;
   min-width: 0;
-  overflow: hidden;
+}
+.ai-meters:empty {
+  display: none;
 }
 .ai-meter {
   display: inline-flex;

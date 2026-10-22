@@ -344,7 +344,9 @@ function chatView() {
       { class: 'ai-compose' },
       strip,
       input,
-      h('div', { class: 'ai-row' }, clip, msel, h('span', { class: 'ai-meters', id: 'aiMeters' }), h('span', { class: 'tb-spacer' }), send)
+      h('div', { class: 'ai-row' }, clip, msel, h('span', { class: 'tb-spacer' }), send),
+      // 컨텍스트 · 세션 · 주간 사용량은 따로 한 줄 (패널이 좁으면 다음 줄로 넘어감)
+      h('div', { class: 'ai-meters', id: 'aiMeters' })
     )
   );
   drawMeters(c);
