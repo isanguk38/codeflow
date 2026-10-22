@@ -545,3 +545,57 @@
 .ai-meter.warn .ai-bar i {
   background: var(--warn);
 }
+
+/* 첨부 */
+.ai-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-attach[hidden] {
+  display: none;
+}
+.ai-attach.in-msg {
+  margin-bottom: 6px;
+}
+.ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 11.5px;
+  color: var(--text2);
+}
+.ai-chip img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.ai-msg.user .ai-chip img {
+  width: 60px;
+  height: 60px;
+}
+.ai-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-chip-x {
+  background: none;
+  border: 0;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.ai-chip-x:hover {
+  color: var(--danger);
+}
+.ai-chat.drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}

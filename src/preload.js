@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, clipboard } = require('electron');
+const { contextBridge, ipcRenderer, clipboard, webUtils } = require('electron');
 
 // 렌더러에서는 window.api.git.<함수>(repo, ...인자) 형태로 사용한다.
 const git = {};
@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld('api', {
     send: (id, content) => ipcRenderer.invoke('ai:send', id, content),
     stop: (id) => ipcRenderer.invoke('ai:stop', id),
     sessions: (repo) => ipcRenderer.invoke('ai:sessions', repo),
+    readAttachment: (file) => ipcRenderer.invoke('ai:readAttachment', file),
+    // 끌어다 놓은 파일의 실제 경로
+    filePath: (file) => {
+      try {
+        return webUtils.getPathForFile(file) || null;
+      } catch {
+        return null;
+      }
+    },
     transcript: (repo, id) => ipcRenderer.invoke('ai:transcript', repo, id),
     onLog: (cb) => ipcRenderer.on('ai:log', (_e, line) => cb(line)),
     onEvent: (cb) => ipcRenderer.on('ai:event', (_e, id, ev) => cb(id, ev)),

@@ -217,6 +217,25 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
   return { id };
 }
 
+// ---------- 첨부 파일 ----------
+// 이미지(png/jpg/gif/webp/bmp)·PDF 는 내용을 그대로 AI 에게 보내고, 그 밖의 파일은 경로를 알려 주어 AI 가 직접 읽게 한다
+const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
+function readAttachment(file) {
+  const st = fs.statSync(file);
+  if (!st.isFile()) throw new Error('파일이 아닙니다.');
+  const ext = path.extname(file).toLowerCase();
+  const name = path.basename(file);
+  if (IMAGE_EXT[ext]) {
+    if (st.size > 30 * 1024 * 1024) throw new Error(`'${name}' 이미지가 너무 큽니다 (30MB 초과).`);
+    return { kind: 'image', name, path: file, size: st.size, mime: IMAGE_EXT[ext], data: fs.readFileSync(file).toString('base64') };
+  }
+  if (ext === '.pdf') {
+    if (st.size > 30 * 1024 * 1024) throw new Error(`'${name}' PDF 가 너무 큽니다 (30MB 초과). 경로로 첨부합니다.`);
+    return { kind: 'pdf', name, path: file, size: st.size, mime: 'application/pdf', data: fs.readFileSync(file).toString('base64') };
+  }
+  return { kind: 'file', name, path: file, size: st.size };
+}
+
 // ---------- 지난 대화 (Claude Code 가 ~/.claude/projects/<폴더>/<세션>.jsonl 에 저장) ----------
 
 const projectLogDir = (repo) => path.join(os.homedir(), '.claude', 'projects', repo.replace(/[^A-Za-z0-9]/g, '-'));
@@ -226,7 +245,8 @@ function userText(j) {
   const c = j.message?.content;
   const t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b.type === 'text').map((b) => b.text).join('\n') : '';
   if (!t || /^<(command|local-command|system-reminder)/.test(t.trim())) return null;
-  return t;
+  const att = Array.isArray(c) ? c.filter((b) => b.type === 'image' || b.type === 'document').length : 0;
+  return att ? `📎 첨부 ${att}개\n${t}` : t;
 }
 
 async function sessions(repo) {
@@ -309,4 +329,4 @@ function stopAll() {
   tools.stopServer();
 }
 
-module.exports = { sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
+module.exports = { readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };

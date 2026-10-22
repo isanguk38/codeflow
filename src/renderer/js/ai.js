@@ -280,7 +280,7 @@ function showLoginUrl(url) {
 
 function chatFor(repo) {
   const k = repoKey(repo);
-  if (!chats.has(k)) chats.set(k, { repo, procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
+  if (!chats.has(k)) chats.set(k, { repo, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
   return chats.get(k);
 }
 
@@ -288,6 +288,7 @@ function chatView() {
   const c = chatFor(state.repo);
   const wrap = h('div', { class: 'ai-chat' });
   if (!c.list.childElementCount) c.list.append(welcomeNote());
+  const strip = h('div', { class: 'ai-attach', id: 'aiAttach' });
   const input = h('textarea', { class: 'ai-input', id: 'aiInput', rows: 3, placeholder: '무엇을 도와드릴까요? (Enter 보내기, Shift+Enter 줄바꿈)\n예) 이 프로젝트 실행시켜줘 / CodeFlow 에서 브랜치 합치려면?' });
   const send = h('button', { class: 'btn primary small', id: 'aiSend', text: c.busy ? '■ 중지' : '보내기' });
   send.onclick = () => (c.busy ? stopChat(c) : submit(c, input));
@@ -295,6 +296,35 @@ function chatView() {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (!c.busy) submit(c, input);
+    }
+  };
+  // 이미지 붙여넣기 (캡처 도구로 복사한 이미지 등)
+  input.onpaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    for (const f of files) addFileObject(c, f);
+  };
+  const clip = h('button', { class: 'tb-btn small', text: '📎', title: '파일·이미지 첨부 (붙여넣기 Ctrl+V, 끌어다 놓기도 가능)' });
+  clip.onclick = async () => {
+    const files = await window.api.pickFiles('AI 에게 보낼 파일 선택', [{ name: '모든 파일', extensions: ['*'] }], state.repo);
+    for (const f of files) await addPath(c, f);
+  };
+  // 패널 어디에든 끌어다 놓기
+  wrap.ondragover = (e) => {
+    e.preventDefault();
+    wrap.classList.add('drop');
+  };
+  wrap.ondragleave = (e) => {
+    if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('drop');
+  };
+  wrap.ondrop = async (e) => {
+    e.preventDefault();
+    wrap.classList.remove('drop');
+    for (const f of [...(e.dataTransfer?.files || [])]) {
+      const p = window.api.ai.filePath(f);
+      if (p) await addPath(c, p);
+      else await addFileObject(c, f);
     }
   };
   // 모델 선택 (바꾸면 다음 질문부터 같은 대화를 그 모델로 이어 감)
@@ -312,11 +342,13 @@ function chatView() {
     h(
       'div',
       { class: 'ai-compose' },
+      strip,
       input,
-      h('div', { class: 'ai-row' }, msel, h('span', { class: 'ai-meters', id: 'aiMeters' }), h('span', { class: 'tb-spacer' }), send)
+      h('div', { class: 'ai-row' }, clip, msel, h('span', { class: 'ai-meters', id: 'aiMeters' }), h('span', { class: 'tb-spacer' }), send)
     )
   );
   drawMeters(c);
+  drawAttach(c);
   requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
   return wrap;
 }
@@ -477,10 +509,23 @@ function scrollDown(c) {
 }
 
 async function submit(c, input) {
-  const text = input.value.trim();
-  if (!text) return;
+  let text = input.value.trim();
+  const att = c.attach.splice(0);
+  if (!text && !att.length) return;
+  if (!text) text = '첨부한 파일을 확인해 주세요.';
   input.value = '';
-  c.list.append(h('div', { class: 'ai-msg user', text }));
+  drawAttach(c);
+  const bubble = h('div', { class: 'ai-msg user' });
+  if (att.length) bubble.append(h('div', { class: 'ai-attach in-msg' }, ...att.map((a) => attachChip(a))));
+  bubble.append(h('div', { text }));
+  c.list.append(bubble);
+  // 이미지·PDF 는 내용 그대로, 그 밖의 파일은 경로를 알려 주고 AI 가 직접 읽게
+  const others = att.filter((a) => a.kind === 'file');
+  const content = [
+    ...att.filter((a) => a.kind === 'image').map((a) => ({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.data } })),
+    ...att.filter((a) => a.kind === 'pdf').map((a) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data }, title: a.name })),
+    { type: 'text', text: others.length ? `${text}\n\n[첨부 파일 — Read 도구로 읽어 주세요]\n${others.map((a) => a.path).join('\n')}` : text },
+  ];
   c.list.scrollTop = c.list.scrollHeight;
   c.busy = true;
   updateSendButton(c);
@@ -501,7 +546,7 @@ async function submit(c, input) {
       c.procId = r.data.id;
       byChatId.set(c.procId, c);
     }
-    const r = await window.api.ai.send(c.procId, text);
+    const r = await window.api.ai.send(c.procId, att.length ? content : text);
     if (!r.ok) throw new Error(r.error);
   } catch (e) {
     c.busy = false;
@@ -509,6 +554,93 @@ async function submit(c, input) {
     clearActivity(c);
     c.list.append(h('div', { class: 'ai-msg err', text: `보내지 못했습니다: ${e.message}` }));
   }
+}
+
+// ---------- 첨부 ----------
+
+const MAX_SIDE = 1568; // 이보다 큰 이미지는 줄여서 보낸다 (AI 가 어차피 줄여서 보고, 전송·토큰도 아낌)
+const OK_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('이미지를 읽지 못했습니다.'));
+    img.src = src;
+  });
+}
+
+// 크기를 줄이거나 지원하지 않는 형식(bmp 등)을 png/jpeg 로 바꾼다
+async function normalizeImage(mime, data) {
+  const img = await loadImage(`data:${mime};base64,${data}`);
+  const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+  if (scale === 1 && OK_MIME.includes(mime) && data.length < 4.5e6) return { mime, data, w: img.width, h: img.height };
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(img.width * scale);
+  cv.height = Math.round(img.height * scale);
+  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+  let url = cv.toDataURL('image/png');
+  if (url.length > 4.5e6) url = cv.toDataURL('image/jpeg', 0.85);
+  return { mime: url.slice(5, url.indexOf(';')), data: url.slice(url.indexOf(',') + 1), w: cv.width, h: cv.height };
+}
+
+async function addPath(c, file) {
+  const r = await window.api.ai.readAttachment(file);
+  if (!r.ok) return toast(r.error, 'error', 5000);
+  const a = r.data;
+  if (a.kind === 'image') Object.assign(a, await normalizeImage(a.mime, a.data).catch(() => ({})));
+  pushAttach(c, a);
+}
+
+// 붙여넣기한 이미지(파일 경로가 없는 것)
+function addFileObject(c, f) {
+  if (!f.type.startsWith('image/')) return toast('붙여넣은 내용을 첨부할 수 없습니다. 📎 로 파일을 고르세요.', 'warn');
+  const rd = new FileReader();
+  rd.onload = async () => {
+    const url = String(rd.result);
+    const n = await normalizeImage(url.slice(5, url.indexOf(';')), url.slice(url.indexOf(',') + 1)).catch(() => null);
+    if (!n) return toast('이미지를 읽지 못했습니다.', 'error');
+    pushAttach(c, { kind: 'image', name: f.name && f.name !== 'image.png' ? f.name : `붙여넣은 이미지 ${c.attach.length + 1}.png`, ...n, size: Math.round((n.data.length * 3) / 4) });
+  };
+  rd.readAsDataURL(f);
+}
+
+function pushAttach(c, a) {
+  if (c.attach.length >= 10) return toast('한 번에 10개까지 첨부할 수 있습니다.', 'warn');
+  if (c.attach.some((x) => x.path && x.path === a.path)) return;
+  c.attach.push(a);
+  drawAttach(c);
+  $('#aiInput')?.focus();
+}
+
+const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
+
+function attachChip(a, onRemove) {
+  const chip = h('div', { class: `ai-chip ${a.kind}`, title: `${a.path || a.name} · ${fmtSize(a.size || 0)}${a.kind === 'file' ? '\nAI 가 경로로 직접 읽습니다' : ''}` });
+  if (a.kind === 'image') chip.append(h('img', { src: `data:${a.mime};base64,${a.data}` }));
+  else chip.append(h('span', { class: 'ai-chip-ico', text: a.kind === 'pdf' ? '📕' : '📄' }));
+  chip.append(h('span', { class: 'ai-chip-name', text: a.name }));
+  if (onRemove) {
+    const x = h('button', { class: 'ai-chip-x', text: '✕', title: '빼기' });
+    x.onclick = onRemove;
+    chip.append(x);
+  }
+  return chip;
+}
+
+function drawAttach(c) {
+  const el = $('#aiAttach');
+  if (!el || repoKey(c.repo) !== repoKey(state.repo)) return;
+  el.innerHTML = '';
+  el.hidden = !c.attach.length;
+  c.attach.forEach((a, i) =>
+    el.append(
+      attachChip(a, () => {
+        c.attach.splice(i, 1);
+        drawAttach(c);
+      })
+    )
+  );
 }
 
 function stopChat(c) {
