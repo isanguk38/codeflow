@@ -216,6 +216,7 @@ ipcMain.handle('ai:convList', aiSafe((_e, repo) => aiStore.list(repo)));
 ipcMain.handle('ai:convLoad', aiSafe((_e, repo, id) => aiStore.load(repo, id)));
 ipcMain.handle('ai:convSave', aiSafe((_e, repo, conv) => aiStore.save(repo, conv)));
 ipcMain.handle('ai:convRemove', aiSafe((_e, repo, id) => aiStore.remove(repo, id)));
+ipcMain.handle('ai:mcpList', aiSafe((_e, id) => ai.mcpList(id)));
 ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
 ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
 app.on('before-quit', () => ai.stopAll());

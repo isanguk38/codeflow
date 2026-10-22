@@ -399,4 +399,18 @@ function friendlyError(msg = '') {
   return msg;
 }
 
-module.exports = { status, install, login, loginInput, cancelLogin, logout, CodexChat, findExe };
+// 설정된 MCP 서버 (~/.codex/config.toml). 실제 연결 여부는 대화를 시작해야 알 수 있다
+async function mcpList() {
+  const found = findExe();
+  if (!found) return [];
+  const r = await run(found, ['mcp', 'list', '--json']);
+  let list = [];
+  try {
+    list = JSON.parse(r.out.slice(r.out.indexOf('[')));
+  } catch {
+    return [];
+  }
+  return list.map((m) => ({ name: m.name, status: !m.enabled ? 'disabled' : /not.?logged/i.test(m.auth_status || '') ? 'needs-auth' : 'configured', source: 'codex' }));
+}
+
+module.exports = { mcpList, status, install, login, loginInput, cancelLogin, logout, CodexChat, findExe };

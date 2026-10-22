@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
     send: (id, content) => ipcRenderer.invoke('ai:send', id, content),
     stop: (id) => ipcRenderer.invoke('ai:stop', id),
     sessions: (repo) => ipcRenderer.invoke('ai:sessions', repo),
+    mcpList: (id) => ipcRenderer.invoke('ai:mcpList', id),
     convList: (repo) => ipcRenderer.invoke('ai:convList', repo),
     convLoad: (repo, id) => ipcRenderer.invoke('ai:convLoad', repo, id),
     convSave: (repo, conv) => ipcRenderer.invoke('ai:convSave', repo, conv),

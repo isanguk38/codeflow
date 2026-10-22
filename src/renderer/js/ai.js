@@ -38,7 +38,16 @@ const setModel = (p, m) => localStorage.setItem(`ai.model.${p}`, m);
 const nameOf = (p) => AIS.find((a) => a.id === p)?.name || p;
 // 플랜 사용량 (AI 마다): [{ label, utilization, resetsAt }]
 const rateInfo = {};
-let lastMcp = null; // 연결된 MCP 서버·커넥터 [{ name, status, source }]
+// MCP 서버·커넥터 상태 (AI 별): 대화 중 실제 연결 상태가 오면 그걸, 아니면 CLI 로 조회한 목록
+const mcpBy = {}; // provider → { list, at, live }
+const mcpLoading = {};
+async function loadMcp(p, force = false) {
+  if (mcpLoading[p] || (!force && mcpBy[p] && Date.now() - mcpBy[p].at < 120000)) return;
+  mcpLoading[p] = true;
+  const r = await window.api.ai.mcpList(p);
+  mcpLoading[p] = false;
+  if (r.ok && !mcpBy[p]?.live) mcpBy[p] = { list: r.data, at: Date.now(), live: false };
+}
 
 let panel;
 let visible = localStorage.getItem('ai.visible') === '1';
@@ -170,30 +179,40 @@ function render() {
     // 대화는 그대로 두고, 다음 질문부터 새 AI 가 이어서 답한다
     const c = state.repo ? chats.get(repoKey(state.repo)) : null;
     if (c?.conv.entries.length) toast(`다음 질문부터 ${aiName()} 가 지금 대화를 이어서 답합니다.`, 'info', 4000);
-    refreshStatus();
+    refreshStatus().then(() => phase === 'ready' && loadMcp(provider));
   };
   const newBtn = h('button', { class: 'tb-btn small', text: '＋', title: '새 대화 (지금 대화는 기록에 남음)' });
   newBtn.onclick = () => newChat();
   const histBtn = h('button', { class: 'tb-btn small', text: '🕘', title: '지난 대화 (이 프로젝트)' });
   histBtn.onclick = () => openHistory(histBtn);
   const more = h('button', { class: 'tb-btn small', text: '⋯', title: '더 보기' });
-  more.onclick = () => {
-    const mcp = (chatFor(state.repo || '').mcp || lastMcp || []).filter((m) => m.name !== 'codeflow');
-    const ico = { connected: '●', 'needs-auth': '○', failed: '✕', pending: '…' };
-    const word = { connected: '연결됨', 'needs-auth': '인증 필요', failed: '실패', pending: '연결 중' };
+  more.onclick = async () => {
+    const p = provider;
+    // 지금 고른 AI 의 목록이 없으면 먼저 조회 (Claude 는 연결 확인 때문에 몇 초 걸림)
+    if (!mcpBy[p]) {
+      menuAt(more, [{ header: `${aiName()} 의 MCP · 커넥터 확인 중…` }]);
+      await loadMcp(p);
+      if (provider !== p) return;
+    }
+    const cur = mcpBy[p] || { list: [] };
+    const mcp = cur.list.filter((m) => m.name !== 'codeflow');
+    const ico = { connected: '●', 'needs-auth': '○', failed: '✕', pending: '…', configured: '◇', disabled: '–' };
+    const word = { connected: '연결됨', 'needs-auth': '인증 필요', failed: '실패', pending: '연결 중', configured: '설정됨', disabled: '꺼짐' };
+    const src = (m) => (m.source === 'claudeai' ? ' (claude.ai 커넥터)' : m.source === 'codex' ? ' (~/.codex 설정)' : '');
     menuAt(more, [
       { header: info?.installed ? `${aiName()} ${info.version || ''}${info.loggedIn ? ' · 로그인됨' : ''}` : aiName() },
       { label: '상태 다시 확인', onClick: refreshStatus },
       info?.loggedIn ? { label: '로그아웃', onClick: doLogout } : null,
       '-',
-      { header: mcp.length ? '연결된 MCP · 커넥터' : 'MCP · 커넥터 (대화를 시작하면 표시)' },
+      { header: `${aiName()} 의 MCP · 커넥터${cur.live ? ' (이번 대화 연결 상태)' : p === 'codex' ? ' (설정 목록 · 대화를 시작하면 연결 상태 표시)' : ''}` },
       { label: '● codeflow — CodeFlow 도구 (항상 연결)', disabled: true },
       ...mcp.map((m) => ({
-        label: `${ico[m.status] || '·'} ${m.name.replace(/^claude\.ai /, '')} — ${word[m.status] || m.status}${m.source === 'claudeai' ? ' (claude.ai 커넥터)' : ''}`,
-        disabled: m.status !== 'needs-auth',
+        label: `${ico[m.status] || '·'} ${m.name.replace(/^claude\.ai /, '')} — ${word[m.status] || m.status}${src(m)}`,
+        disabled: !(m.status === 'needs-auth' && m.source === 'claudeai'),
         onClick: () => window.api.openExternal('https://claude.ai/settings/connectors'),
       })),
-      mcp.some((m) => m.status === 'needs-auth') ? { header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' } : null,
+      mcp.some((m) => m.status === 'needs-auth' && m.source === 'claudeai') ? { header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' } : null,
+      { label: '↻ 다시 확인', onClick: async () => (delete mcpBy[p], await loadMcp(p, true), toast('MCP 상태를 다시 확인했습니다. ⋯ 를 다시 눌러 보세요.', 'info')) },
     ].filter(Boolean));
   };
   const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 패널 닫기 (Ctrl+Shift+A)' });
@@ -916,7 +935,8 @@ function onAiEvent(procId, ev) {
   if (ev.type === 'system' && ev.subtype === 'init') {
     c.sessionId = ev.session_id;
     c.conv.native.claude = { ...(c.conv.native.claude || {}), id: ev.session_id };
-    c.mcp = lastMcp = ev.mcp_servers || [];
+    c.mcp = ev.mcp_servers || [];
+    mcpBy.claude = { list: c.mcp, at: Date.now(), live: true };
     return;
   }
   if (ev.type === 'system' && ev.subtype === 'status' && ev.status === 'requesting' && c.busy) return setActivity(c, c.activity?.kind === 'compacting' ? 'compacting' : 'requesting');
@@ -1064,6 +1084,7 @@ function onCfEvent(c, ev) {
       return;
     case 'mcp':
       c.mcp = ev.servers;
+      mcpBy.codex = { list: ev.servers, at: Date.now(), live: true };
       return;
     case 'turn_start':
       c.cur = `turn-${ev.turnId}`;

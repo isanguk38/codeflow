@@ -355,4 +355,21 @@ function stopAll() {
   tools.stopServer();
 }
 
-module.exports = { readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
+// AI 별 MCP 서버 · 커넥터 목록 (대화를 시작하지 않아도)
+// Claude: 'claude mcp list' 로 연결 상태까지 확인 (몇 초 걸림), Codex: 설정 목록
+async function mcpList(id) {
+  if (id === 'codex') return codex.mcpList();
+  const exe = findExe(id);
+  if (!exe) return [];
+  const r = await run(exe, ['mcp', 'list'], 90000);
+  const out = [];
+  for (const line of stripAnsi(r.stdout + r.stderr).split(/\r?\n/)) {
+    const m = line.match(/^(.+?): .* - (.+)$/);
+    if (!m) continue;
+    const st = /connected/i.test(m[2]) ? 'connected' : /auth/i.test(m[2]) ? 'needs-auth' : /fail|error/i.test(m[2]) ? 'failed' : 'pending';
+    out.push({ name: m[1].trim(), status: st, source: m[1].startsWith('claude.ai ') ? 'claudeai' : 'user' });
+  }
+  return out;
+}
+
+module.exports = { mcpList, readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
