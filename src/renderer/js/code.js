@@ -534,6 +534,17 @@ function revealInTree(p) {
 
 async function saveDoc(d) {
   if (d.virtual) return true;
+  // 열어 둔 뒤 디스크의 파일이 다른 곳(AI, 다른 프로그램)에서 바뀌었으면 예전 내용으로 덮어쓰지 않는다
+  const st = await window.api.fs.stat(d.path);
+  if (st.ok && st.data.exists && d.mtime && Math.abs(st.data.mtime - d.mtime) >= 1) {
+    if (!isDirty(d)) {
+      await checkDiskChanges(); // 고친 게 없으면 새 내용을 다시 읽기만
+      toast(`'${baseName(d.path)}' 이(가) 다른 곳에서 바뀌어 새 내용을 불러왔습니다.`, 'info', 4000);
+      return true;
+    }
+    if (!(await confirmDialog(`'${baseName(d.path)}' 이(가) 열어 둔 뒤 다른 곳(AI 등)에서 바뀌었습니다.\n내가 고친 내용으로 덮어쓸까요?`, { title: '파일이 바뀌었습니다', okLabel: '덮어쓰기', danger: true })))
+      return false;
+  }
   const text = d.model.getValue();
   const version = d.model.getAlternativeVersionId();
   const r = await window.api.fs.write(d.path, text, { bom: d.bom });

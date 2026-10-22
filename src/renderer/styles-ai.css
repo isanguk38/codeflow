@@ -466,3 +466,82 @@
   overflow: auto;
   user-select: text;
 }
+
+/* 진행 상태 · 모델 · 사용량 */
+.ai-activity {
+  color: var(--text2);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 6px;
+}
+.ai-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.ai-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: ai-blink 1.2s infinite ease-in-out;
+}
+.ai-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ai-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes ai-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.ai-model {
+  background: var(--bg);
+  color: var(--text2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11.5px;
+  padding: 2px 3px;
+  max-width: 130px;
+}
+.ai-meters {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.ai-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text3);
+  cursor: default;
+  white-space: nowrap;
+}
+.ai-meter:first-child {
+  cursor: pointer;
+}
+.ai-bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg3);
+  overflow: hidden;
+}
+.ai-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.ai-meter.warn .ai-bar i {
+  background: var(--warn);
+}

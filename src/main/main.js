@@ -210,6 +210,8 @@ ipcMain.handle('ai:logout', aiSafe((_e, id) => ai.logout(id)));
 ipcMain.handle('ai:start', aiSafe((e, opts) => ai.startChat(opts, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a))));
 ipcMain.handle('ai:send', aiSafe((_e, id, content) => ai.sendChat(id, content)));
 ipcMain.handle('ai:stop', (_e, id) => ai.stopChat(id));
+ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
+ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
 app.on('before-quit', () => ai.stopAll());
 
 // 이슈 보드 (GitHub / GitLab)

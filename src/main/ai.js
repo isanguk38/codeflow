@@ -217,6 +217,78 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
   return { id };
 }
 
+// ---------- 지난 대화 (Claude Code 가 ~/.claude/projects/<폴더>/<세션>.jsonl 에 저장) ----------
+
+const projectLogDir = (repo) => path.join(os.homedir(), '.claude', 'projects', repo.replace(/[^A-Za-z0-9]/g, '-'));
+
+function userText(j) {
+  if (j.type !== 'user' || j.isMeta || j.isSidechain) return null;
+  const c = j.message?.content;
+  const t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b.type === 'text').map((b) => b.text).join('\n') : '';
+  if (!t || /^<(command|local-command|system-reminder)/.test(t.trim())) return null;
+  return t;
+}
+
+async function sessions(repo) {
+  const dir = projectLogDir(repo);
+  let files = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl')).map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }));
+  } catch {
+    return [];
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  const out = [];
+  for (const { f, mtime } of files.slice(0, 40)) {
+    let title = null;
+    let count = 0;
+    try {
+      const lines = fs.readFileSync(path.join(dir, f), 'utf8').split('\n');
+      for (const l of lines) {
+        if (!l.trim()) continue;
+        let j;
+        try {
+          j = JSON.parse(l);
+        } catch {
+          continue;
+        }
+        const t = userText(j);
+        if (t) {
+          count++;
+          if (!title) title = t.replace(/\s+/g, ' ').slice(0, 80);
+        }
+      }
+    } catch {}
+    if (title) out.push({ id: f.replace(/\.jsonl$/, ''), title, updated: mtime, count });
+  }
+  return out;
+}
+
+// 지난 대화 내용을 화면에 다시 그릴 수 있는 모양으로 (최근 300개)
+function transcript(repo, id) {
+  const file = path.join(projectLogDir(repo), `${id.replace(/[^\w-]/g, '')}.jsonl`);
+  const items = [];
+  for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!l.trim()) continue;
+    let j;
+    try {
+      j = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (j.isSidechain) continue;
+    const t = userText(j);
+    if (t) items.push({ role: 'user', text: t });
+    else if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
+      const blocks = j.message.content.filter((b) => b.type === 'text' || b.type === 'tool_use').map((b) => (b.type === 'text' ? { type: 'text', text: b.text } : { type: 'tool_use', id: b.id, name: b.name, input: b.input }));
+      if (blocks.length) items.push({ role: 'assistant', id: j.message.id, blocks });
+    } else if (j.type === 'user' && Array.isArray(j.message?.content)) {
+      for (const b of j.message.content) if (b.type === 'tool_result') items.push({ role: 'tool_result', id: b.tool_use_id, error: !!b.is_error });
+    }
+  }
+  return items.slice(-300);
+}
+
 function sendChat(id, textOrContent) {
   const c = chats.get(id);
   if (!c) throw new Error('대화가 끝났습니다. 다시 보내 주세요.');
@@ -237,4 +309,4 @@ function stopAll() {
   tools.stopServer();
 }
 
-module.exports = { PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
+module.exports = { sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };

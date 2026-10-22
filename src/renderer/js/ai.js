@@ -3,7 +3,7 @@
 // - 대화는 프로젝트 탭마다 따로 (AI 는 그 프로젝트 폴더에서 실행)
 // - 파일 수정·명령 실행 등은 대화 안에 '허용 / 거부' 카드로 묻는다
 import { $, h, esc, toast, menuAt, splitter, modal } from './ui.js';
-import { state } from './state.js';
+import { state, refresh } from './state.js';
 import { activateCode, openFile } from './code.js';
 import { runInTerminal, readTerminal, listTerminals } from './terminal.js';
 import { tabs, switchTab } from './repo.js';
@@ -15,6 +15,18 @@ const AIS = [
   { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', ready: true, login: 'Claude 계정(Pro/Max 구독) 또는 Anthropic Console 계정' },
   { id: 'codex', name: 'Codex', vendor: 'OpenAI', ready: false, login: 'ChatGPT 계정' },
 ];
+
+// 모델 (빈 값 = Claude Code 기본값)
+const MODELS = [
+  ['', '기본값'],
+  ['claude-opus-5-5', 'Opus 5.5'],
+  ['claude-sonnet-5-5', 'Sonnet 5.5'],
+  ['claude-haiku-5-5', 'Haiku 5.5'],
+  ['claude-fable-5-1', 'Fable 5.1 (사용 크레딧 필요)'],
+];
+let model = localStorage.getItem('ai.model') || '';
+let rateInfo = null; // 플랜 사용량 { five_hour: {utilization, resetsAt}, seven_day: ... }
+let lastMcp = null; // 연결된 MCP 서버·커넥터 [{ name, status, source }]
 
 let panel;
 let visible = localStorage.getItem('ai.visible') === '1';
@@ -145,18 +157,33 @@ function render() {
     localStorage.setItem('ai.provider', provider);
     refreshStatus();
   };
-  const newBtn = h('button', { class: 'tb-btn small', text: '＋ 새 대화', title: '이 프로젝트의 대화를 새로 시작' });
+  const newBtn = h('button', { class: 'tb-btn small', text: '＋', title: '새 대화 (지금 대화는 기록에 남음)' });
   newBtn.onclick = () => newChat();
+  const histBtn = h('button', { class: 'tb-btn small', text: '🕘', title: '지난 대화 (이 프로젝트)' });
+  histBtn.onclick = () => openHistory(histBtn);
   const more = h('button', { class: 'tb-btn small', text: '⋯', title: '더 보기' });
-  more.onclick = () =>
+  more.onclick = () => {
+    const mcp = (chatFor(state.repo || '').mcp || lastMcp || []).filter((m) => m.name !== 'codeflow');
+    const ico = { connected: '●', 'needs-auth': '○', failed: '✕', pending: '…' };
+    const word = { connected: '연결됨', 'needs-auth': '인증 필요', failed: '실패', pending: '연결 중' };
     menuAt(more, [
       { header: info?.installed ? `${aiName()} ${info.version || ''}${info.loggedIn ? ' · 로그인됨' : ''}` : aiName() },
       { label: '상태 다시 확인', onClick: refreshStatus },
       info?.loggedIn ? { label: '로그아웃', onClick: doLogout } : null,
+      '-',
+      { header: mcp.length ? '연결된 MCP · 커넥터' : 'MCP · 커넥터 (대화를 시작하면 표시)' },
+      { label: '● codeflow — CodeFlow 도구 (항상 연결)', disabled: true },
+      ...mcp.map((m) => ({
+        label: `${ico[m.status] || '·'} ${m.name.replace(/^claude\.ai /, '')} — ${word[m.status] || m.status}${m.source === 'claudeai' ? ' (claude.ai 커넥터)' : ''}`,
+        disabled: m.status !== 'needs-auth',
+        onClick: () => window.api.openExternal('https://claude.ai/settings/connectors'),
+      })),
+      mcp.some((m) => m.status === 'needs-auth') ? { header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' } : null,
     ].filter(Boolean));
+  };
   const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 패널 닫기 (Ctrl+Shift+A)' });
   close.onclick = () => setVisible(false);
-  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), phase === 'ready' ? newBtn : null, more, close));
+  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), phase === 'ready' ? newBtn : null, phase === 'ready' ? histBtn : null, more, close));
 
   const body = h('div', { class: 'ai-body' });
   panel.append(body);
@@ -253,7 +280,7 @@ function showLoginUrl(url) {
 
 function chatFor(repo) {
   const k = repoKey(repo);
-  if (!chats.has(k)) chats.set(k, { repo, procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), alwaysAllow: new Set() });
+  if (!chats.has(k)) chats.set(k, { repo, procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
   return chats.get(k);
 }
 
@@ -270,7 +297,26 @@ function chatView() {
       if (!c.busy) submit(c, input);
     }
   };
-  wrap.append(c.list, h('div', { class: 'ai-compose' }, input, h('div', { class: 'ai-row' }, h('span', { class: 'ai-dim', text: `${aiName()} · ${state.repo.split(/[\\/]/).pop()}` }), h('span', { class: 'tb-spacer' }), send)));
+  // 모델 선택 (바꾸면 다음 질문부터 같은 대화를 그 모델로 이어 감)
+  const msel = h('select', { class: 'ai-model', title: '모델 (다음 질문부터 적용)' });
+  for (const [id, label] of MODELS) msel.append(h('option', { value: id, text: label }));
+  msel.value = model;
+  msel.onchange = () => {
+    model = msel.value;
+    localStorage.setItem('ai.model', model);
+    for (const ch of chats.values()) ch.restartForModel = true;
+    toast(`다음 질문부터 ${MODELS.find((m) => m[0] === model)[1]} 모델로 답합니다.`, 'info');
+  };
+  wrap.append(
+    c.list,
+    h(
+      'div',
+      { class: 'ai-compose' },
+      input,
+      h('div', { class: 'ai-row' }, msel, h('span', { class: 'ai-meters', id: 'aiMeters' }), h('span', { class: 'tb-spacer' }), send)
+    )
+  );
+  drawMeters(c);
   requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
   return wrap;
 }
@@ -284,11 +330,139 @@ function welcomeNote() {
   });
 }
 
+// 새 대화: 지금 대화를 끝내고 빈 대화로 (지난 대화는 Claude Code 가 저장해 두므로 🕘 에서 다시 열 수 있음)
 function newChat() {
   const c = chatFor(state.repo);
   if (c.procId) window.api.ai.stop(c.procId);
+  clearActivity(c);
   chats.delete(repoKey(state.repo));
   render();
+}
+
+// 지난 대화 목록 → 고르면 내용을 보여 주고, 이어서 질문하면 그 대화로 계속
+async function openHistory(anchor) {
+  const r = await window.api.ai.sessions(state.repo);
+  const list = r.ok ? r.data : [];
+  const cur = chatFor(state.repo).sessionId;
+  const ago = (t) => {
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`;
+  };
+  menuAt(anchor, [
+    { header: `지난 대화 · ${state.repo.split(/[\\/]/).pop()}` },
+    ...(list.length
+      ? list.slice(0, 25).map((s) => ({ label: `${s.id === cur ? '✓ ' : ''}${s.title}`, hint: `${ago(s.updated)} · ${s.count}개`, onClick: () => loadSession(s.id) }))
+      : [{ label: '지난 대화가 없습니다', disabled: true }]),
+  ]);
+}
+
+async function loadSession(id) {
+  const old = chatFor(state.repo);
+  if (old.procId) window.api.ai.stop(old.procId);
+  clearActivity(old);
+  chats.delete(repoKey(state.repo));
+  const c = chatFor(state.repo);
+  c.sessionId = id;
+  const r = await window.api.ai.transcript(state.repo, id);
+  if (!r.ok) return toast(r.error, 'error');
+  for (const it of r.data) {
+    if (it.role === 'user') c.list.append(h('div', { class: 'ai-msg user', text: it.text }));
+    else if (it.role === 'assistant') {
+      const m = msgEntry(c, it.id || `h${Math.random()}`);
+      m.blocks.push(...it.blocks);
+      renderBlocks(c, m);
+    } else if (it.role === 'tool_result') {
+      const chip = c.tools.get(it.id);
+      chip?.classList.remove('running');
+      chip?.classList.add(it.error ? 'failed' : 'done');
+    }
+  }
+  for (const chip of c.tools.values()) chip.classList.remove('running');
+  c.list.append(h('div', { class: 'ai-foot', text: '지난 대화를 불러왔습니다. 이어서 질문하면 이 대화로 계속합니다.' }));
+  render();
+}
+
+// ---------- 진행 상태 (생각 중 / 답변 작성 중 / 도구 실행 중 / 허용 대기) ----------
+
+const fmtTok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+
+function setActivity(c, kind, extra = {}) {
+  if (!c.activity) c.activity = { start: Date.now(), tokens: 0 };
+  Object.assign(c.activity, { kind }, extra);
+  if (!c.activityEl) c.activityEl = h('div', { class: 'ai-activity' });
+  if (c.activityEl.parentNode !== c.list || c.list.lastElementChild !== c.activityEl) c.list.append(c.activityEl);
+  drawActivity(c);
+  if (!c.activityTimer) c.activityTimer = setInterval(() => drawActivity(c), 1000);
+  scrollDown(c);
+}
+
+function drawActivity(c) {
+  const a = c.activity;
+  if (!a || !c.activityEl) return;
+  const secs = Math.floor((Date.now() - a.start) / 1000);
+  const label = {
+    starting: `${aiName()} 시작 중`,
+    requesting: '요청 보내는 중',
+    thinking: '생각 중',
+    writing: '답변 작성 중',
+    tool: a.text || '도구 실행 중',
+    waiting: '허용을 기다리는 중',
+    compacting: '컨텍스트 정리 중',
+  }[a.kind];
+  const tok = a.tokens ? ` · ${fmtTok(a.tokens)} 토큰` : '';
+  c.activityEl.innerHTML = `<span class="ai-dots"><i></i><i></i><i></i></span> ${esc(label)}${tok} · ${secs}초`;
+}
+
+function clearActivity(c) {
+  clearInterval(c.activityTimer);
+  c.activityTimer = null;
+  c.activity = null;
+  c.activityEl?.remove();
+}
+
+// 입력창 아래: 컨텍스트 사용량 + 플랜 사용량
+function drawMeters(c) {
+  const el = $('#aiMeters');
+  if (!el || repoKey(c.repo) !== repoKey(state.repo)) return;
+  el.innerHTML = '';
+  if (c.ctx?.window) {
+    const pct = Math.min(100, Math.round((c.ctx.used / c.ctx.window) * 100));
+    const m = h(
+      'span',
+      { class: `ai-meter ${pct >= 80 ? 'warn' : ''}`, title: `컨텍스트 ${fmtTok(c.ctx.used)} / ${fmtTok(c.ctx.window)} 토큰\n가득 차면 자동으로 정리(요약)됩니다. 눌러서 지금 정리할 수 있습니다.` },
+      h('span', { text: `컨텍스트 ${pct}%` }),
+      h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } }))
+    );
+    m.onclick = () =>
+      menuAt(m, [
+        { header: `컨텍스트 ${fmtTok(c.ctx.used)} / ${fmtTok(c.ctx.window)} 토큰 (${pct}%)` },
+        { label: '지금 정리하기 (/compact) — 지난 내용을 요약해서 공간 확보', disabled: c.busy || !c.procId, onClick: () => compact(c) },
+        { header: '가득 차면 Claude Code 가 자동으로 정리합니다' },
+      ]);
+    el.append(m);
+  }
+  if (rateInfo) {
+    const win = (k, name) => {
+      const w = rateInfo[k];
+      if (!w) return null;
+      const pct = Math.round((w.utilization || 0) * 100);
+      const left = w.resetsAt ? Math.max(0, w.resetsAt * 1000 - Date.now()) : 0;
+      const when = left < 3600e3 ? `${Math.round(left / 60000)}분 후` : left < 86400e3 ? `${Math.floor(left / 3600e3)}시간 ${Math.round((left % 3600e3) / 60000)}분 후` : new Date(w.resetsAt * 1000).toLocaleString('ko-KR', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      return h('span', { class: `ai-meter ${pct >= 80 ? 'warn' : ''}`, title: `${name} 사용량 ${pct}% · ${when} 초기화` }, h('span', { text: `${name} ${pct}%` }), h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } })));
+    };
+    const a = win('five_hour', '세션');
+    const b = win('seven_day', '주간');
+    if (a) el.append(a);
+    if (b) el.append(b);
+  }
+}
+
+function compact(c) {
+  c.busy = true;
+  updateSendButton(c);
+  c.list.append(h('div', { class: 'ai-foot', text: '지난 대화를 요약해서 컨텍스트를 정리합니다…' }));
+  setActivity(c, 'compacting');
+  window.api.ai.send(c.procId, '/compact');
 }
 
 function updateSendButton(c) {
@@ -310,16 +484,19 @@ async function submit(c, input) {
   c.list.scrollTop = c.list.scrollHeight;
   c.busy = true;
   updateSendButton(c);
+  setActivity(c, 'requesting', { start: Date.now(), tokens: 0 });
   try {
     // 대화 시작 뒤 프로젝트 탭이 늘거나 줄었으면, 같은 대화를 이어서 새 폴더 목록으로 다시 시작
-    if (c.procId && c.dirsKey !== dirsKey()) {
+    if (c.procId && (c.dirsKey !== dirsKey() || c.restartForModel)) {
       await window.api.ai.stop(c.procId);
       byChatId.delete(c.procId);
       c.procId = null;
     }
     if (!c.procId) {
+      setActivity(c, 'starting');
       c.dirsKey = dirsKey();
-      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined, addDirs: openDirs() });
+      c.restartForModel = false;
+      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.sessionId || undefined, addDirs: openDirs(), model: model || undefined });
       if (!r.ok) throw new Error(r.error);
       c.procId = r.data.id;
       byChatId.set(c.procId, c);
@@ -329,6 +506,7 @@ async function submit(c, input) {
   } catch (e) {
     c.busy = false;
     updateSendButton(c);
+    clearActivity(c);
     c.list.append(h('div', { class: 'ai-msg err', text: `보내지 못했습니다: ${e.message}` }));
   }
 }
@@ -443,24 +621,45 @@ function onAiEvent(procId, ev) {
   if (!c) return;
   if (ev.type === 'system' && ev.subtype === 'init') {
     c.sessionId = ev.session_id;
+    c.mcp = lastMcp = ev.mcp_servers || [];
     return;
+  }
+  if (ev.type === 'system' && ev.subtype === 'status' && ev.status === 'requesting' && c.busy) return setActivity(c, c.activity?.kind === 'compacting' ? 'compacting' : 'requesting');
+  if (ev.type === 'system' && ev.subtype === 'thinking_tokens' && c.busy) return setActivity(c, 'thinking', { tokens: (c.activity?.base || 0) + (ev.estimated_tokens || 0) });
+  if (ev.type === 'rate_limit_event') {
+    rateInfo = ev.rate_limit_info?.unifiedWindows || rateInfo;
+    return drawMeters(c);
   }
   if (ev.type === 'stream_event') {
     const e = ev.event || {};
     if (e.type === 'message_start') {
       c.cur = e.message?.id;
       msgEntry(c, c.cur).blocks = [];
+      // 컨텍스트 사용량 = 이번 요청에 들어간 토큰 전체
+      const u = e.message?.usage || {};
+      const used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+      if (used) {
+        c.ctx = { used, window: c.ctx?.window || 200000 };
+        drawMeters(c);
+      }
+      if (c.activity) c.activity.base = c.activity.tokens || 0;
     } else if (e.type === 'content_block_start' && c.cur) {
       const m = msgEntry(c, c.cur);
       m.blocks[e.index] = { ...e.content_block, text: e.content_block.text || '' };
       renderBlocks(c, m);
+      if (e.content_block?.type === 'text') setActivity(c, 'writing');
+      else if (e.content_block?.type === 'tool_use') setActivity(c, 'tool', { text: `준비 중: ${describeTool(e.content_block.name, {}).replace(/[:·]\s*$/, '')}` });
     } else if (e.type === 'content_block_delta' && c.cur) {
       const m = msgEntry(c, c.cur);
       const b = m.blocks[e.index];
       if (b && e.delta?.type === 'text_delta') {
         b.text += e.delta.text;
         renderBlocks(c, m);
+        if (c.activity) setActivity(c, 'writing', { tokens: c.activity.tokens + Math.max(1, Math.round(e.delta.text.length / 2)) });
       }
+    } else if (e.type === 'message_delta' && e.usage?.output_tokens && c.activity) {
+      c.activity.tokens = (c.activity.base || 0) + e.usage.output_tokens;
+      drawActivity(c);
     }
     scrollDown(c);
     return;
@@ -486,6 +685,9 @@ function onAiEvent(procId, ev) {
     }
     m.blocks = m.blocks.filter(Boolean);
     renderBlocks(c, m);
+    for (const b of msg.content || []) if (b.type === 'tool_use') c.toolNames.set(b.id, b.name);
+    const tool = [...(msg.content || [])].reverse().find((b) => b.type === 'tool_use');
+    if (tool && c.busy) setActivity(c, 'tool', { text: `실행 중: ${describeTool(tool.name, tool.input)}` });
     scrollDown(c);
     return;
   }
@@ -499,12 +701,23 @@ function onAiEvent(procId, ev) {
       chip.classList.add(b.is_error ? 'failed' : 'done');
       const out = Array.isArray(b.content) ? b.content.map((x) => x.text || '').join('\n') : String(b.content || '');
       if (out.trim()) chip.title = out.slice(0, 2000);
+      // 파일을 바꾸는 도구가 끝나면 CodeFlow 화면(열린 파일, 변경 목록)을 바로 새로 읽는다 (예전 내용으로 덮어쓰지 않게)
+      if (!b.is_error && /^(Edit|MultiEdit|Write|NotebookEdit|Bash|PowerShell)$/.test(c.toolNames.get(b.tool_use_id) || '')) {
+        clearTimeout(c.refreshTimer);
+        c.refreshTimer = setTimeout(() => refresh(), 300);
+      }
     }
+    if (c.busy) setActivity(c, 'requesting');
     return;
   }
   if (ev.type === 'result') {
     c.busy = false;
     updateSendButton(c);
+    clearActivity(c);
+    // 모델의 컨텍스트 크기
+    const mu = Object.values(ev.modelUsage || {})[0];
+    if (mu?.contextWindow && c.ctx) c.ctx.window = mu.contextWindow;
+    drawMeters(c);
     for (const chip of c.tools.values()) chip.classList.remove('running');
     if (ev.is_error && ev.result && !/authenticate/i.test(ev.result)) c.list.append(h('div', { class: 'ai-msg err', text: ev.result }));
     const secs = ev.duration_ms ? `${(ev.duration_ms / 1000).toFixed(0)}초` : '';
@@ -518,6 +731,7 @@ function onAiEvent(procId, ev) {
     const wasBusy = c.busy;
     c.busy = false;
     updateSendButton(c);
+    clearActivity(c);
     for (const chip of c.tools.values()) chip.classList.remove('running');
     if (c.stopped) {
       c.stopped = false;
@@ -588,6 +802,7 @@ function askApproval(repo, { tool_name: tool, input = {} }) {
   const c = chatFor(repo);
   if (c.alwaysAllow.has(tool)) return Promise.resolve({ allow: true });
   if (!visible) setVisible(true);
+  setActivity(c, 'waiting');
   return new Promise((resolve) => {
     const detail =
       tool === 'Edit' || tool === 'MultiEdit' || tool === 'Write'
@@ -604,6 +819,7 @@ function askApproval(repo, { tool_name: tool, input = {} }) {
       card.classList.add(allow ? 'allowed' : 'denied');
       card.querySelector('.ai-row')?.remove();
       card.append(h('div', { class: 'ai-dim', text: allow ? (always ? '허용함 (이 대화에서 계속 허용)' : '허용함') : '거부함' }));
+      if (c.busy) setActivity(c, allow ? 'tool' : 'requesting', allow ? { text: `실행 중: ${describeTool(tool, input)}` } : {});
       resolve(allow ? { allow: true } : { allow: false, message: '사용자가 거부했습니다. 다른 방법을 제안하거나 무엇을 원하는지 물어보세요.' });
     };
     const yes = h('button', { class: 'btn primary small', text: '허용' });

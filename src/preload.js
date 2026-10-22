@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
     start: (opts) => ipcRenderer.invoke('ai:start', opts),
     send: (id, content) => ipcRenderer.invoke('ai:send', id, content),
     stop: (id) => ipcRenderer.invoke('ai:stop', id),
+    sessions: (repo) => ipcRenderer.invoke('ai:sessions', repo),
+    transcript: (repo, id) => ipcRenderer.invoke('ai:transcript', repo, id),
     onLog: (cb) => ipcRenderer.on('ai:log', (_e, line) => cb(line)),
     onEvent: (cb) => ipcRenderer.on('ai:event', (_e, id, ev) => cb(id, ev)),
     onTool: (cb) => ipcRenderer.on('ai:tool', (_e, reqId, repo, action, args) => cb(reqId, repo, action, args)),
