@@ -702,3 +702,19 @@
   border-radius: 10px;
   padding: 2px 10px;
 }
+
+/* 미리 깨우기 표시 */
+.ai-wake {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.ai-wake[hidden] {
+  display: none;
+}
+.ai-ok {
+  color: var(--ok);
+  font-size: 10px;
+}

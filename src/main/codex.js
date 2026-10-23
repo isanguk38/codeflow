@@ -238,6 +238,7 @@ class CodexChat {
     if (!r) r = await this.request('thread/start', common);
     this.threadId = r.thread.id;
     this.emit({ kind: 'init', sessionId: this.threadId, model: r.model || useModel, resumed: !!resume && r.thread.id === resume });
+    this.emit({ kind: 'ready' });
   }
 
   // CodeFlow 대화 내용(텍스트 + 첨부)을 Codex 입력으로

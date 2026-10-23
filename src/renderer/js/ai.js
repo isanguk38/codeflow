@@ -80,6 +80,8 @@ export function initAi() {
   window.api.ai.onEvent(onAiEvent);
   window.api.ai.onTool(onToolRequest);
   setVisible(visible);
+  // 앱을 켜면 (패널이 닫혀 있어도) 고른 AI 를 미리 깨운다
+  if (!visible) setTimeout(() => refreshStatus().then(() => maybeWarm()), 1500);
 }
 
 export function setVisible(v) {
@@ -90,7 +92,8 @@ export function setVisible(v) {
   $('#aiBtn')?.classList.toggle('on', v);
   if (v) {
     render();
-    if (phase === 'checking' || !info) refreshStatus();
+    if (phase === 'checking' || !info) refreshStatus().then(() => maybeWarm());
+    else maybeWarm();
     setTimeout(() => $('#aiInput')?.focus(), 50);
   }
 }
@@ -99,6 +102,7 @@ export const toggleAi = () => setVisible(!visible);
 // 프로젝트 탭이 바뀌면 그 프로젝트의 대화를 보여 준다
 export function onAiRepoChanged() {
   if (visible) render();
+  maybeWarm();
 }
 
 // ---------- 설치 / 로그인 상태 ----------
@@ -136,6 +140,7 @@ async function doInstall() {
   info = r.data;
   phase = info.loggedIn ? 'ready' : 'login';
   render();
+  maybeWarm();
 }
 
 async function doLogin() {
@@ -153,10 +158,11 @@ async function doLogin() {
     if (!r.ok) toast(r.error, 'error', 6000);
   }
   render();
+  maybeWarm();
 }
 
 async function doLogout() {
-  for (const c of chats.values()) if (c.procId) window.api.ai.stop(c.procId);
+  for (const c of chats.values()) stopAllProcs(c);
   const r = await window.api.ai.logout(provider);
   if (r.ok) info = r.data;
   phase = info?.installed ? 'login' : 'install';
@@ -179,7 +185,7 @@ function render() {
     // 대화는 그대로 두고, 다음 질문부터 새 AI 가 이어서 답한다
     const c = state.repo ? chats.get(repoKey(state.repo)) : null;
     if (c?.conv.entries.length) toast(`다음 질문부터 ${aiName()} 가 지금 대화를 이어서 답합니다.`, 'info', 4000);
-    refreshStatus().then(() => phase === 'ready' && loadMcp(provider));
+    refreshStatus().then(() => phase === 'ready' && (maybeWarm(), loadMcp(provider)));
   };
   const newBtn = h('button', { class: 'tb-btn small', text: '＋', title: '새 대화 (지금 대화는 기록에 남음)' });
   newBtn.onclick = () => newChat();
@@ -314,7 +320,7 @@ function showLoginUrl(url) {
 
 function chatFor(repo) {
   const k = repoKey(repo);
-  if (!chats.has(k)) chats.set(k, { repo, conv: newConv(), procProvider: null, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
+  if (!chats.has(k)) chats.set(k, { repo, conv: newConv(), procs: {}, procProvider: null, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
   return chats.get(k);
 }
 
@@ -412,7 +418,7 @@ function chatView() {
   fillModels(msel);
   msel.onchange = () => {
     setModel(provider, msel.value);
-    for (const ch of chats.values()) ch.restartForModel = true;
+    maybeWarm(true);
     toast(`다음 질문부터 ${msel.selectedOptions[0]?.textContent || '기본값'} 모델로 답합니다.`, 'info');
   };
   wrap.append(
@@ -420,6 +426,7 @@ function chatView() {
     h(
       'div',
       { class: 'ai-compose' },
+      h('div', { class: 'ai-wake', id: 'aiWake', hidden: true }),
       strip,
       input,
       h('div', { class: 'ai-row' }, clip, msel, h('span', { class: 'tb-spacer' }), send),
@@ -429,6 +436,7 @@ function chatView() {
   );
   drawMeters(c);
   drawAttach(c);
+  setTimeout(() => drawWake(c));
   requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
   return wrap;
 }
@@ -455,10 +463,11 @@ function welcomeNote() {
 // 새 대화: 지금 대화를 끝내고 빈 대화로 (지난 대화는 Claude Code 가 저장해 두므로 🕘 에서 다시 열 수 있음)
 function newChat() {
   const c = chatFor(state.repo);
-  if (c.procId) window.api.ai.stop(c.procId);
+  stopAllProcs(c);
   clearActivity(c);
   chats.delete(repoKey(state.repo));
   render();
+  maybeWarm();
 }
 
 // 지난 대화 목록 (CodeFlow 대화 — AI 를 바꿔 가며 한 대화 포함) + 예전 Claude Code 기록
@@ -514,7 +523,7 @@ function drawConv(c) {
 
 function resetChat() {
   const old = chatFor(state.repo);
-  if (old.procId) window.api.ai.stop(old.procId);
+  stopAllProcs(old);
   clearActivity(old);
   chats.delete(repoKey(state.repo));
   return chatFor(state.repo);
@@ -530,6 +539,7 @@ async function loadConv(id) {
   const used = [...new Set(c.conv.entries.filter((e) => e.role === 'assistant').map((e) => nameOf(e.provider)))];
   c.list.append(h('div', { class: 'ai-foot', text: `지난 대화를 불러왔습니다${used.length ? ` (${used.join(', ')})` : ''}. 이어서 질문하면 지금 고른 AI(${aiName()})가 이 대화를 이어 갑니다.` }));
   render();
+  maybeWarm();
 }
 
 // 예전(0.6.x) Claude Code 기록 → CodeFlow 대화로 옮겨서 열기
@@ -577,7 +587,7 @@ function drawActivity(c) {
   if (!a || !c.activityEl) return;
   const secs = Math.floor((Date.now() - a.start) / 1000);
   const label = {
-    starting: `${aiName()} 시작 중`,
+    starting: `${aiName()} 깨우는 중`,
     requesting: '요청 보내는 중',
     thinking: '생각 중',
     writing: '답변 작성 중',
@@ -688,28 +698,16 @@ async function submit(c, input) {
   updateSendButton(c);
   setActivity(c, 'requesting', { start: Date.now(), tokens: 0 });
   try {
-    // 다른 AI 로 바꿨으면 이전 AI 프로그램은 끝낸다
-    if (c.procId && c.procProvider !== provider) {
-      await window.api.ai.stop(c.procId);
-      byChatId.delete(c.procId);
-      c.procId = null;
-    }
-    // 대화 시작 뒤 프로젝트 탭이 늘거나 줄었으면, 같은 대화를 이어서 새 폴더 목록으로 다시 시작
-    if (c.procId && (c.dirsKey !== dirsKey() || c.restartForModel)) {
-      await window.api.ai.stop(c.procId);
-      byChatId.delete(c.procId);
-      c.procId = null;
-    }
-    if (!c.procId) {
+    // 미리 깨워 둔 이 AI 의 프로그램을 쓴다 (없거나 설정이 바뀌었으면 지금 깨우고 준비될 때까지 기다림)
+    const pr = await warm(c, provider);
+    if (!pr.ready) {
       setActivity(c, 'starting');
-      c.dirsKey = dirsKey();
-      c.restartForModel = false;
-      const r = await window.api.ai.start({ provider, repo: c.repo, resume: c.conv.native[provider]?.id || undefined, addDirs: openDirs(), model: getModel(provider) || undefined });
-      if (!r.ok) throw new Error(r.error);
-      c.procId = r.data.id;
-      c.procProvider = provider;
-      byChatId.set(c.procId, c);
+      await pr.readyP;
     }
+    if (!c.procs[provider]) throw new Error(`${aiName()} 를 시작하지 못했습니다.`);
+    c.procId = pr.id;
+    c.procProvider = provider;
+    setActivity(c, 'requesting');
     const r = await window.api.ai.send(c.procId, att.length ? content : text);
     if (!r.ok) throw new Error(r.error);
   } catch (e) {
@@ -808,8 +806,94 @@ function drawAttach(c) {
   );
 }
 
+// ---------- 미리 깨우기 ----------
+// 앱을 켤 때 / 프로젝트 탭을 바꿀 때 / AI 를 바꿀 때, 고른 AI 를 그 프로젝트 폴더에서 미리 실행해 둔다
+// → 첫 질문 때 프로그램 시작(MCP 연결 등)을 기다리지 않는다. AI 별로 하나씩 켜 두므로 AI 를 바꿔도 다시 켤 필요가 없다
+
+function stopProc(c, p) {
+  const pr = c.procs[p];
+  if (!pr) return;
+  delete c.procs[p];
+  byChatId.delete(pr.id);
+  if (c.procId === pr.id) c.procId = null;
+  window.api.ai.stop(pr.id);
+  pr.resolve?.();
+}
+
+function stopAllProcs(c) {
+  for (const p of Object.keys(c.procs)) stopProc(c, p);
+}
+
+function warm(c, p) {
+  const want = { dirs: dirsKey(), model: getModel(p) || '' };
+  let pr = c.procs[p];
+  // 열린 탭이 바뀌었거나(접근할 폴더) 모델을 바꿨으면 같은 대화를 이어서 다시 시작
+  if (pr && !c.busy && (pr.dirs !== want.dirs || pr.model !== want.model)) {
+    stopProc(c, p);
+    pr = null;
+  }
+  if (pr) return Promise.resolve(pr);
+  pr = { id: null, ready: false, ...want };
+  pr.readyP = new Promise((res) => (pr.resolve = res));
+  c.procs[p] = pr;
+  drawWake(c);
+  return window.api.ai.start({ provider: p, repo: c.repo, resume: c.conv.native[p]?.id || undefined, addDirs: openDirs(), model: want.model || undefined }).then((r) => {
+    if (c.procs[p] !== pr) {
+      if (r.ok) window.api.ai.stop(r.data.id); // 그사이 취소됨
+      return pr;
+    }
+    if (!r.ok) {
+      delete c.procs[p];
+      pr.error = r.error;
+      pr.resolve();
+      drawWake(c);
+      if (/로그인|auth|login/i.test(r.error)) refreshStatus();
+      return pr;
+    }
+    pr.id = r.data.id;
+    byChatId.set(pr.id, c);
+    if (p === 'codex') markReady(c, pr); // Codex 는 시작이 끝나면 바로 준비됨
+    // 혹시 준비 신호가 안 오면 30초 뒤 그냥 준비된 것으로
+    setTimeout(() => markReady(c, pr), 30000);
+    return pr;
+  });
+}
+
+function markReady(c, pr) {
+  if (pr.ready) return;
+  pr.ready = true;
+  pr.resolve();
+  drawWake(c);
+}
+
+// 지금 보이는 프로젝트의 지금 고른 AI 를 깨운다 (설치·로그인된 경우만)
+function maybeWarm(force) {
+  if (phase !== 'ready' || !state.repo) return;
+  const c = chatFor(state.repo);
+  if (force || !c.procs[provider]) warm(c, provider);
+  drawWake(c);
+}
+
+// 입력창 위 '깨우는 중' 표시
+function drawWake(c) {
+  const el = $('#aiWake');
+  if (!el || repoKey(c.repo) !== repoKey(state.repo)) return;
+  const pr = c.procs[provider];
+  if (pr && !pr.ready) {
+    el.hidden = false;
+    el.innerHTML = `<span class="ai-dots"><i></i><i></i><i></i></span> ${esc(aiName())} 깨우는 중…`;
+    el.title = '미리 실행해 두면 질문하자마자 답할 수 있습니다';
+  } else if (pr?.ready && el.dataset.state === 'waking') {
+    el.innerHTML = `<span class="ai-ok">●</span> ${esc(aiName())} 준비됨`;
+    setTimeout(() => {
+      if (el.dataset.state === 'ready') el.hidden = true;
+    }, 2500);
+  } else if (!pr) el.hidden = true;
+  el.dataset.state = pr && !pr.ready ? 'waking' : pr ? 'ready' : 'none';
+}
+
 function stopChat(c) {
-  if (c.procId) window.api.ai.stop(c.procId); // 프로세스를 끝내고, 다음 질문 때 같은 대화를 이어서 시작
+  if (c.procId) stopProc(c, c.procProvider); // 프로그램을 끝내고, 다음 질문 때 같은 대화를 이어서 시작
   c.stopped = true;
 }
 
@@ -931,6 +1015,11 @@ function renderBlocks(c, m) {
 function onAiEvent(procId, ev) {
   const c = byChatId.get(procId);
   if (!c) return;
+  if (ev.type === 'cf' && ev.kind === 'ready') {
+    const pr = Object.values(c.procs).find((x) => x.id === procId);
+    if (pr) markReady(c, pr);
+    return;
+  }
   if (ev.type === 'cf') return onCfEvent(c, ev);
   if (ev.type === 'system' && ev.subtype === 'init') {
     c.sessionId = ev.session_id;
@@ -1053,7 +1142,15 @@ function onAiEvent(procId, ev) {
   }
   if (ev.type === 'exit') {
     byChatId.delete(procId);
+    for (const [p, pr] of Object.entries(c.procs))
+      if (pr.id === procId) {
+        delete c.procs[p];
+        pr.resolve?.();
+      }
+    drawWake(c);
+    const quiet = c.procId !== procId && !c.busy; // 미리 깨워 둔(쓰지 않던) 프로그램이 끝난 것
     if (c.procId === procId) c.procId = null;
+    if (quiet) return;
     const wasBusy = c.busy;
     c.busy = false;
     updateSendButton(c);

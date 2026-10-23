@@ -220,14 +220,23 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
       const line = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
       if (!line) continue;
+      let j;
       try {
-        send('ai:event', id, JSON.parse(line));
+        j = JSON.parse(line);
       } catch {
         send('ai:event', id, { type: 'raw', text: line });
+        continue;
       }
+      // 미리 깨우기: initialize 응답이 오면 준비 완료 (질문하면 바로 답할 수 있는 상태)
+      if (j.type === 'control_response' && j.response?.request_id === 'cf-ready') {
+        send('ai:event', id, { type: 'cf', kind: 'ready', models: j.response?.response?.models || null });
+        continue;
+      }
+      send('ai:event', id, j);
     }
   });
   proc.stderr.on('data', (d) => (errText = (errText + d).slice(-4000)));
+  proc.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'cf-ready', request: { subtype: 'initialize' } })}\n`);
   proc.on('error', (e) => send('ai:event', id, { type: 'exit', code: -1, stderr: e.message }));
   proc.on('exit', (code) => {
     const c = chats.get(id);
