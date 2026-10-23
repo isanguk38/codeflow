@@ -17,9 +17,40 @@ const installDir = () => path.join(app.getPath('userData'), 'ai-tools', 'codex')
 const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
 
 // ---------- 찾기 ----------
+// 버전별 폴더에 설치: ai-tools/codex/<버전>/package/vendor/...  + current.json { version, previous }
+// (예전 0.7.0~0.7.2 는 ai-tools/codex/package 에 바로 풀었음 → 'legacy' 로 취급)
+
+const stateFile = () => path.join(installDir(), 'current.json');
+function readState() {
+  try {
+    return JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+const versionDir = (v) => (v === 'legacy' ? installDir() : path.join(installDir(), v));
+const vendorOf = (v) => path.join(versionDir(v), 'package', 'vendor', TARGET);
+
+function versionOfDir(v) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(vendorOf(v), 'codex-package.json'), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+}
+
+// 지금 쓰는 버전 (current.json 이 없으면 예전 위치)
+function currentVersion() {
+  const st = readState();
+  if (st.version && fs.existsSync(vendorOf(st.version))) return st.version;
+  if (fs.existsSync(vendorOf('legacy'))) return 'legacy';
+  return null;
+}
 
 function vendorDirs() {
-  const dirs = [path.join(installDir(), 'package', 'vendor', TARGET)];
+  const dirs = [];
+  const v = currentVersion();
+  if (v) dirs.push(vendorOf(v));
   // npm 으로 직접 설치한 경우
   if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, 'npm', 'node_modules', '@openai', 'codex', 'node_modules', '@openai', 'codex-win32-x64', 'vendor', TARGET));
   return dirs;
@@ -64,44 +95,93 @@ async function status() {
 // ---------- 설치: npm 레지스트리에서 Windows 용 패키지를 받아 사용자 폴더에 풀기 (Node.js 불필요) ----------
 
 let installing = null;
-function install(onLog) {
+let latestCache = null; // { version, at }
+
+async function latestVersion(force = false) {
+  if (!force && latestCache && Date.now() - latestCache.at < 6 * 3600e3) return latestCache.version;
+  const meta = await (await net.fetch(`${PKG}/latest`)).json();
+  latestCache = { version: meta.version, at: Date.now() };
+  return meta.version;
+}
+
+// 업데이트 정보: 지금 버전, 최신 버전, 되돌릴 수 있는 이전 버전
+async function updateInfo(force = false) {
+  const cur = currentVersion();
+  const current = cur ? (cur === 'legacy' ? versionOfDir('legacy') : cur) : null;
+  let latest = null;
+  try {
+    latest = await latestVersion(force);
+  } catch {}
+  const prev = readState().previous;
+  const previous = prev && fs.existsSync(vendorOf(prev)) ? (prev === 'legacy' ? versionOfDir('legacy') : prev) : null;
+  const newer = (a, b) => {
+    const x = String(a).split('.').map(Number);
+    const y = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    return false;
+  };
+  return { managed: !!cur, current, latest, hasUpdate: !!(cur && current && latest && newer(latest, current)), previous };
+}
+
+// 지금·이전 버전 말고는 지운다 (실행 중이라 못 지우면 다음에)
+function cleanupVersions() {
+  const st = readState();
+  const keep = new Set([st.version, st.previous].filter(Boolean));
+  let entries = [];
+  try {
+    entries = fs.readdirSync(installDir(), { withFileTypes: true });
+  } catch {}
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name === 'package') {
+      if (!keep.has('legacy')) fs.rm(path.join(installDir(), 'package'), { recursive: true, force: true, maxRetries: 3 }, () => {});
+    } else if (/^\d+\.\d+\.\d+/.test(e.name) && !keep.has(e.name)) fs.rm(path.join(installDir(), e.name), { recursive: true, force: true, maxRetries: 3 }, () => {});
+  }
+}
+
+// 설치 / 업데이트: 최신(또는 지정한) 버전을 새 폴더에 받아서 바꾸고, 쓰던 버전은 '이전 버전' 으로 남긴다
+function install(onLog, wantVersion) {
   if (installing) return installing;
   installing = (async () => {
     onLog('최신 버전 확인 중...');
-    const meta = await (await net.fetch(`${PKG}/latest`)).json();
-    const version = meta.version;
-    const winVer = `${version}-win32-x64`;
-    const info = await (await net.fetch(`${PKG}/${winVer}`)).json();
+    const version = wantVersion || (await latestVersion(true));
+    const info = await (await net.fetch(`${PKG}/${version}-win32-x64`)).json();
     const url = info?.dist?.tarball;
     if (!url) throw new Error('Windows 용 Codex 패키지를 찾지 못했습니다.');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codeflow-codex-'));
+    const dest = versionDir(version);
     try {
-      const file = path.join(tmp, 'codex.tgz');
-      const res = await net.fetch(url);
-      if (!res.ok || !res.body) throw new Error(`내려받지 못했습니다 (HTTP ${res.status})`);
-      const total = Number(res.headers.get('content-length')) || 0;
-      const out = fs.createWriteStream(file);
-      const reader = res.body.getReader();
-      let got = 0;
-      let lastPct = -1;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        got += value.length;
-        if (!out.write(value)) await once(out, 'drain');
-        const pct = total ? Math.floor((got / total) * 100) : -1;
-        if (pct !== lastPct && pct % 5 === 0) {
-          lastPct = pct;
-          onLog(`Codex ${version} 내려받는 중 ${(got / 1e6).toFixed(0)}MB${total ? ` / ${(total / 1e6).toFixed(0)}MB (${pct}%)` : ''}`);
+      if (!fs.existsSync(path.join(vendorOf(version), 'bin', 'codex.exe'))) {
+        const file = path.join(tmp, 'codex.tgz');
+        const res = await net.fetch(url);
+        if (!res.ok || !res.body) throw new Error(`내려받지 못했습니다 (HTTP ${res.status})`);
+        const total = Number(res.headers.get('content-length')) || 0;
+        const out = fs.createWriteStream(file);
+        const reader = res.body.getReader();
+        let got = 0;
+        let lastPct = -1;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          got += value.length;
+          if (!out.write(value)) await once(out, 'drain');
+          const pct = total ? Math.floor((got / total) * 100) : -1;
+          if (pct !== lastPct && pct % 5 === 0) {
+            lastPct = pct;
+            onLog(`Codex ${version} 내려받는 중 ${(got / 1e6).toFixed(0)}MB${total ? ` / ${(total / 1e6).toFixed(0)}MB (${pct}%)` : ''}`);
+          }
         }
+        out.end();
+        await once(out, 'close');
+        onLog('압축 푸는 중...');
+        fs.rmSync(dest, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        fs.mkdirSync(dest, { recursive: true });
+        await new Promise((resolve, reject) => execFile(TAR, ['-xzf', file, '-C', dest], { windowsHide: true, maxBuffer: 1 << 24 }, (err, _o, se) => (err ? reject(new Error(`압축을 풀지 못했습니다: ${se || err.message}`)) : resolve())));
       }
-      out.end();
-      await once(out, 'close');
-      onLog('압축 푸는 중...');
-      const dest = installDir();
-      fs.rmSync(dest, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      fs.mkdirSync(dest, { recursive: true });
-      await new Promise((resolve, reject) => execFile(TAR, ['-xzf', file, '-C', dest], { windowsHide: true, maxBuffer: 1 << 24 }, (err, _o, se) => (err ? reject(new Error(`압축을 풀지 못했습니다: ${se || err.message}`)) : resolve())));
+      const prev = currentVersion();
+      fs.mkdirSync(installDir(), { recursive: true });
+      fs.writeFileSync(stateFile(), JSON.stringify({ version, previous: prev && prev !== version ? prev : readState().previous || null }));
+      cleanupVersions();
       onLog('설치 완료');
     } finally {
       fs.rm(tmp, { recursive: true, force: true }, () => {});
@@ -111,6 +191,15 @@ function install(onLog) {
     return s;
   })().finally(() => (installing = null));
   return installing;
+}
+
+// 이전 버전으로 되돌리기 (지금 버전과 자리를 바꿈 → 다시 '되돌리기' 하면 원래대로)
+async function rollback() {
+  const st = readState();
+  const cur = currentVersion();
+  if (!st.previous || !fs.existsSync(vendorOf(st.previous))) throw new Error('되돌릴 이전 버전이 없습니다.');
+  fs.writeFileSync(stateFile(), JSON.stringify({ version: st.previous, previous: cur }));
+  return status();
 }
 
 // ---------- 로그인 / 로그아웃 ----------
@@ -239,6 +328,7 @@ class CodexChat {
     this.threadId = r.thread.id;
     this.emit({ kind: 'init', sessionId: this.threadId, model: r.model || useModel, resumed: !!resume && r.thread.id === resume });
     this.emit({ kind: 'ready' });
+    this.refreshUsage();
   }
 
   // CodeFlow 대화 내용(텍스트 + 첨부)을 Codex 입력으로
@@ -265,6 +355,15 @@ class CodexChat {
   async sendTurn(content) {
     const r = await this.request('turn/start', { threadId: this.threadId, input: this.toInput(content) });
     this.turnId = r?.turn?.id;
+  }
+
+  // 플랜 사용량 조회 (질문 없이)
+  async refreshUsage() {
+    const r = await this.request('account/rateLimits/read', {}).catch(() => null);
+    const rl = r?.rateLimits;
+    if (!rl) return;
+    const w = (x) => (x ? { utilization: (x.usedPercent || 0) / 100, resetsAt: x.resetsAt, mins: x.windowDurationMins } : null);
+    this.emit({ kind: 'rate', windows: { primary: w(rl.primary), secondary: w(rl.secondary) }, plan: rl.planType });
   }
 
   async interrupt() {
@@ -414,4 +513,4 @@ async function mcpList() {
   return list.map((m) => ({ name: m.name, status: !m.enabled ? 'disabled' : /not.?logged/i.test(m.auth_status || '') ? 'needs-auth' : 'configured', source: 'codex' }));
 }
 
-module.exports = { mcpList, status, install, login, loginInput, cancelLogin, logout, CodexChat, findExe };
+module.exports = { updateInfo, rollback, mcpList, status, install, login, loginInput, cancelLogin, logout, CodexChat, findExe };

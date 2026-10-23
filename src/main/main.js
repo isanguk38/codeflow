@@ -210,12 +210,18 @@ ipcMain.handle('ai:logout', aiSafe((_e, id) => ai.logout(id)));
 ipcMain.handle('ai:start', aiSafe((e, opts) => ai.startChat(opts, (ch, ...a) => !e.sender.isDestroyed() && e.sender.send(ch, ...a))));
 ipcMain.handle('ai:send', aiSafe((_e, id, content) => ai.sendChat(id, content)));
 ipcMain.handle('ai:stop', (_e, id) => ai.stopChat(id));
+ipcMain.handle('ai:refreshUsage', (_e, id) => ai.refreshUsage(id));
 ipcMain.handle('ai:readAttachment', aiSafe((_e, file) => ai.readAttachment(file)));
 const aiStore = require('./ai-store');
 ipcMain.handle('ai:convList', aiSafe((_e, repo) => aiStore.list(repo)));
 ipcMain.handle('ai:convLoad', aiSafe((_e, repo, id) => aiStore.load(repo, id)));
 ipcMain.handle('ai:convSave', aiSafe((_e, repo, conv) => aiStore.save(repo, conv)));
 ipcMain.handle('ai:convRemove', aiSafe((_e, repo, id) => aiStore.remove(repo, id)));
+// Codex 업데이트 확인 / 업데이트 / 이전 버전으로 되돌리기
+ipcMain.handle('ai:codexUpdateInfo', aiSafe((_e, force) => require('./codex').updateInfo(force)));
+ipcMain.handle('ai:codexUpdate', aiSafe((e) => require('./codex').install((l) => !e.sender.isDestroyed() && e.sender.send('ai:log', l))));
+ipcMain.handle('ai:codexRollback', aiSafe(() => require('./codex').rollback()));
+ipcMain.handle('ai:outputDir', aiSafe((_e, repo) => ai.outputDir(repo)));
 ipcMain.handle('ai:mcpList', aiSafe((_e, id) => ai.mcpList(id)));
 ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
 ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
@@ -230,6 +236,32 @@ ipcMain.handle('file:preview', aiSafe((_e, p) => {
   if (st.size > 30 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (30MB 초과).');
   return { url: `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`, size: st.size };
 }));
+// AI 가 만든 문서를 사용자가 고른 곳으로 옮기기 (move=true 면 원본은 지움). 같은 이름이 있으면 덮어쓸지 저장 창이 묻는다
+ipcMain.handle('file:saveAs', aiSafe(async (_e, p, { move = false, dir } = {}) => {
+  let target;
+  if (dir) {
+    target = path.join(dir, path.basename(p));
+    if (fs.existsSync(target)) {
+      const ext = path.extname(p);
+      const base = path.basename(p, ext);
+      for (let i = 2; fs.existsSync(target); i++) target = path.join(dir, `${base} (${i})${ext}`);
+    }
+  } else {
+    const r = await dialog.showSaveDialog(win, { title: '문서 저장 위치', defaultPath: path.join(app.getPath('documents'), path.basename(p)) });
+    if (r.canceled || !r.filePath) return null;
+    target = r.filePath;
+  }
+  if (path.resolve(target).toLowerCase() === path.resolve(p).toLowerCase()) return target;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(p, target);
+  if (move) fs.rmSync(p, { force: true });
+  return target;
+}));
+ipcMain.handle('file:stat', aiSafe((_e, p) => {
+  const st = fs.statSync(p);
+  return { size: st.size, mtime: st.mtimeMs, isFile: st.isFile() };
+}));
+ipcMain.handle('app:path', (_e, name) => app.getPath(name));
 ipcMain.handle('file:saveCopy', aiSafe(async (_e, p) => {
   const r = await dialog.showSaveDialog(win, { title: '다른 이름으로 저장', defaultPath: path.join(app.getPath('downloads'), path.basename(p)) });
   if (r.canceled || !r.filePath) return null;

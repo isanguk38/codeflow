@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('api', {
   file: {
     preview: (p) => ipcRenderer.invoke('file:preview', p),
     saveCopy: (p) => ipcRenderer.invoke('file:saveCopy', p),
+    saveAs: (p, opts) => ipcRenderer.invoke('file:saveAs', p, opts),
+    stat: (p) => ipcRenderer.invoke('file:stat', p),
+    appPath: (name) => ipcRenderer.invoke('app:path', name),
   },
   issues: {
     list: (repo, opts) => ipcRenderer.invoke('issues:list', repo, opts),
@@ -42,8 +45,13 @@ contextBridge.exposeInMainWorld('api', {
     start: (opts) => ipcRenderer.invoke('ai:start', opts),
     send: (id, content) => ipcRenderer.invoke('ai:send', id, content),
     stop: (id) => ipcRenderer.invoke('ai:stop', id),
+    refreshUsage: (id) => ipcRenderer.invoke('ai:refreshUsage', id),
     sessions: (repo) => ipcRenderer.invoke('ai:sessions', repo),
     mcpList: (id) => ipcRenderer.invoke('ai:mcpList', id),
+    outputDir: (repo) => ipcRenderer.invoke('ai:outputDir', repo),
+    codexUpdateInfo: (force) => ipcRenderer.invoke('ai:codexUpdateInfo', force),
+    codexUpdate: () => ipcRenderer.invoke('ai:codexUpdate'),
+    codexRollback: () => ipcRenderer.invoke('ai:codexRollback'),
     convList: (repo) => ipcRenderer.invoke('ai:convList', repo),
     convLoad: (repo, id) => ipcRenderer.invoke('ai:convLoad', repo, id),
     convSave: (repo, conv) => ipcRenderer.invoke('ai:convSave', repo, conv),

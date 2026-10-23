@@ -41,6 +41,12 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { view: { type: 'string', enum: ['changes', 'log', 'stash', 'code'] } }, required: ['view'] },
   },
   {
+    name: 'save_document',
+    description:
+      '사용자가 저장 위치를 정하지 않은 문서(엑셀·파워포인트·워드·PDF·한글·CSV 보고서 등)를 다 만든 뒤 반드시 호출한다. CodeFlow 대화창에 미리보기와 함께 "어디에 저장할까요?" 를 띄우고, 사용자가 고른 곳으로 파일을 옮긴 뒤 최종 경로를 돌려준다. path 는 방금 만든 파일의 절대 경로. 여러 파일이면 한 번에 하나씩 호출.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: '만든 파일의 절대 경로 (보통 안내받은 임시 결과물 폴더 안)' }, title: { type: 'string', description: '문서 설명 한 줄 (선택)' } }, required: ['path'] },
+  },
+  {
     name: 'list_projects',
     description:
       'CodeFlow 에 탭으로 열려 있는 프로젝트 목록 (이름, 폴더 경로, 현재 보고 있는 탭인지, 브랜치, 변경 파일 수). 다른 프로젝트의 파일도 이 경로(절대 경로)로 읽고 수정할 수 있다.',
@@ -102,6 +108,11 @@ async function callTool(name, args, ctx) {
       files: (s.files || []).slice(0, 300).map((f) => `${f.x}${f.y} ${f.path}`),
       state: s.state || null, // merge / rebase / cherry-pick 진행 중이면 표시
     });
+  }
+  if (name === 'save_document') {
+    // 사용자가 고를 때까지 기다린다 (시간 제한 없음)
+    const r = await askRenderer(ctx.repo, name, args, 0);
+    return r.error ? text(r.error, true) : text(r.result ?? 'ok');
   }
   if (name === 'approve') {
     // Claude Code 권한 확인: { behavior: 'allow', updatedInput } 또는 { behavior: 'deny', message }

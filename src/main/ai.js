@@ -5,6 +5,7 @@
 //   CodeFlow 도구 서버(ai-tools.js)를 연결해 터미널 실행·파일 열기·화면 이동 등을 할 수 있게 한다
 const { app } = require('electron');
 const { spawn, execFile } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -150,18 +151,26 @@ function cleanEnv() {
 const chats = new Map(); // chatId → { proc, repo, sessionKey }
 let chatSeq = 0;
 
-function guideFile() {
+// 사용자가 저장 위치를 말하지 않은 문서(엑셀·PPT·워드 등)를 AI 가 먼저 만들어 두는 곳 (프로젝트 밖)
+// → 다 만들면 CodeFlow 가 대화창에서 '어디에 저장할까요?' 를 묻고 고른 곳으로 옮긴다
+function outputDir(repo) {
+  const d = path.join(app.getPath('userData'), 'ai', 'drafts', path.basename(repo).replace(/[^\w.-]+/g, '_') || 'project');
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+function guideFile(repo) {
   // 앱 패키지(asar) 안의 파일은 외부 프로그램이 못 읽으므로 사용자 폴더에 복사해서 넘긴다
   const src = path.join(__dirname, 'ai-guide.md');
-  const dst = path.join(app.getPath('userData'), 'ai', 'codeflow-guide.md');
+  const dst = path.join(app.getPath('userData'), 'ai', `codeflow-guide-${crypto.createHash('sha1').update(String(repo).toLowerCase()).digest('hex').slice(0, 10)}.md`);
   fs.mkdirSync(path.dirname(dst), { recursive: true });
-  const text = fs.readFileSync(src, 'utf8').replace('{{VERSION}}', app.getVersion());
+  const text = fs.readFileSync(src, 'utf8').replace('{{VERSION}}', app.getVersion()).replace(/\{\{OUTPUT_DIR\}\}/g, outputDir(repo));
   if (!fs.existsSync(dst) || fs.readFileSync(dst, 'utf8') !== text) fs.writeFileSync(dst, text);
   return dst;
 }
 
 // 승인 없이 써도 되는 CodeFlow 도구 (읽기·화면 이동만). 터미널 실행·파일 수정·명령 실행은 사용자 승인 필요
-const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project'];
+const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project', 'mcp__codeflow__save_document'];
 
 async function startChat({ provider = 'claude', repo, resume, model, addDirs = [] }, send) {
   if (provider === 'codex') {
@@ -169,9 +178,9 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
     const c = new codex.CodexChat(id, repo, (ev) => send('ai:event', id, ev));
     chats.set(id, { codex: c, repo });
     c.proc = null;
-    const guide = fs.readFileSync(guideFile(), 'utf8');
+    const guide = fs.readFileSync(guideFile(repo), 'utf8');
     try {
-      await c.start({ resume, model, addDirs: addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)), guide });
+      await c.start({ resume, model, addDirs: [...addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)), outputDir(repo)], guide });
     } catch (e) {
       c.stop();
       chats.delete(id);
@@ -197,7 +206,7 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
     '--mcp-config',
     cfgFile,
     '--append-system-prompt-file',
-    guideFile(),
+    guideFile(repo),
     // 위험할 수 있는 작업(파일 수정, 명령 실행)은 CodeFlow 화면에서 허용/거부를 묻는다
     '--permission-prompt-tool',
     'mcp__codeflow__approve',
@@ -205,12 +214,25 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
     SAFE_TOOLS.join(','),
     // CodeFlow 에 열린 다른 프로젝트 탭들도 읽고 수정할 수 있게 (Cursor 의 여러 폴더 작업 공간처럼)
     ...addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)).flatMap((d) => ['--add-dir', d]),
+    '--add-dir',
+    outputDir(repo),
     ...(model ? ['--model', model] : []),
     ...(resume ? ['--resume', resume] : []),
   ];
   const id = ++chatSeq;
   const proc = spawn(exe, args, { cwd: repo, windowsHide: true, shell: exe.endsWith('.cmd'), env: cleanEnv() });
-  chats.set(id, { proc, repo, sessionKey, cfgFile });
+  // Claude Code 에 보내는 제어 요청 (질문이 아니라 토큰을 쓰지 않음): 사용량·컨텍스트 조회
+  let ctrlSeq = 0;
+  const ctrl = (subtype) => {
+    try {
+      proc.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: `cf-${subtype}-${++ctrlSeq}`, request: { subtype } })}\n`);
+    } catch {}
+  };
+  const refreshUsage = () => {
+    ctrl('get_usage');
+    ctrl('get_context_usage');
+  };
+  chats.set(id, { proc, repo, sessionKey, cfgFile, refreshUsage });
   let buf = '';
   let errText = '';
   proc.stdout.on('data', (d) => {
@@ -230,8 +252,22 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
       // 미리 깨우기: initialize 응답이 오면 준비 완료 (질문하면 바로 답할 수 있는 상태)
       if (j.type === 'control_response' && j.response?.request_id === 'cf-ready') {
         send('ai:event', id, { type: 'cf', kind: 'ready', models: j.response?.response?.models || null });
+        chats.get(id)?.refreshUsage(); // 준비되면 바로 사용량·컨텍스트를 알려 준다
         continue;
       }
+      if (j.type === 'control_response' && /^cf-get_usage-/.test(j.response?.request_id || '')) {
+        const rl = j.response?.response?.rate_limits;
+        if (rl) send('ai:event', id, { type: 'cf', kind: 'usage_claude', windows: { five_hour: rl.five_hour, seven_day: rl.seven_day } });
+        continue;
+      }
+      if (j.type === 'control_response' && /^cf-get_context_usage-/.test(j.response?.request_id || '')) {
+        const r = j.response?.response;
+        if (r?.maxTokens) send('ai:event', id, { type: 'cf', kind: 'ctx', used: r.totalTokens || 0, window: r.maxTokens });
+        continue;
+      }
+      if (j.type === 'control_response') continue;
+      // 답이 끝날 때마다 사용량·컨텍스트를 새로 (정확한 값)
+      if (j.type === 'result') setTimeout(() => chats.get(id)?.refreshUsage(), 300);
       send('ai:event', id, j);
     }
   });
@@ -349,6 +385,13 @@ function sendChat(id, textOrContent) {
   c.proc.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: textOrContent } })}\n`);
 }
 
+// 사용량·컨텍스트 다시 조회 (탭을 바꿨을 때 등)
+function refreshUsage(id) {
+  const c = chats.get(id);
+  if (c?.codex) return c.codex.refreshUsage();
+  c?.refreshUsage?.();
+}
+
 function stopChat(id) {
   const c = chats.get(id);
   if (!c) return;
@@ -381,4 +424,4 @@ async function mcpList(id) {
   return out;
 }
 
-module.exports = { mcpList, readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
+module.exports = { refreshUsage, outputDir, mcpList, readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };

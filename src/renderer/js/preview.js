@@ -2,6 +2,8 @@
 import { h, toast, modal } from './ui.js';
 
 export const IMG_RE = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i;
+// 편집기가 아니라 연결된 프로그램으로 여는 문서
+export const DOC_RE = /\.(xlsx?|xlsm|csv|docx?|pptx?|pdf|hwpx?|zip|7z|rtf|odt|ods|odp)$/i;
 const baseName = (p) => String(p).split(/[\\/]/).pop();
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
 
@@ -39,7 +41,7 @@ export function fileCard(p, { verb = '파일', openFile } = {}) {
   const head = h(
     'div',
     { class: 'fc-head' },
-    h('span', { class: 'fc-ico', text: isImg ? '🖼' : '📄' }),
+    h('span', { class: 'fc-ico', text: isImg ? '🖼' : /\.(xlsx?|xlsm|csv|ods)$/i.test(p) ? '📊' : /\.(pptx?|odp)$/i.test(p) ? '📽' : /\.pdf$/i.test(p) ? '📕' : '📄' }),
     h('span', { class: 'fc-name', text: baseName(p), title: p }),
     h('span', { class: 'fc-verb', text: verb })
   );
@@ -54,7 +56,9 @@ export function fileCard(p, { verb = '파일', openFile } = {}) {
   const actions = h(
     'div',
     { class: 'fc-actions' },
-    act(isImg ? '보기' : '열기', isImg ? '크게 보기' : 'CodeFlow 코드 화면에서 열기', () => (isImg ? showImage(p, { openCode: /\.svg$/i.test(p) && openFile ? () => openFile(p, undefined, { code: true }) : null }) : openFile?.(p))),
+    act(isImg ? '보기' : '열기', isImg ? '크게 보기' : DOC_RE.test(p) ? '연결된 프로그램(엑셀·파워포인트 등)으로 열기' : 'CodeFlow 코드 화면에서 열기', () =>
+      isImg ? showImage(p, { openCode: /\.svg$/i.test(p) && openFile ? () => openFile(p, undefined, { code: true }) : null }) : DOC_RE.test(p) ? window.api.openPath(p) : openFile?.(p)
+    ),
     act('폴더', '탐색기에서 보기', () => window.api.showItem(p)),
     act('저장', '다른 이름으로 저장 (다운로드)', () => saveCopy(p))
   );

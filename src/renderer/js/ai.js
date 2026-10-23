@@ -37,9 +37,65 @@ const getModel = (p) => localStorage.getItem(`ai.model.${p}`) ?? (p === 'claude'
 const setModel = (p, m) => localStorage.setItem(`ai.model.${p}`, m);
 const nameOf = (p) => AIS.find((a) => a.id === p)?.name || p;
 // 플랜 사용량 (AI 마다): [{ label, utilization, resetsAt }]
-const rateInfo = {};
+const rateInfo = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('ai.rateInfo') || '{}');
+  } catch {
+    return {};
+  }
+})();
+const saveRate = () => localStorage.setItem('ai.rateInfo', JSON.stringify(rateInfo));
 // MCP 서버·커넥터 상태 (AI 별): 대화 중 실제 연결 상태가 오면 그걸, 아니면 CLI 로 조회한 목록
 const mcpBy = {}; // provider → { list, at, live }
+// Codex 업데이트 (CodeFlow 가 설치한 Codex 는 스스로 업데이트하지 않으므로 앱을 켤 때 확인)
+let codexUpd = null; // { managed, current, latest, hasUpdate, previous }
+let codexUpdating = false;
+async function checkCodexUpdate(force = false) {
+  const r = await window.api.ai.codexUpdateInfo(force);
+  if (!r.ok) return;
+  codexUpd = r.data;
+  const key = `ai.codexUpdateNotified.${codexUpd.latest}`;
+  if (codexUpd.hasUpdate && !localStorage.getItem(key)) {
+    localStorage.setItem(key, '1');
+    toast(`Codex 새 버전 ${codexUpd.latest} 이 나왔습니다. AI 패널 ⋯ 메뉴에서 업데이트할 수 있습니다.`, 'info', 7000);
+  }
+  if (visible) render();
+}
+
+// 업데이트 / 되돌리기 뒤: 켜 둔 Codex 를 모두 끄고 새 버전으로 다시 깨운다 (대화는 그대로 이어짐)
+function restartCodexEverywhere() {
+  for (const c of chats.values()) if (c.procs.codex && !c.busy) stopProc(c, 'codex');
+  if (provider === 'codex') refreshStatus().then(() => maybeWarm());
+}
+
+async function doCodexUpdate() {
+  if (codexUpdating) return;
+  if ([...chats.values()].some((c) => c.busy && c.procProvider === 'codex')) return toast('Codex 가 답하는 중입니다. 끝난 뒤에 업데이트하세요.', 'warn');
+  codexUpdating = true;
+  if (visible) render();
+  const done = (await import('./state.js')).busy(`Codex ${codexUpd?.latest || ''} 업데이트`);
+  try {
+    const r = await window.api.ai.codexUpdate();
+    if (!r.ok) throw new Error(r.error);
+    toast(`Codex 를 ${r.data.version} 으로 업데이트했습니다. 문제가 있으면 ⋯ 메뉴에서 이전 버전으로 되돌릴 수 있습니다.`, 'ok', 6000);
+    restartCodexEverywhere();
+  } catch (e) {
+    toast(`Codex 업데이트 실패: ${e.message}`, 'error', 7000);
+  } finally {
+    done();
+    codexUpdating = false;
+    await checkCodexUpdate();
+  }
+}
+
+async function doCodexRollback() {
+  if ([...chats.values()].some((c) => c.busy && c.procProvider === 'codex')) return toast('Codex 가 답하는 중입니다. 끝난 뒤에 되돌리세요.', 'warn');
+  const r = await window.api.ai.codexRollback();
+  if (!r.ok) return toast(r.error, 'error', 6000);
+  toast(`Codex 를 ${r.data.version} 으로 되돌렸습니다.`, 'ok', 5000);
+  restartCodexEverywhere();
+  await checkCodexUpdate();
+}
 const mcpLoading = {};
 async function loadMcp(p, force = false) {
   if (mcpLoading[p] || (!force && mcpBy[p] && Date.now() - mcpBy[p].at < 120000)) return;
@@ -82,6 +138,9 @@ export function initAi() {
   setVisible(visible);
   // 앱을 켜면 (패널이 닫혀 있어도) 고른 AI 를 미리 깨운다
   if (!visible) setTimeout(() => refreshStatus().then(() => maybeWarm()), 1500);
+  // Codex 업데이트 확인 (조금 뒤에, 그리고 6시간마다)
+  setTimeout(() => checkCodexUpdate(), 8000);
+  setInterval(() => checkCodexUpdate(), 6 * 3600e3);
 }
 
 export function setVisible(v) {
@@ -209,6 +268,18 @@ function render() {
       { header: info?.installed ? `${aiName()} ${info.version || ''}${info.loggedIn ? ' · 로그인됨' : ''}` : aiName() },
       { label: '상태 다시 확인', onClick: refreshStatus },
       info?.loggedIn ? { label: '로그아웃', onClick: doLogout } : null,
+      ...(p === 'codex' && codexUpd?.managed
+        ? [
+            '-',
+            codexUpdating
+              ? { label: 'Codex 업데이트 중…', disabled: true }
+              : codexUpd.hasUpdate
+                ? { label: `⬆ Codex ${codexUpd.latest} 으로 업데이트 (지금 ${codexUpd.current})`, onClick: doCodexUpdate }
+                : { label: `✓ Codex 최신 버전 (${codexUpd.current})`, disabled: true },
+            codexUpd.previous ? { label: `↩ 이전 버전 ${codexUpd.previous} 으로 되돌리기`, onClick: doCodexRollback } : null,
+            { label: '업데이트 다시 확인', onClick: () => checkCodexUpdate(true).then(() => toast(codexUpd?.hasUpdate ? `새 버전 ${codexUpd.latest} 이 있습니다.` : '최신 버전입니다.', 'info')) },
+          ]
+        : []),
       '-',
       { header: `${aiName()} 의 MCP · 커넥터${cur.live ? ' (이번 대화 연결 상태)' : p === 'codex' ? ' (설정 목록 · 대화를 시작하면 연결 상태 표시)' : ''}` },
       { label: '● codeflow — CodeFlow 도구 (항상 연결)', disabled: true },
@@ -365,10 +436,52 @@ function finishTurn(c) {
   if (text || t.tools.length) c.conv.entries.push({ role: 'assistant', provider: t.provider, text, tools: t.tools, at: Date.now() });
   c.conv.native[t.provider] = { ...(c.conv.native[t.provider] || {}), seen: c.conv.entries.length };
   saveConv(c);
+  showMadeFiles(c, t, text).catch(() => {});
+}
+
+// 명령(파이썬 스크립트 등)으로 만든 파일은 파일 도구를 거치지 않아 카드가 안 생긴다
+// → 답변에 나온 파일 경로 중 이번 답변 동안 새로 만들어진(또는 바뀐) 파일을 찾아 카드로 보여 준다
+const PATH_RE = /([A-Za-z]:[\\/][^\s`'"<>|*?\n]+?\.[A-Za-z0-9]{1,6})(?=[\s`'")\],.;:]|$)|`([^`\s]+\.[A-Za-z0-9]{1,6})`/g;
+async function showMadeFiles(c, t, text) {
+  if (!t.start) return;
+  // 답변 글 + 실행한 명령(예: Set-Content 'C:\…\a.csv') 에서 경로를 찾는다
+  text = [text || '', ...t.tools.map((x) => x.input?.command || x.input?.file_path || '')].join('\n');
+  const out = await window.api.ai
+    .outputDir(c.repo)
+    .then((r) => (r.ok ? r.data : null))
+    .catch(() => null);
+  const found = new Set();
+  for (const m of text.matchAll(PATH_RE)) {
+    const p = (m[1] || m[2] || '').replace(/[.,;:)\]'"]+$/, '');
+    if (!p) continue;
+    if (/^[A-Za-z]:[\\/]/.test(p)) {
+      found.add(p.replace(/[\\/]+/g, '\\')); // 명령 안의 'C:\\\\a\\\\b' 같은 이중 역슬래시도 정리
+      continue;
+    }
+    // 이름만 나오면 프로젝트와 임시 결과물 폴더 두 곳을 본다
+    const rel = p.replace(/\//g, '\\');
+    found.add(`${c.repo.replace(/[\\/]$/, '')}\\${rel}`);
+    if (out) found.add(`${out}\\${rel}`);
+  }
+  const last = [...c.list.querySelectorAll('.ai-msg.assistant')].pop();
+  const uniq = [...new Map([...found].map((p) => [p.toLowerCase(), p])).values()];
+  for (const p of uniq.slice(0, 8)) {
+    if (c.fileCards?.has(p.toLowerCase())) continue;
+    const st = await window.api.file.stat(p).catch(() => null);
+    if (!st?.ok || !st.data.isFile || st.data.mtime < t.start - 10000) continue; // 이번에 만든·바꾼 파일만
+    if (/[\\/]ai[\\/]drafts[\\/]/i.test(p)) {
+      (c.fileCards ||= new Map()).set(p.toLowerCase(), { remove() {} });
+      askSaveLocation(c.repo, { path: p }, { auto: true });
+      continue;
+    }
+    const card = fileCard(p, { verb: '만듦', openFile: (f, sel, o) => (window.dispatchEvent(new CustomEvent('cf-set-view', { detail: 'code' })), activateCode().then(() => openFile(f, sel, o))) });
+    (c.fileCards ||= new Map()).set(p.toLowerCase(), card);
+    (last || c.list).append(card);
+  }
 }
 
 // 도구 기록용: 다시 그릴 때 필요한 값만
-const toolRec = (id, name, input = {}) => ({ id, name, desc: describeTool(name, input), input: Object.fromEntries(['file_path', 'command', 'pattern', 'path', 'query', 'url', 'view', 'line'].filter((k) => input[k] !== undefined).map((k) => [k, typeof input[k] === 'string' ? input[k].slice(0, 300) : input[k]])) });
+const toolRec = (id, name, input = {}) => ({ id, name, desc: describeTool(name, input), input: Object.fromEntries(['file_path', 'command', 'pattern', 'path', 'query', 'url', 'view', 'line'].filter((k) => input[k] !== undefined).map((k) => [k, typeof input[k] === 'string' ? input[k].slice(0, 1500) : input[k]])) });
 
 function chatView() {
   const c = chatFor(state.repo);
@@ -434,9 +547,12 @@ function chatView() {
       h('div', { class: 'ai-meters', id: 'aiMeters' })
     )
   );
-  drawMeters(c);
-  drawAttach(c);
-  setTimeout(() => drawWake(c));
+  // 화면에 붙은 다음에 채운다 (#aiMeters 등을 id 로 찾으므로)
+  setTimeout(() => {
+    drawMeters(c);
+    drawAttach(c);
+    drawWake(c);
+  });
   requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
   return wrap;
 }
@@ -628,8 +744,9 @@ function drawMeters(c) {
     el.append(m);
   }
   if (rateInfo[provider]) {
-    const win = (w) => {
-      if (!w) return null;
+    const win = (w0) => {
+      if (!w0) return null;
+      const w = w0.resetsAt && w0.resetsAt * 1000 < Date.now() ? { ...w0, utilization: 0 } : w0;
       const name = w.label;
       const pct = Math.round((w.utilization || 0) * 100);
       const left = w.resetsAt ? Math.max(0, w.resetsAt * 1000 - Date.now()) : 0;
@@ -691,7 +808,7 @@ async function submit(c, input) {
   }
   c.conv.entries.push({ role: 'user', text: input.dataset.sent || bubble.lastChild.textContent, attachments: att.map((a) => a.name), at: Date.now() });
   if (!c.conv.title) c.conv.title = bubble.lastChild.textContent.replace(/\s+/g, ' ').slice(0, 60);
-  c.turn = { provider, texts: new Map(), tools: [] };
+  c.turn = { provider, texts: new Map(), tools: [], start: Date.now() };
   saveConv(c);
   c.list.scrollTop = c.list.scrollHeight;
   c.busy = true;
@@ -872,6 +989,11 @@ function maybeWarm(force) {
   const c = chatFor(state.repo);
   if (force || !c.procs[provider]) warm(c, provider);
   drawWake(c);
+  // 이 AI 의 컨텍스트로 바꿔 보여 주고, 이미 깨어 있으면 사용량·컨텍스트를 새로 조회
+  c.ctx = c.ctxBy?.[provider] || null;
+  drawMeters(c);
+  const pr = c.procs[provider];
+  if (pr?.ready && pr.id) window.api.ai.refreshUsage(pr.id);
 }
 
 // 입력창 위 '깨우는 중' 표시
@@ -957,6 +1079,8 @@ function describeTool(name, input = {}) {
       return `화면 이동: ${{ changes: '커밋', log: '히스토리', stash: '스태시', code: '코드' }[input.view] || input.view}`;
     case 'mcp__codeflow__git_status':
       return `Git 상태 확인${input.path ? `: ${input.path.split(/[\\/]/).pop()}` : ''}`;
+    case 'mcp__codeflow__save_document':
+      return `문서 저장 위치 묻기: ${String(input.path || '').split(/[\\/]/).pop()}`;
     case 'mcp__codeflow__list_projects':
       return '열린 프로젝트 탭 확인';
     case 'mcp__codeflow__switch_project':
@@ -1020,6 +1144,19 @@ function onAiEvent(procId, ev) {
     if (pr) markReady(c, pr);
     return;
   }
+  if (ev.type === 'cf' && ev.kind === 'usage_claude') {
+    const w = (x, label) => x && { label, utilization: (x.utilization || 0) / 100, resetsAt: x.resets_at ? Date.parse(x.resets_at) / 1000 : null };
+    rateInfo.claude = [w(ev.windows.five_hour, '세션'), w(ev.windows.seven_day, '주간')].filter(Boolean);
+    saveRate();
+    return drawMeters(c);
+  }
+  if (ev.type === 'cf' && ev.kind === 'ctx') {
+    // 이 대화(세션)의 컨텍스트 — 지금 고른 AI 의 프로그램에서 온 것만 표시
+    const pr = Object.entries(c.procs).find(([, x]) => x.id === procId);
+    if (pr) (c.ctxBy ||= {})[pr[0]] = { used: ev.used, window: ev.window };
+    if (!pr || pr[0] === provider) c.ctx = { used: ev.used, window: ev.window };
+    return drawMeters(c);
+  }
   if (ev.type === 'cf') return onCfEvent(c, ev);
   if (ev.type === 'system' && ev.subtype === 'init') {
     c.sessionId = ev.session_id;
@@ -1033,6 +1170,7 @@ function onAiEvent(procId, ev) {
   if (ev.type === 'rate_limit_event') {
     const w = ev.rate_limit_info?.unifiedWindows;
     if (w) rateInfo.claude = [w.five_hour && { label: '세션', ...w.five_hour }, w.seven_day && { label: '주간', ...w.seven_day }].filter(Boolean);
+    saveRate();
     return drawMeters(c);
   }
   if (ev.type === 'stream_event') {
@@ -1232,11 +1370,12 @@ function onCfEvent(c, ev) {
       return;
     }
     case 'usage':
-      if (ev.used) c.ctx = { used: ev.used, window: ev.window || c.ctx?.window || 200000 };
+      if (ev.used) c.ctx = (c.ctxBy ||= {}).codex = { used: ev.used, window: ev.window || c.ctx?.window || 200000 };
       return drawMeters(c);
     case 'rate': {
       const lab = (w) => (!w.mins ? '사용량' : w.mins <= 300 ? `${Math.round(w.mins / 60)}시간` : w.mins <= 10080 ? '주간' : w.mins <= 44640 ? '월간' : '사용량');
       rateInfo.codex = [ev.windows.primary, ev.windows.secondary].filter(Boolean).map((w) => ({ label: lab(w), ...w }));
+      saveRate();
       return drawMeters(c);
     }
     case 'compacted':
@@ -1273,6 +1412,7 @@ async function onToolRequest(reqId, repo, action, args) {
   const reply = (result) => window.api.ai.toolResult(reqId, result);
   try {
     if (action === 'approve') return reply(await askApproval(repo, args));
+    if (action === 'save_document') return reply(await askSaveLocation(repo, args));
     if (action === 'list_projects') {
       const cur = (state.repo || '').toLowerCase();
       // 아직 한 번도 안 연 탭은 상태가 없으므로 바로 조회
@@ -1322,10 +1462,64 @@ async function onToolRequest(reqId, repo, action, args) {
   }
 }
 
+// AI 가 만든 문서: 대화창에 미리보기 + '어디에 저장할까요?' → 고른 곳으로 옮기고 최종 경로를 AI 에게 돌려준다
+async function askSaveLocation(repo, { path: file, title }, { auto = false } = {}) {
+  const st = await window.api.file.stat(file);
+  if (!st.ok || !st.data.isFile) return { error: `파일을 찾을 수 없습니다: ${file}` };
+  const c = chatFor(repo);
+  if (!visible) setVisible(true);
+  if (!auto) setActivity(c, 'waiting');
+  (c.fileCards ||= new Map()).set(file.toLowerCase(), { remove() {} }); // 답변 끝의 경로 찾기에서 또 만들지 않게
+  const name = file.split(/[\\/]/).pop();
+  const downloads = await window.api.file.appPath('downloads');
+  return new Promise((resolve) => {
+    const box = h('div', { class: 'ai-save' }, h('div', { class: 'ai-approve-title', text: `📄 ${title || name} — 어디에 저장할까요?` }));
+    const card = fileCard(file, { verb: '새 문서', openFile: (f) => window.api.openPath(f) });
+    const row = h('div', { class: 'ai-row' });
+    const note = h('div', { class: 'ai-dim' });
+    let busy = false;
+    const finish = (saved, msg) => {
+      row.remove();
+      note.textContent = msg;
+      (c.fileCards ||= new Map()).set(file.toLowerCase(), card); // 답변에 경로가 나와도 카드를 또 만들지 않게
+      if (saved) {
+        const sc = fileCard(saved, { verb: '저장됨', openFile: (f) => window.api.openPath(f) });
+        c.fileCards.set(saved.toLowerCase(), sc);
+        card.replaceWith(sc);
+        box.classList.add('allowed');
+      }
+      if (c.busy && !auto) setActivity(c, 'requesting');
+      resolve({ result: saved ? { saved_path: saved, message: `사용자가 저장 위치를 골랐습니다: ${saved}` } : { saved_path: file, message: '사용자가 저장 위치를 고르지 않아 임시 결과물 폴더에 그대로 두었습니다.' } });
+    };
+    const save = async (opts) => {
+      if (busy) return;
+      busy = true;
+      const r = await window.api.file.saveAs(file, { move: true, ...opts });
+      busy = false;
+      if (!r.ok) return toast(r.error, 'error', 6000);
+      if (!r.data) return; // 저장 창에서 취소 → 다시 고르게
+      finish(r.data, `저장했습니다: ${r.data}`);
+    };
+    const pick = h('button', { class: 'btn primary small', text: '저장 위치 선택…' });
+    pick.onclick = () => save({});
+    const dl = h('button', { class: 'tb-btn small', text: '다운로드 폴더에 저장' });
+    dl.onclick = () => save({ dir: downloads });
+    const later = h('button', { class: 'tb-btn small', text: '나중에', title: '임시 결과물 폴더에 그대로 둡니다 (카드의 저장 버튼으로 나중에 저장 가능)' });
+    later.onclick = () => finish(null, `임시 결과물 폴더에 두었습니다: ${file}`);
+    row.append(pick, dl, h('span', { class: 'tb-spacer' }), later);
+    box.append(card, row, note);
+    c.list.append(box);
+    c.list.scrollTop = c.list.scrollHeight;
+    if (repoKey(repo) !== repoKey(state.repo)) toast(`${repo.split(/[\\/]/).pop()} 프로젝트의 AI 가 문서 저장 위치를 묻고 있습니다.`, 'warn', 6000);
+  });
+}
+
 // 파일 수정·명령 실행 등 권한이 필요한 작업: 대화 안에 허용/거부 카드
 function askApproval(repo, { tool_name: tool, input = {} }) {
   const c = chatFor(repo);
   if (c.alwaysAllow.has(tool)) return Promise.resolve({ allow: true });
+  // CodeFlow 임시 결과물 폴더(프로젝트 밖)에 문서를 만드는 것은 묻지 않는다 — 다 만든 뒤 저장 위치를 묻는다
+  if (/^(Write|Edit|MultiEdit)$/.test(tool) && /[\\/]ai[\\/]drafts[\\/]/i.test(input.file_path || '')) return Promise.resolve({ allow: true });
   if (!visible) setVisible(true);
   setActivity(c, 'waiting');
   return new Promise((resolve) => {
