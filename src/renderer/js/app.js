@@ -86,7 +86,7 @@ async function onOpened() {
     return;
   }
   $('#app').classList.remove('no-repo');
-  setView(state.view === 'welcome' ? 'changes' : state.view);
+  setView(state.view === 'welcome' ? 'code' : state.view);
   if (state.status) emitStatus(); // 기억해 둔 상태로 먼저 그리기
   else clearRepoChrome();
   await refresh();

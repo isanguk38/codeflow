@@ -83,7 +83,7 @@ export async function switchTab(dir) {
   state.repo = t.path;
   // 마지막으로 본 상태를 바로 보여주고(빠른 전환), 최신 상태는 onOpened 에서 새로 불러온다
   state.status = t.status || null;
-  state.view = t.view || 'changes';
+  state.view = t.view || 'code';
   saveTabs();
   renderTabs();
   onOpened();
@@ -133,7 +133,7 @@ export async function openRepo(dir, { activate = true } = {}) {
     return errorDialog(r.error);
   }
   state.settings = await window.api.getSettings();
-  if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'changes' });
+  if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'code' });
   if (activate) return switchTab(r.data);
   saveTabs();
   renderTabs();

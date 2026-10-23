@@ -5,7 +5,7 @@ export const state = {
   repo: null,
   status: null,
   settings: {},
-  view: 'changes',
+  view: 'code',
 };
 
 const listeners = new Set();
