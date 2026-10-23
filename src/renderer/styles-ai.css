@@ -733,3 +733,83 @@
   border-color: var(--ok);
   background: var(--bg);
 }
+
+/* 마크다운: 문단 · 표 · 제목 · 목록 · 인용 · 구분선 */
+.ai-text p {
+  margin: 0 0 6px;
+}
+.ai-text p:last-child {
+  margin-bottom: 0;
+}
+.ai-table-wrap {
+  overflow-x: auto;
+  margin: 4px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ai-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.ai-table th,
+.ai-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+  word-break: keep-all; /* 한글·짧은 단어는 중간에 안 끊고 */
+  overflow-wrap: break-word; /* 단어 중간은 끊지 않고, 너무 길면 표를 가로로 스크롤 */
+  min-width: 56px;
+}
+.ai-table th:last-child,
+.ai-table td:last-child {
+  border-right: 0;
+}
+.ai-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.ai-table th {
+  background: var(--bg3);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ai-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--bg3) 35%, transparent);
+}
+.ai-h {
+  font-weight: 700;
+  margin: 8px 0 4px;
+}
+.ai-h1 {
+  font-size: 15px;
+}
+.ai-h2 {
+  font-size: 14px;
+}
+.ai-h3,
+.ai-h4 {
+  font-size: 13px;
+}
+.ai-li {
+  display: flex;
+  gap: 6px;
+  margin: 1px 0;
+}
+.ai-li-mark {
+  color: var(--text3);
+  flex: none;
+  min-width: 10px;
+}
+.ai-quote {
+  margin: 4px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text2);
+}
+.ai-hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 8px 0;
+}
