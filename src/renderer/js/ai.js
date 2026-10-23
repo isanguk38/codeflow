@@ -391,7 +391,7 @@ function showLoginUrl(url) {
 
 function chatFor(repo) {
   const k = repoKey(repo);
-  if (!chats.has(k)) chats.set(k, { repo, conv: newConv(), procs: {}, procProvider: null, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
+  if (!chats.has(k)) chats.set(k, { repo, loaded: false, conv: newConv(), procs: {}, procProvider: null, attach: [], procId: null, sessionId: null, busy: false, list: h('div', { class: 'ai-msgs' }), msgs: new Map(), tools: new Map(), toolNames: new Map(), alwaysAllow: new Set(), ctx: null, mcp: null });
   return chats.get(k);
 }
 
@@ -485,6 +485,7 @@ const toolRec = (id, name, input = {}) => ({ id, name, desc: describeTool(name, 
 
 function chatView() {
   const c = chatFor(state.repo);
+  if (!c.loaded) ensureLoaded(c);
   const wrap = h('div', { class: 'ai-chat' });
   if (!c.list.childElementCount) c.list.append(welcomeNote());
   const strip = h('div', { class: 'ai-attach', id: 'aiAttach' });
@@ -582,6 +583,7 @@ function newChat() {
   stopAllProcs(c);
   clearActivity(c);
   chats.delete(repoKey(state.repo));
+  chatFor(state.repo).loaded = true; // 새 대화: 지난 대화를 불러오지 않음
   render();
   maybeWarm();
 }
@@ -637,12 +639,40 @@ function drawConv(c) {
   for (const chip of c.tools.values()) chip.classList.remove('running');
 }
 
+// 프로젝트를 처음 열면(이번 실행에서) 그 프로젝트의 가장 최근 대화를 불러와 이어 간다 — 새 대화는 ＋ 로
+function ensureLoaded(c) {
+  if (c.loaded) return Promise.resolve();
+  if (c.loadP) return c.loadP;
+  c.loadP = (async () => {
+    const r = await window.api.ai.convList(c.repo).catch(() => null);
+    const last = r?.ok ? r.data[0] : null;
+    if (last && !c.conv.entries.length && !c.busy) {
+      const lr = await window.api.ai.convLoad(c.repo, last.id).catch(() => null);
+      if (lr?.ok && !c.conv.entries.length && !c.busy) {
+        c.conv = lr.data;
+        c.list.innerHTML = '';
+        c.list.append(welcomeNote());
+        drawConv(c);
+        c.list.append(h('div', { class: 'ai-foot', text: `가장 최근 대화를 이어서 보여 줍니다 (${ago(last.updated)}). 새로 시작하려면 ＋ 를 누르세요.` }));
+      }
+    }
+    c.loaded = true;
+    if (repoKey(c.repo) === repoKey(state.repo) && visible) {
+      render();
+      requestAnimationFrame(() => (c.list.scrollTop = c.list.scrollHeight));
+    }
+  })();
+  return c.loadP;
+}
+
 function resetChat() {
   const old = chatFor(state.repo);
   stopAllProcs(old);
   clearActivity(old);
   chats.delete(repoKey(state.repo));
-  return chatFor(state.repo);
+  const c = chatFor(state.repo);
+  c.loaded = true;
+  return c;
 }
 
 async function loadConv(id) {
@@ -984,9 +1014,13 @@ function markReady(c, pr) {
 }
 
 // 지금 보이는 프로젝트의 지금 고른 AI 를 깨운다 (설치·로그인된 경우만)
-function maybeWarm(force) {
+async function maybeWarm(force) {
   if (phase !== 'ready' || !state.repo) return;
   const c = chatFor(state.repo);
+  if (!c.loaded) {
+    await ensureLoaded(c);
+    if (repoKey(c.repo) !== repoKey(state.repo)) return;
+  }
   if (force || !c.procs[provider]) warm(c, provider);
   drawWake(c);
   // 이 AI 의 컨텍스트로 바꿔 보여 주고, 이미 깨어 있으면 사용량·컨텍스트를 새로 조회
