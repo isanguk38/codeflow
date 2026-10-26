@@ -42,10 +42,13 @@ function updateChrome(s) {
   behind.textContent = s.behind;
   ahead.hidden = !s.ahead;
   ahead.textContent = s.ahead;
+  // 원격에 아직 없는 브랜치: Push 버튼에 'Push 할 커밋' 이 있다고 알려 준다
+  $('#pushBtn')?.setAttribute('title', s.unpublished ? `Push 할 커밋 ${s.ahead}개 — 원격에 아직 이 브랜치가 없어서 Push 하면 새로 만듭니다 (Ctrl+Shift+K)` : 'Push (Ctrl+Shift+K)');
   const count = $('#changeCount');
   count.hidden = !s.files.length;
   count.textContent = s.files.length;
-  $('#statusPath').textContent = `${state.repo}  ·  ${s.branch || s.headShort || ''}${s.upstream ? ` → ${s.upstream}` : ' (원격 연결 없음)'}${s.ahead ? `  ↑${s.ahead}` : ''}${s.behind ? `  ↓${s.behind}` : ''}`;
+  const remoteNote = s.unpublished ? `${s.upstream ? ` → ${s.upstream}` : ''} (원격에 아직 없음 · Push 필요)` : s.upstream ? ` → ${s.upstream}` : ' (원격 연결 없음)';
+  $('#statusPath').textContent = `${state.repo}  ·  ${s.branch || s.headShort || ''}${remoteNote}${s.ahead ? `  ↑${s.ahead}` : ''}${s.behind ? `  ↓${s.behind}` : ''}`;
 
   const banner = $('#opBanner');
   const conflicts = s.files.filter((f) => f.status === 'conflict').length;

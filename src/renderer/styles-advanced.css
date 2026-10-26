@@ -580,25 +580,33 @@ select.input {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s;
+  contain: layout paint;
 }
 body.is-busy .progress-bar {
   opacity: 1;
 }
+/* left 를 움직이면 매 프레임 화면 전체를 다시 배치해서, 목록이 긴 화면(파일 수천 개)에서는 앱이 멈춘다.
+   transform 으로만 움직이고, 작업 중일 때만 돌린다. */
 .progress-bar::before {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
+  left: 0;
   width: 35%;
   background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent);
+  transform: translateX(-100%);
+  will-change: transform;
+}
+body.is-busy .progress-bar::before {
   animation: progress-slide 1.1s ease-in-out infinite;
 }
 @keyframes progress-slide {
   from {
-    left: -35%;
+    transform: translateX(-100%);
   }
   to {
-    left: 100%;
+    transform: translateX(286%);
   }
 }
 

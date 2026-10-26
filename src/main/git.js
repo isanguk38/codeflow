@@ -155,6 +155,14 @@ async function status(repo) {
     }
     result.files.push(file);
   }
+  // 원격에 아직 없는 브랜치(처음 Push 전, 또는 원격 브랜치가 지워짐): 어느 원격에도 없는 커밋 수를 'Push 할 커밋' 으로
+  if (result.branch && !result.detached && (!result.upstream || result.upstreamGone)) {
+    const n = await run(repo, ['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
+    if (n.code === 0 && +n.stdout.trim() > 0) {
+      result.ahead = +n.stdout.trim();
+      result.unpublished = true;
+    }
+  }
   result.state = await repoState(repo);
   const bisectLog = path.join(await gitDir(repo), 'BISECT_LOG');
   result.bisect = fs.existsSync(bisectLog);

@@ -23,6 +23,7 @@ function bindRepo() {
     prev.current = current;
   }
   boundRepo = state.repo;
+  expandedGroups.clear();
   let s = perRepo.get(state.repo);
   if (!s) {
     s = { selected: new Set(), known: new Set(), partial: new Map(), msg: '', current: null };
@@ -97,6 +98,9 @@ const filesFor = (paths) => files().filter((f) => paths.includes(f.path));
 const commitCandidates = () => files().filter((f) => f.status !== 'conflict');
 const canLineSelect = (f) => f && (f.status === 'modified' || f.status === 'deleted') && state.status?.hasHead && !state.status?.state;
 
+const ROW_LIMIT = 500;
+const expandedGroups = new Set(); // '나머지 보기' 를 누른 묶음
+
 function render() {
   const list = $('#fileList');
   if (!list || !state.repo) return;
@@ -143,7 +147,17 @@ function render() {
       g.key === 'conflict' ? h('button', { class: 'tb-btn small warn', text: '충돌 해결...', onclick: openConflicts }) : null
     );
     list.append(header);
-    for (const f of g.files) list.append(fileRow(f));
+    // 파일이 수천 개면 앞의 일부만 그린다 (전부 그리면 화면이 느려짐). 버튼으로 나머지를 펼친다
+    const limit = expandedGroups.has(g.key) ? Infinity : ROW_LIMIT;
+    const frag = document.createDocumentFragment();
+    for (const f of g.files.slice(0, limit)) frag.append(fileRow(f));
+    list.append(frag);
+    if (g.files.length > limit) {
+      const rest = g.files.length - limit;
+      const btn = h('button', { class: 'tb-btn small more-files', text: `나머지 ${rest}개 파일 보기 (선택 상태는 그대로 적용됨)` });
+      btn.onclick = () => (expandedGroups.add(g.key), render());
+      list.append(h('div', { class: 'more-files-row' }, btn));
+    }
   }
 
   const cand = commitCandidates();

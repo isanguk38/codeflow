@@ -1876,3 +1876,6 @@ input[type='checkbox'] {
   align-items: flex-end;
   padding-bottom: 3px;
 }
+.more-files-row {
+  padding: 6px 10px 10px 22px;
+}

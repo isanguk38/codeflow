@@ -259,7 +259,7 @@ export async function openBranchPopup(anchor) {
       if (!f.length) return;
       list.append(h('div', { class: 'ctx-header', text: title }));
       for (const b of f) {
-        const track = b.track.includes('gone') ? '원격 삭제됨' : b.track ? b.track.replace('ahead', '↑').replace('behind', '↓').replace(/[[\],]/g, '') : '';
+        const track = b.track.includes('gone') ? '원격에 없음' : b.track ? b.track.replace('ahead', '↑').replace('behind', '↓').replace(/[[\],]/g, '') : '';
         const el = h(
           'div',
           { class: `ctx-item branch-item ${b.current ? 'current' : ''}` },

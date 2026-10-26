@@ -262,15 +262,16 @@ async function loadMore() {
 let selectMode = false; // '골라 보기' 모드 (체크박스 표시)
 let anchorKey = null; // Shift+클릭 범위 선택의 시작점
 
-// 원격 추적 상태 표시: ↑보낼 커밋, ↓받을 커밋, gone → 원격 삭제됨
+// 원격 추적 상태 표시: ↑보낼 커밋, ↓받을 커밋, gone → 원격에 없음
+// (gone 은 '한 번도 Push 안 함' 과 '원격에서 지워짐' 을 구분할 수 없다)
 function trackHint(b) {
   if (b.track.includes('gone'))
     return {
-      hint: '원격 삭제됨',
+      hint: b.current ? '원격에 없음 · Push 필요' : '원격에 없음',
       hintClass: 'gone',
-      hintTitle: `연결된 원격 브랜치(${b.upstream || ''})가 삭제되었습니다.
-보통 MR 병합 때 '소스 브랜치 삭제'로 지워진 경우입니다.
-로컬 브랜치와 커밋은 그대로 남아 있으며, 이미 병합된 작업이면 삭제해도 됩니다.`,
+      hintTitle: `연결된 원격 브랜치(${b.upstream || ''})가 원격 저장소에 없습니다.
+- 아직 한 번도 Push 하지 않았다면: Push 하면 원격에 새로 만들어집니다.
+- MR 병합 때 '소스 브랜치 삭제'로 지워졌다면: 로컬 브랜치와 커밋은 그대로 있으며, 이미 병합된 작업이면 삭제해도 됩니다.`,
     };
   const hint = b.track.replace('ahead ', '↑').replace('behind ', '↓').replace(/[[\],]/g, '');
   return { hint, hintTitle: hint ? '↑ Push 할 커밋 수 / ↓ Pull 로 받을 커밋 수' : '' };
@@ -833,7 +834,7 @@ async function selectCommit(hash, scroll = true) {
   );
   box.append(info, h('div', { class: 'group-header', html: `변경된 파일 <span class="count">${d.files.length}개</span>${d.parents.length > 1 ? ' <span class="count">(첫 번째 부모 기준)</span>' : ''}` }));
   const list = h('div', { class: 'detail-files' });
-  for (const f of d.files) {
+  const makeRow = (f) => {
     const { dir, name } = splitPath(f.path);
     const row = h(
       'div',
@@ -856,11 +857,22 @@ async function selectCommit(hash, scroll = true) {
         { label: '경로 복사', onClick: () => window.api.copy(f.path) },
       ]);
     };
-    list.append(row);
-  }
+    return row;
+  };
+  // 파일이 수천 개여도 멈추지 않도록 300개씩 그리고, 아래로 내리면 더 그린다
+  let shown = 0;
+  const more = (upTo = shown + 300) => {
+    const end = Math.min(d.files.length, upTo);
+    const frag = document.createDocumentFragment();
+    for (; shown < end; shown++) frag.append(makeRow(d.files[shown]));
+    list.append(frag);
+  };
+  more();
+  box.onscroll = () => shown < d.files.length && box.scrollTop + box.clientHeight > box.scrollHeight - 300 && more();
   box.append(list);
   const pick = d.files.find((f) => f.path === selectedFile) || (filter.file && d.files.find((f) => f.path === filter.file)) || d.files[0];
   if (pick) {
+    if (d.files.indexOf(pick) >= shown) more(d.files.indexOf(pick) + 1);
     [...list.children][d.files.indexOf(pick)]?.classList.add('active');
     showCommitDiff(d, pick);
   } else emptyDiff($('#logDetailDiff'), '변경된 파일이 없습니다.');
