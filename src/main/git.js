@@ -198,7 +198,15 @@ async function workingFilePair(repo, file) {
   const abs = path.join(repo, file.path);
   let newBuf = null;
   if (fs.existsSync(abs) && fs.statSync(abs).isFile()) newBuf = fs.readFileSync(abs);
-  return { left: pack(oldBuf), right: pack(newBuf), leftLabel: oldBuf ? `HEAD: ${oldPath}` : '(없음)', rightLabel: newBuf ? `작업 중: ${file.path}` : '(삭제됨)' };
+  return {
+    left: pack(oldBuf),
+    right: pack(newBuf),
+    leftLabel: oldBuf ? `마지막 커밋(HEAD): ${oldPath}` : '(없음)',
+    rightLabel: newBuf ? `작업 중인 파일: ${file.path}` : '(삭제됨)',
+    // 화면에 '현재 버전' 표시: 지금 디스크에 있는 파일이 현재 버전
+    leftTag: oldBuf ? { kind: 'head', text: '마지막 커밋' } : null,
+    rightTag: newBuf ? { kind: 'current', text: '현재 버전 (작업 중)' } : null,
+  };
 }
 
 // 편집기 왼쪽 변경 표시용: HEAD 시점의 파일 내용 (없으면 null = 새 파일)
@@ -206,6 +214,20 @@ async function headContent(repo, relPath) {
   if (!(await hasHead(repo))) return null;
   const p = pack(await showBlob(repo, `HEAD:${relPath.replace(/\\/g, '/')}`));
   return p.exists && !p.binary && !p.tooLarge ? p.text : null;
+}
+
+// 어떤 커밋이 지금 내 버전(HEAD)과 어떤 관계인지: 화면에서 '현재 버전' 표시용
+// current: HEAD 그 자체 / inHead: 현재 브랜치에 이미 들어 있음 / 그 외: 현재 브랜치에 없음
+async function headRelation(repo, rev) {
+  if (!rev) return null;
+  const head = await run(repo, ['rev-parse', '--verify', '-q', 'HEAD'], { allowFail: true });
+  if (head.code !== 0) return null;
+  const r = await run(repo, ['rev-parse', '--verify', '-q', `${rev}^{commit}`], { allowFail: true });
+  if (r.code !== 0) return null;
+  const hash = r.stdout.trim();
+  if (hash === head.stdout.trim()) return { kind: 'current', text: '현재 버전 (HEAD)' };
+  const anc = await run(repo, ['merge-base', '--is-ancestor', hash, 'HEAD'], { allowFail: true });
+  return anc.code === 0 ? { kind: 'in', text: '현재 브랜치에 포함' } : { kind: 'out', text: '현재 브랜치에 없음' };
 }
 
 // 커밋 하나에서 변경된 파일의 이전/이후 내용
@@ -218,8 +240,10 @@ async function commitFilePair(repo, hash, file) {
   return {
     left: pack(oldBuf),
     right: pack(newBuf),
-    leftLabel: parent ? `${parent.slice(0, 8)}: ${oldPath}` : '(없음)',
-    rightLabel: `${hash.slice(0, 8)}: ${file.path}`,
+    leftLabel: parent ? `이전 ${parent.slice(0, 8)}: ${oldPath}` : '(없음)',
+    rightLabel: `이 커밋 ${hash.slice(0, 8)}: ${file.path}`,
+    leftTag: parent ? (await headRelation(repo, parent))?.kind === 'current' ? { kind: 'current', text: '현재 버전 (HEAD)' } : null : null,
+    rightTag: await headRelation(repo, hash),
   };
 }
 
@@ -731,6 +755,51 @@ async function conflictInfo(repo, file) {
   return { working: pack(working), ours: pack(ours), theirs: pack(theirs), base: pack(base) };
 }
 
+// 충돌 화면에서 양쪽(ours/theirs)이 각각 무엇인지: 어느 쪽이 '현재 버전(내 작업)' 인지 알려 주기 위해
+async function conflictSides(repo) {
+  const state = await repoState(repo);
+  const gd = await gitDir(repo);
+  const read = (f) => {
+    try {
+      return fs.readFileSync(path.join(gd, f), 'utf8').trim();
+    } catch {
+      return '';
+    }
+  };
+  const nameOf = async (rev) => {
+    if (!rev) return '';
+    const n = await run(repo, ['name-rev', '--name-only', '--no-undefined', '--exclude=refs/tags/*', rev], { allowFail: true });
+    const name = n.code === 0 ? n.stdout.trim().replace(/^remotes\//, '') : '';
+    return name && !/[~^]/.test(name) ? name : rev.slice(0, 8);
+  };
+  const subject = async (rev) => (rev ? (await run(repo, ['log', '-1', '--format=%s', rev], { allowFail: true })).stdout.trim() : '');
+  const cur = await run(repo, ['symbolic-ref', '--short', '-q', 'HEAD'], { allowFail: true });
+  const branch = cur.stdout.trim();
+  if (state === 'rebase') {
+    // 리베이스: ours = 옮겨 갈 기준(onto), theirs = 내 브랜치의 커밋을 하나씩 다시 적용하는 중
+    const dir = fs.existsSync(path.join(gd, 'rebase-merge')) ? 'rebase-merge' : 'rebase-apply';
+    const onto = read(`${dir}/onto`);
+    const mine = read(`${dir}/head-name`).replace(/^refs\/heads\//, '');
+    const stopped = read('REBASE_HEAD') || read(`${dir}/stopped-sha`);
+    return {
+      state,
+      mine: 'theirs',
+      ours: { name: await nameOf(onto), role: '리베이스 기준 (옮겨 갈 곳)' },
+      theirs: { name: mine || '내 브랜치', role: '내 커밋 (다시 적용 중)', commit: stopped.slice(0, 8), subject: await subject(stopped) },
+    };
+  }
+  const other = read('MERGE_HEAD').split('\n')[0] || read('CHERRY_PICK_HEAD') || read('REVERT_HEAD');
+  const role = { merge: '병합해 오는 쪽', 'cherry-pick': '가져오는 커밋', revert: '되돌리는 커밋' }[state] || '상대 쪽';
+  let otherName = state === 'merge' ? (read('MERGE_MSG').match(/^Merge (?:remote-tracking )?branch '([^']+)'/) || [])[1] : '';
+  if (!otherName) otherName = state === 'merge' ? await nameOf(other) : other.slice(0, 8);
+  return {
+    state,
+    mine: 'ours',
+    ours: { name: branch || '(분리된 HEAD)', role: '현재 브랜치' },
+    theirs: { name: otherName, role, commit: other.slice(0, 8), subject: state === 'merge' ? '' : await subject(other) },
+  };
+}
+
 async function resolveWithContent(repo, file, content) {
   fs.writeFileSync(path.join(repo, file), content, 'utf8');
   await run(repo, ['add', '--', file]);
@@ -803,6 +872,7 @@ module.exports = {
   FS,
   RS,
   hasHead,
+  headRelation,
   repoState,
   gitDir,
   showBlob,
@@ -850,6 +920,7 @@ module.exports = {
   stashDrop,
   stashFiles,
   conflictInfo,
+  conflictSides,
   resolveWithContent,
   resolveSide,
   init,

@@ -1,7 +1,7 @@
 {
   "name": "codeflow",
   "productName": "CodeFlow",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "CodeFlow",
   "main": "src/main/main.js",
   "author": "isanguk38",

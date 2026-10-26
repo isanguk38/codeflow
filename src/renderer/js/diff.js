@@ -109,6 +109,18 @@ export function diffMode() {
   return localStorage.getItem('diffMode') || 'side';
 }
 
+// 머리글: 라벨 + '현재 버전' 같은 표시(tag: { kind: current|head|in|out, text })
+function sideHead(label, tag) {
+  const badge = tag ? `<span class="ver-tag ${tag.kind}" title="${esc(TAG_TIP[tag.kind] || '')}">${tag.kind === 'current' ? '● ' : ''}${esc(tag.text)}</span>` : '';
+  return `${badge}<span class="ver-label" title="${esc(label)}">${esc(label)}</span>`;
+}
+const TAG_TIP = {
+  current: '지금 내가 체크아웃해서 쓰고 있는 버전입니다.',
+  head: '현재 브랜치의 마지막 커밋입니다.',
+  in: '이 커밋은 현재 브랜치에 이미 들어 있습니다. (지금 버전보다 예전 커밋)',
+  out: '이 커밋은 현재 브랜치에 없습니다. (다른 브랜치의 커밋)',
+};
+
 // pair: { left:{text,binary,tooLarge,exists}, right:{...}, leftLabel, rightLabel }
 export function renderDiff(container, pair, { title, actions = [] } = {}) {
   container.innerHTML = '';
@@ -147,9 +159,9 @@ export function renderDiff(container, pair, { title, actions = [] } = {}) {
 
   const table = h('table', { class: `diff-table ${mode}` });
   if (mode === 'side') {
-    table.innerHTML = `<colgroup><col class="c-ln"><col class="c-code"><col class="c-ln"><col class="c-code"></colgroup><thead><tr><th colspan="2">${esc(pair.leftLabel || '이전')}</th><th colspan="2">${esc(pair.rightLabel || '이후')}</th></tr></thead>`;
+    table.innerHTML = `<colgroup><col class="c-ln"><col class="c-code"><col class="c-ln"><col class="c-code"></colgroup><thead><tr><th colspan="2">${sideHead(pair.leftLabel || '이전', pair.leftTag)}</th><th colspan="2">${sideHead(pair.rightLabel || '이후', pair.rightTag)}</th></tr></thead>`;
   } else {
-    table.innerHTML = `<colgroup><col class="c-ln"><col class="c-ln"><col class="c-code"></colgroup><thead><tr><th colspan="3">${esc(pair.leftLabel || '')} → ${esc(pair.rightLabel || '')}</th></tr></thead>`;
+    table.innerHTML = `<colgroup><col class="c-ln"><col class="c-ln"><col class="c-code"></colgroup><thead><tr><th colspan="3">${sideHead(pair.leftLabel || '', pair.leftTag)} → ${sideHead(pair.rightLabel || '', pair.rightTag)}</th></tr></thead>`;
   }
   const tbody = h('tbody');
   const rowHtml = mode === 'side' ? sideRowHtml : unifiedRowHtml;

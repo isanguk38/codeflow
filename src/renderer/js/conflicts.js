@@ -6,12 +6,54 @@ const STATE_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '�
 
 let listModal = null;
 
+// 양쪽이 각각 무엇인지 (git.conflictSides). 병합/체리픽은 왼쪽(ours)이, 리베이스는 오른쪽(theirs)이 내 작업이다.
+async function getSides() {
+  try {
+    return await git('conflictSides');
+  } catch {
+    return null;
+  }
+}
+const isMine = (sd, w) => (sd ? sd.mine === w : w === 'ours');
+// 버튼 글자: '● main 적용' 처럼 이름으로, 현재 버전 쪽에 ●
+function sideName(sd, w) {
+  const x = sd?.[w];
+  if (!x?.name) return w === 'ours' ? '내 것' : '상대 것';
+  return x.name;
+}
+function sideTitle(sd, w) {
+  const x = sd?.[w];
+  if (!x) return w === 'ours' ? '현재 브랜치(내 쪽) 버전' : '병합해 오는 쪽 버전';
+  const parts = [`${x.role}: ${x.name}`];
+  if (x.commit) parts.push(`커밋 ${x.commit}${x.subject ? ` ${x.subject}` : ''}`);
+  if (isMine(sd, w)) parts.push(sd.state === 'rebase' ? '← 내 작업 (리베이스 중에는 오른쪽이 내 커밋입니다)' : '← 현재 버전 (지금 내 브랜치)');
+  return parts.join('\n');
+}
+// 목록/병합 도구 위쪽: '● 현재 버전 main  ↔  병합해 오는 쪽 feature'
+function sidesBanner(sd) {
+  const pill = (w) => {
+    const x = sd[w];
+    const mine = isMine(sd, w);
+    return h(
+      'span',
+      { class: `cs-pill ${w} ${mine ? 'mine' : ''}`, title: sideTitle(sd, w) },
+      h('span', { class: 'cs-role', text: mine ? (sd.state === 'rebase' ? '● 내 작업' : '● 현재 버전') : x.role }),
+      h('b', { text: x.name }),
+      x.commit && sd.state !== 'merge' ? h('span', { class: 'cs-sub', text: `${x.commit}${x.subject ? ` ${x.subject}` : ''}` }) : null
+    );
+  };
+  const box = h('div', { class: 'conflict-sides' }, h('span', { class: 'cs-side', text: '왼쪽' }), pill('ours'), h('span', { class: 'cs-arrow', text: '↔' }), h('span', { class: 'cs-side', text: '오른쪽' }), pill('theirs'));
+  if (sd.state === 'rebase') box.append(h('div', { class: 'cs-note', text: '리베이스 중에는 왼쪽이 옮겨 갈 기준 브랜치, 오른쪽이 다시 적용 중인 내 커밋입니다.' }));
+  return box;
+}
+
 export async function openConflicts() {
   await refresh();
   listModal?.close();
   const s = state.status;
   const conflicts = (s?.files || []).filter((f) => f.status === 'conflict');
   const opName = STATE_LABEL[s?.state] || '작업';
+  const sd = conflicts.length ? await getSides() : null;
   const body = h('div', { class: 'conflict-list' });
 
   if (!conflicts.length) {
@@ -20,6 +62,7 @@ export async function openConflicts() {
     );
   } else {
     body.append(h('p', { class: 'msg', text: `${opName} 중 ${conflicts.length}개 파일에서 충돌이 발생했습니다. 파일별로 어느 쪽 변경을 사용할지 선택하거나 '병합...' 으로 직접 합치세요.` }));
+    if (sd) body.append(sidesBanner(sd));
     for (const f of conflicts) {
       const { dir, name } = splitPath(f.path);
       body.append(
@@ -27,8 +70,8 @@ export async function openConflicts() {
           'div',
           { class: 'conflict-row' },
           h('div', { class: 'cr-name' }, h('b', { text: name }), h('span', { class: 'fdir', text: ` ${dir}` }), h('div', { class: 'cr-kind', text: conflictKind(f) })),
-          h('button', { class: 'btn', text: '내 것 적용', title: '현재 브랜치(내 쪽) 버전 사용', onclick: () => side(f.path, 'ours') }),
-          h('button', { class: 'btn', text: '상대 것 적용', title: '병합해 오는 쪽 버전 사용', onclick: () => side(f.path, 'theirs') }),
+          h('button', { class: `btn side-btn ${isMine(sd, 'ours') ? 'mine' : ''}`, text: `${isMine(sd, 'ours') ? '● ' : ''}${sideName(sd, 'ours')} 적용`, title: `${sideTitle(sd, 'ours')}\n\n이 파일을 이 쪽 버전으로 정합니다.`, onclick: () => side(f.path, 'ours', sideName(sd, 'ours')) }),
+          h('button', { class: `btn side-btn ${isMine(sd, 'theirs') ? 'mine' : ''}`, text: `${isMine(sd, 'theirs') ? '● ' : ''}${sideName(sd, 'theirs')} 적용`, title: `${sideTitle(sd, 'theirs')}\n\n이 파일을 이 쪽 버전으로 정합니다.`, onclick: () => side(f.path, 'theirs', sideName(sd, 'theirs')) }),
           h('button', { class: 'btn primary', text: '병합...', onclick: () => openMergeTool(f.path) })
         )
       );
@@ -56,8 +99,8 @@ function conflictKind(f) {
   );
 }
 
-async function side(file, which) {
-  await op('충돌 해결', () => git('resolveSide', file, which), { success: `${file}: ${which === 'ours' ? '내 것' : '상대 것'} 적용` });
+async function side(file, which, name) {
+  await op('충돌 해결', () => git('resolveSide', file, which), { success: `${file}: ${name || (which === 'ours' ? '내 것' : '상대 것')} 적용` });
   openConflicts();
 }
 
@@ -133,26 +176,40 @@ export async function openMergeTool(file) {
   conflicts.forEach((c) => {
     c.result = null;
   });
+  const sd = await getSides();
+  const colTitle = (w) => {
+    const mine = isMine(sd, w);
+    const fallback = w === 'ours' ? conflicts[0].oursLabel || 'HEAD' : conflicts[0].theirsLabel || '병합 대상';
+    const x = sd?.[w];
+    return h(
+      'div',
+      { class: `mt-col-title ${w} ${mine ? 'mine' : ''}`, title: sideTitle(sd, w) },
+      mine ? h('span', { class: 'ver-tag current', text: sd?.state === 'rebase' ? '● 내 작업' : '● 현재 버전' }) : null,
+      h('span', { text: x ? `${x.role}: ${x.name}` : `${w === 'ours' ? '내 변경' : '상대 변경'} (${fallback})` })
+    );
+  };
+  const oursN = sideName(sd, 'ours');
+  const theirsN = sideName(sd, 'theirs');
 
   const progress = h('span', { class: 'mt-progress' });
   const grid = h('div', { class: 'mt-grid' });
   const head = h(
     'div',
     { class: 'mt-head' },
-    h('div', { class: 'mt-col-title ours', text: `내 변경 (${conflicts[0].oursLabel || 'HEAD'})` }),
-    h('div', { class: 'mt-col-title', text: '결과' }),
-    h('div', { class: 'mt-col-title theirs', text: `상대 변경 (${conflicts[0].theirsLabel || '병합 대상'})` })
+    colTitle('ours'),
+    h('div', { class: 'mt-col-title', text: '결과 (저장될 내용)' }),
+    colTitle('theirs')
   );
   const toolbar = h(
     'div',
     { class: 'mt-toolbar' },
     progress,
     h('span', { class: 'tb-spacer' }),
-    h('button', { class: 'btn', text: '모두 내 것으로', onclick: () => (conflicts.forEach((c) => (c.result = c.ours)), draw()) }),
-    h('button', { class: 'btn', text: '모두 상대 것으로', onclick: () => (conflicts.forEach((c) => (c.result = c.theirs)), draw()) }),
+    h('button', { class: 'btn', text: `모두 ${oursN} 쪽으로`, title: sideTitle(sd, 'ours'), onclick: () => (conflicts.forEach((c) => (c.result = c.ours)), draw()) }),
+    h('button', { class: 'btn', text: `모두 ${theirsN} 쪽으로`, title: sideTitle(sd, 'theirs'), onclick: () => (conflicts.forEach((c) => (c.result = c.theirs)), draw()) }),
     h('button', { class: 'btn', text: '모두 초기화', onclick: () => (conflicts.forEach((c) => (c.result = null)), draw()) })
   );
-  const body = h('div', { class: 'merge-tool' }, toolbar, head, grid);
+  const body = h('div', { class: 'merge-tool' }, toolbar, ...(sd ? [sidesBanner(sd)] : []), head, grid);
 
   const draw = () => {
     grid.innerHTML = '';
@@ -188,7 +245,7 @@ export async function openMergeTool(file) {
           h(
             'div',
             { class: 'mt-mid' },
-            h('div', { class: 'mt-mid-bar' }, h('span', { text: `충돌 ${n}` }), h('span', { class: 'tb-spacer' }), h('button', { class: 'tb-btn small', text: '둘 다(내 것 먼저)', onclick: () => ((c.result = c.ours + c.theirs), draw()) }), h('button', { class: 'tb-btn small', text: '둘 다(상대 먼저)', onclick: () => ((c.result = c.theirs + c.ours), draw()) }), h('button', { class: 'tb-btn small', text: '초기화', onclick: () => ((c.result = null), draw()) })),
+            h('div', { class: 'mt-mid-bar' }, h('span', { text: `충돌 ${n}` }), h('span', { class: 'tb-spacer' }), h('button', { class: 'tb-btn small', text: '둘 다(왼쪽 먼저)', title: `${oursN} 다음에 ${theirsN}`, onclick: () => ((c.result = c.ours + c.theirs), draw()) }), h('button', { class: 'tb-btn small', text: '둘 다(오른쪽 먼저)', title: `${theirsN} 다음에 ${oursN}`, onclick: () => ((c.result = c.theirs + c.ours), draw()) }), h('button', { class: 'tb-btn small', text: '초기화', onclick: () => ((c.result = null), draw()) })),
             ta
           ),
           h('div', { class: 'mt-side theirs' }, h('pre', { text: c.theirs.replace(/\n$/, '') || '(내용 없음)' }), h('button', { class: 'btn small', text: '≪ 적용', onclick: () => ((c.result = c.theirs), draw()) }))

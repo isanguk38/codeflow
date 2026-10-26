@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, GitError, FS, RS, hasHead, gitDir, showBlob, pack, parseNameStatus, mergeLike } = require('./git');
+const { run, GitError, FS, RS, hasHead, gitDir, showBlob, pack, parseNameStatus, mergeLike, headRelation } = require('./git');
 
 const posix = (p) => p.replace(/\\/g, '/');
 
@@ -141,7 +141,17 @@ async function refFilePair(repo, a, b, file) {
   const oldPath = file.orig || file.path;
   const left = file.status === 'added' ? null : await showBlob(repo, `${a}:${oldPath}`);
   const right = file.status === 'deleted' ? null : await showBlob(repo, `${b}:${file.path}`);
-  return { left: pack(left), right: pack(right), leftLabel: `${a}: ${oldPath}`, rightLabel: `${b}: ${file.path}` };
+  const short = (r) => (/^[0-9a-f]{40}$/.test(r) ? r.slice(0, 8) : r);
+  // 어느 쪽이 지금 내 버전(HEAD)인지, 아니면 현재 브랜치에 들어 있는지 표시
+  const [lt, rt] = await Promise.all([headRelation(repo, a), headRelation(repo, b)]);
+  return {
+    left: pack(left),
+    right: pack(right),
+    leftLabel: `${short(a)}: ${oldPath}`,
+    rightLabel: `${short(b)}: ${file.path}`,
+    leftTag: lt?.kind === 'current' ? lt : null,
+    rightTag: rt,
+  };
 }
 
 // ---------- Bisect ----------

@@ -1543,3 +1543,101 @@ input[type='checkbox'] {
   font-size: 11px;
   flex: none;
 }
+
+/* diff 머리글: 어느 쪽이 현재 버전인지 */
+.ver-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  vertical-align: 1px;
+}
+.ver-tag.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.ver-tag.head {
+  color: var(--text2);
+}
+.ver-tag.in {
+  color: var(--c-added);
+  border-color: color-mix(in srgb, var(--c-added) 45%, transparent);
+}
+.ver-tag.out {
+  color: var(--c-modified);
+  border-color: color-mix(in srgb, var(--c-modified) 45%, transparent);
+}
+
+/* 충돌: 어느 쪽이 현재 버전(내 작업)인지 */
+.conflict-sides {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 10px;
+  padding: 6px 8px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.merge-tool .conflict-sides {
+  margin: 0;
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+.cs-side {
+  color: var(--text3);
+  font-size: 11px;
+}
+.cs-arrow {
+  color: var(--text3);
+  margin: 0 4px;
+}
+.cs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cs-pill.mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.cs-role {
+  color: var(--text3);
+}
+.cs-pill.mine .cs-role {
+  color: var(--accent2, var(--accent));
+  font-weight: 600;
+}
+.cs-sub {
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cs-note {
+  flex-basis: 100%;
+  color: var(--text3);
+  font-size: 11px;
+}
+.side-btn.mine {
+  border-color: var(--accent);
+}
+.mt-col-title.mine {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.mt-col-title .ver-tag {
+  margin-right: 6px;
+}
