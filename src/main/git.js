@@ -357,7 +357,7 @@ async function rollback(repo, files) {
 const FS = '\x1f';
 const RS = '\x1e';
 
-async function log(repo, { limit = 500, skip = 0, all = true, ref, refs, file, search, order = 'date' } = {}) {
+async function log(repo, { limit = 500, skip = 0, all = true, ref, refs, file, search, issue, order = 'date' } = {}) {
   if (!(await hasHead(repo))) return [];
   const args = ['log', `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%D${FS}%s${RS}`, `-n`, String(limit), `--skip=${skip}`];
   if (file) {
@@ -370,6 +370,12 @@ async function log(repo, { limit = 500, skip = 0, all = true, ref, refs, file, s
     else if (all) args.push('--branches', '--remotes', '--tags', 'HEAD');
   }
   if (search) args.push('-i', `--grep=${search}`);
+  // 이슈 번호를 언급한 커밋: '#56 ...', 'Closes #56', 이슈 브랜치 병합 'Merge branch '56-로그인'' / 'issue-56-...'
+  if (issue && /^\d+$/.test(String(issue))) {
+    const n = String(issue);
+    args.push('-E', '-i', `--grep=(#${n}([^0-9]|$))|(['/ ]${n}-[^0-9])|(issue-${n}([^0-9]|$))`);
+    if (search) args.push('--all-match');
+  }
   if (file) args.push('--', file);
   const r = await run(repo, args);
   return r.stdout
@@ -408,6 +414,21 @@ function parseNameStatus(out) {
     }
   }
   return files;
+}
+
+// 여러 커밋의 정보 + 변경 파일 (첫 번째 부모 기준) — 히스토리에서 여러 커밋을 골랐을 때
+async function commitsFiles(repo, hashes) {
+  const out = [];
+  for (const hash of hashes.slice(0, 500)) {
+    const r = await run(repo, ['show', '-s', `--format=%H${FS}%P${FS}%an${FS}%at${FS}%s`, hash]);
+    const [h, parents, author, at, subject] = r.stdout.trim().split(FS);
+    const ps = parents ? parents.split(' ') : [];
+    const diff = ps.length
+      ? await run(repo, ['diff', '--name-status', '-z', '-M', ps[0], h])
+      : await run(repo, ['show', '--name-status', '-z', '-M', '--format=', h]);
+    out.push({ hash: h, parents: ps, author, time: +at * 1000, subject, files: parseNameStatus(diff.stdout) });
+  }
+  return out;
 }
 
 async function commitDetails(repo, hash) {
@@ -839,4 +860,5 @@ module.exports = {
   setConfig,
   addToGitignore,
   updateBranches,
+  commitsFiles,
 };

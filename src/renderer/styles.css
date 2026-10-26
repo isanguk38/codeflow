@@ -1483,3 +1483,63 @@ input[type='checkbox'] {
   padding: 0 4px;
   flex-shrink: 0;
 }
+
+/* 여러 커밋 선택: 커밋 목록 + 합친 변경 파일 */
+.multi-info .ci-subj {
+  font-size: 13px;
+}
+.multi-commits {
+  max-height: 34%;
+  min-height: 60px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin: 4px 0 6px;
+  font-size: 12px;
+}
+.mc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mc-row:hover {
+  background: var(--hover);
+}
+.mc-hash {
+  font-family: var(--mono);
+  color: var(--accent2);
+  flex: none;
+}
+.mc-subj {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-meta {
+  color: var(--text3);
+  flex: none;
+}
+.mc-n {
+  color: var(--text3);
+  flex: none;
+  min-width: 18px;
+  text-align: right;
+}
+.mc-n::after {
+  content: '개';
+}
+.multi-files-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mf-n {
+  margin-left: auto;
+  color: var(--text3);
+  font-size: 11px;
+  flex: none;
+}

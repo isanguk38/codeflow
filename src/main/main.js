@@ -38,6 +38,21 @@ function createWindow() {
     },
   });
   Menu.setApplicationMenu(null);
+  // 입력 칸 오른쪽 클릭: 잘라내기 / 복사 / 붙여넣기 / 모두 선택 (메뉴 막대가 없어서 기본 메뉴가 안 뜸)
+  win.webContents.on('context-menu', (_e, p) => {
+    if (!p.isEditable && !p.selectionText) return;
+    const f = p.editFlags || {};
+    const items = p.isEditable
+      ? [
+          { label: '잘라내기', role: 'cut', enabled: !!f.canCut },
+          { label: '복사', role: 'copy', enabled: !!f.canCopy },
+          { label: '붙여넣기', role: 'paste', enabled: !!f.canPaste },
+          { type: 'separator' },
+          { label: '모두 선택', role: 'selectAll' },
+        ]
+      : [{ label: '복사', role: 'copy' }];
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.on('close', () => {
     const cur = loadSettings();
@@ -262,6 +277,13 @@ ipcMain.handle('file:stat', aiSafe((_e, p) => {
   return { size: st.size, mtime: st.mtimeMs, isFile: st.isFile() };
 }));
 ipcMain.handle('app:path', (_e, name) => app.getPath(name));
+// 엑셀(.xlsx)로 저장 (자원 리스트 등): 저장 위치를 묻고 파일을 만든다
+ipcMain.handle('xlsx:save', aiSafe(async (_e, defaultName, sheets) => {
+  const r = await dialog.showSaveDialog(win, { title: '엑셀로 저장', defaultPath: path.join(app.getPath('documents'), defaultName), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, require('./xlsx').build(sheets));
+  return r.filePath;
+}));
 ipcMain.handle('file:saveCopy', aiSafe(async (_e, p) => {
   const r = await dialog.showSaveDialog(win, { title: '다른 이름으로 저장', defaultPath: path.join(app.getPath('downloads'), path.basename(p)) });
   if (r.canceled || !r.filePath) return null;

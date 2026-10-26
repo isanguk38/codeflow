@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
     saveAs: (p, opts) => ipcRenderer.invoke('file:saveAs', p, opts),
     stat: (p) => ipcRenderer.invoke('file:stat', p),
     appPath: (name) => ipcRenderer.invoke('app:path', name),
+    saveXlsx: (name, sheets) => ipcRenderer.invoke('xlsx:save', name, sheets),
   },
   issues: {
     list: (repo, opts) => ipcRenderer.invoke('issues:list', repo, opts),

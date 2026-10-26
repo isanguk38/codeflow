@@ -14,7 +14,7 @@ const COLORS = ['#4e9bf5', '#e5a42b', '#5fb865', '#d9636b', '#a77ee8', '#3fbdb0'
 // '@ALL' 은 모든 브랜치, '@HEAD' 는 현재 체크아웃한 브랜치
 const ALL = '@ALL';
 const CUR = '@HEAD';
-const filter = { refs: [ALL], file: null, search: '' };
+const filter = { refs: [ALL], file: null, search: '', issue: null }; // issue: { number, title } — 이슈 목록에서 고른 이슈
 const isAll = () => filter.refs.includes(ALL);
 const gitRefs = () => (isAll() ? [] : filter.refs.map((r) => (r === CUR ? 'HEAD' : r)));
 // 배지 비교용 이름: '@HEAD' → 현재 브랜치 이름
@@ -116,6 +116,14 @@ export function activateLog() {
   if (dirty || boundRepo !== state.repo) load();
 }
 
+// 이슈 목록에서 이슈를 누르면: 그 이슈를 언급한 커밋만 보기 (다시 누르거나 ✕ 로 해제)
+export function filterByIssue(issue) {
+  filter.issue = issue ? { number: issue.number, title: issue.title } : null;
+  filter.file = null;
+  load();
+}
+export const currentIssueFilter = () => filter.issue;
+
 export function showFileHistory(path) {
   filter.file = path;
   document.querySelector('.rail-btn[data-view="log"]')?.click();
@@ -128,6 +136,13 @@ function setFilterChip() {
   chip.innerHTML = '';
   if (filter.file) {
     chip.append(h('span', { text: `파일: ${filter.file}` }), h('button', { class: 'chip-x', text: '✕', title: '파일 필터 해제', onclick: () => ((filter.file = null), load()) }));
+    return;
+  }
+  if (filter.issue) {
+    chip.append(
+      h('span', { text: `이슈 #${filter.issue.number} 관련 커밋`, title: filter.issue.title }),
+      h('button', { class: 'chip-x', text: '✕', title: '이슈 필터 해제', onclick: () => (filterByIssue(null), window.dispatchEvent(new Event('issue-filter-changed'))) })
+    );
     return;
   }
   if (isAll()) {
@@ -148,6 +163,7 @@ function saveRepoView() {
     refs: filter.refs,
     file: filter.file,
     search: filter.search,
+    issue: filter.issue,
     // 이 저장소 이력을 끝까지 받은 적이 있을 때만 기억 (도중에 탭을 옮긴 빈 목록은 기억하지 않음)
     allCommits: loadedRepo === boundRepo ? allCommits : perRepo.get(boundRepo)?.allCommits || null,
     br: loadedRepo === boundRepo ? lastBr : perRepo.get(boundRepo)?.br || null,
@@ -185,6 +201,7 @@ async function load() {
     filter.refs = saved?.refs || [ALL];
     filter.file = saved?.file || null;
     filter.search = saved?.search || '';
+    filter.issue = saved?.issue || null;
     $('#logSearch').value = filter.search;
     selectedHash = saved?.selectedHash || null;
     selectedFile = saved?.selectedFile || null;
@@ -209,7 +226,7 @@ async function load() {
     if (seq === loadSeq && !allCommits.length) $('#logTable').innerHTML = '<div class="loading-note"><span class="spinner"></span> 히스토리를 불러오는 중...</div>';
   }, 250);
   try {
-    const logP = git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order });
+    const logP = git('log', { limit: PAGE, refs: gitRefs(), file: filter.file, search: filter.search, issue: filter.issue?.number, order: viewOpt.order });
     logP.catch(() => {}); // 아래에서 await 하며 처리 (먼저 실패해도 경고가 뜨지 않게)
     // 브랜치 목록은 빠르므로 이력을 기다리지 않고 바로 다시 그린다 (삭제/생성/이름 변경이 즉시 보이도록)
     const br = await git('branches');
@@ -233,7 +250,7 @@ async function load() {
 async function loadMore() {
   const repo = state.repo;
   const seq = loadSeq;
-  const more = await git('log', { limit: PAGE, skip: allCommits.length, refs: gitRefs(), file: filter.file, search: filter.search, order: viewOpt.order });
+  const more = await git('log', { limit: PAGE, skip: allCommits.length, refs: gitRefs(), file: filter.file, search: filter.search, issue: filter.issue?.number, order: viewOpt.order });
   if (seq !== loadSeq || state.repo !== repo) return;
   allCommits = allCommits.concat(more);
   applyCompare();
@@ -556,7 +573,13 @@ function applyCompare() {
 function renderTable() {
   const table = $('#logTable');
   if (!commits.length) {
-    table.innerHTML = `<div class="empty">${filter.search ? '검색 결과가 없습니다.' : '커밋이 없습니다. 첫 커밋을 만들어 보세요.'}</div>`;
+    table.innerHTML = `<div class="empty">${
+      filter.issue
+        ? `이슈 #${filter.issue.number} 을(를) 언급한 커밋이 없습니다.<br><span class="hint">커밋 메시지에 #${filter.issue.number} 를 적거나, 이슈 번호로 시작하는 브랜치(${filter.issue.number}-…)를 병합하면 여기에 보입니다.</span>`
+        : filter.search
+          ? '검색 결과가 없습니다.'
+          : '커밋이 없습니다. 첫 커밋을 만들어 보세요.'
+    }</div>`;
     return;
   }
   const maxLanes = graph ? Math.max(1, ...graph.map((g) => Math.max(g.before.length, g.after.length, g.idx + 1))) : 0;
@@ -598,7 +621,12 @@ function renderTable() {
       anchor = i;
     }
     if (multi.size === 1) multi.clear();
-    selectCommit(c.hash);
+    // 여러 개를 골랐으면 아래에 선택한 커밋 목록 + 합친 변경 파일(중복 없이)
+    if (multi.size > 1) {
+      selectedHash = c.hash;
+      markRows(); // 고른 줄들 표시
+      showMultiDetail();
+    } else selectCommit(c.hash);
   };
   table.oncontextmenu = (e) => {
     const row = e.target.closest('.log-row');
@@ -836,6 +864,200 @@ async function selectCommit(hash, scroll = true) {
     [...list.children][d.files.indexOf(pick)]?.classList.add('active');
     showCommitDiff(d, pick);
   } else emptyDiff($('#logDetailDiff'), '변경된 파일이 없습니다.');
+}
+
+// ---------- 여러 커밋 선택: 커밋 목록 + 변경 파일 합치기(중복 제외) + 엑셀(자원 리스트) ----------
+
+let multiSeq = 0;
+const STATUS_KO = { added: '추가', modified: '수정', deleted: '삭제', renamed: '이름 변경' };
+
+// 같은 파일을 여러 커밋이 바꿨으면 하나로: 처음 상태와 마지막 상태로 최종 구분을 정한다
+function mergeFiles(details) {
+  const map = new Map();
+  // 오래된 커밋부터
+  for (const d of [...details].sort((a, b) => a.time - b.time)) {
+    for (const f of d.files) {
+      let m = map.get(f.path);
+      if (!m && f.orig && map.has(f.orig)) {
+        // 이름이 바뀐 파일은 예전 경로 기록을 이어 받는다
+        m = map.get(f.orig);
+        map.delete(f.orig);
+        m.orig = m.orig || f.orig;
+        m.path = f.path;
+        map.set(f.path, m);
+      }
+      if (!m) {
+        m = { path: f.path, orig: f.orig || null, first: f.status, last: f.status, commits: [], authors: new Set(), time: 0 };
+        map.set(f.path, m);
+      }
+      m.last = f.status;
+      m.commits.push(d);
+      m.authors.add(d.author);
+      m.time = Math.max(m.time, d.time);
+    }
+  }
+  for (const m of map.values()) {
+    m.status = m.last === 'deleted' ? (m.first === 'added' ? 'deleted' : 'deleted') : m.first === 'added' ? 'added' : m.orig ? 'renamed' : m.last === 'renamed' ? 'renamed' : 'modified';
+    if (m.first === 'added' && m.last === 'deleted') m.status = 'deleted'; // 만들었다가 지움
+  }
+  return [...map.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function showMultiDetail() {
+  const my = ++multiSeq;
+  const repo = state.repo;
+  const hashes = commits.filter((c) => multi.has(c.hash)).map((c) => c.hash); // 목록 순서(최신 먼저)
+  const box = $('#logDetailFiles');
+  box.innerHTML = `<div class="loading-note"><span class="spinner"></span> ${hashes.length}개 커밋의 변경 파일을 모으는 중...</div>`;
+  emptyDiff($('#logDetailDiff'), '왼쪽 목록에서 파일을 고르면 선택한 커밋들에서 바뀐 전체 내용을 보여 줍니다.');
+  let details;
+  try {
+    details = await git('commitsFiles', hashes);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (my !== multiSeq || state.repo !== repo) return;
+  const files = mergeFiles(details);
+  box.innerHTML = '';
+
+  // 선택한 커밋 목록 (간단한 표)
+  const clist = h('div', { class: 'multi-commits' });
+  for (const d of details) {
+    const row = h(
+      'div',
+      { class: 'mc-row', title: `${d.hash}\n${d.subject}\n클릭: 이 커밋만 보기` },
+      h('span', { class: 'mc-hash', text: d.hash.slice(0, 8) }),
+      h('span', { class: 'mc-subj', text: d.subject }),
+      h('span', { class: 'mc-meta', text: `${d.author} · ${fmtDate(d.time)}` }),
+      h('span', { class: 'mc-n', text: `${d.files.length}` })
+    );
+    row.onclick = () => {
+      multi.clear();
+      selectCommit(d.hash);
+    };
+    clist.append(row);
+  }
+  const authors = [...new Set(details.map((d) => d.author))];
+  const span = details.length ? `${fmtDate(Math.min(...details.map((d) => d.time)), false)} ~ ${fmtDate(Math.max(...details.map((d) => d.time)), false)}` : '';
+  box.append(
+    h('div', { class: 'commit-info multi-info' }, h('div', { class: 'ci-subj', text: `선택한 커밋 ${details.length}개` }), h('div', { class: 'ci-meta', text: `${span} · 작성자 ${authors.join(', ')}` })),
+    clist
+  );
+
+  // 합친 변경 파일
+  const counts = Object.entries(files.reduce((a, f) => ((a[f.status] = (a[f.status] || 0) + 1), a), {}))
+    .map(([k, v]) => `${STATUS_KO[k]} ${v}`)
+    .join(' · ');
+  const xbtn = h('button', { class: 'tb-btn small', text: '⬇ 엑셀', title: '변경된 파일 목록(자원 리스트)을 엑셀로 저장' });
+  xbtn.onclick = () => exportResources(details, files);
+  box.append(h('div', { class: 'group-header multi-files-head' }, h('span', { html: `변경된 파일 <span class="count">${files.length}개 (중복 제외)</span> <span class="count">${counts}</span>` }), h('span', { class: 'tb-spacer' }), xbtn));
+  const list = h('div', { class: 'detail-files' });
+  for (const f of files) {
+    const { dir, name } = splitPath(f.path);
+    const row = h(
+      'div',
+      { class: `file-row s-${f.status}`, title: `${f.path}${f.orig ? `\n(이전 이름: ${f.orig})` : ''}\n이 파일을 바꾼 커밋 ${f.commits.length}개` },
+      h('span', { class: `st-badge s-${f.status}`, text: STATUS_LABEL[f.status] }),
+      h('span', { class: 'fname', text: name }),
+      h('span', { class: 'fdir', text: dir }),
+      f.commits.length > 1 ? h('span', { class: 'mf-n', text: `×${f.commits.length}`, title: `${f.commits.length}개 커밋에서 바뀜` }) : null
+    );
+    row.onclick = () => {
+      list.querySelectorAll('.file-row').forEach((r) => r.classList.remove('active'));
+      row.classList.add('active');
+      showMergedDiff(f);
+    };
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      contextMenu(e.clientX, e.clientY, [
+        { label: '변경 내용 보기 (선택한 커밋 전체)', onClick: () => row.click() },
+        { label: '파일 히스토리 보기', onClick: () => showFileHistory(f.path) },
+        '-',
+        { label: `엑셀로 내보내기 — 자원 리스트 (${files.length}개 파일)`, onClick: () => exportResources(details, files) },
+        { label: '파일 경로 목록 복사 (전체)', onClick: () => (window.api.copy(files.map((x) => x.path).join('\n')), toast(`${files.length}개 경로를 복사했습니다.`, 'ok')) },
+        { label: '이 파일 경로 복사', onClick: () => window.api.copy(f.path) },
+      ]);
+    };
+    list.append(row);
+  }
+  box.append(list);
+  if (!files.length) list.append(h('div', { class: 'empty', text: '변경된 파일이 없습니다.' }));
+}
+
+// 선택한 커밋들 동안의 전체 변경: (이 파일을 처음 바꾼 커밋의 부모) → (마지막으로 바꾼 커밋)
+async function showMergedDiff(f) {
+  const oldest = f.commits[0];
+  const newest = f.commits[f.commits.length - 1];
+  const from = oldest.parents[0];
+  try {
+    const file = { path: f.path, orig: f.orig || undefined, status: !from ? 'added' : f.status };
+    const pair = await git('refFilePair', from || newest.hash, newest.hash, file);
+    renderDiff($('#logDetailDiff'), pair, { title: `${f.path}  (${f.commits.length}개 커밋 합친 변경)` });
+  } catch (e) {
+    emptyDiff($('#logDetailDiff'), e.message);
+  }
+}
+
+// 자원 리스트(변경 파일 목록)를 엑셀로
+async function exportResources(details, files) {
+  const repoName = state.repo.split(/[\\/]/).pop();
+  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const d8 = (t) => fmtDate(t, true);
+  const sheets = [
+    {
+      name: '자원 리스트',
+      columns: [
+        { header: '번호', width: 6 },
+        { header: '구분', width: 9 },
+        { header: '파일 경로', width: 60 },
+        { header: '파일명', width: 28 },
+        { header: '폴더', width: 40 },
+        { header: '확장자', width: 8 },
+        { header: '이전 경로', width: 30 },
+        { header: '변경 커밋 수', width: 10 },
+        { header: '커밋', width: 22 },
+        { header: '커밋 메시지', width: 50 },
+        { header: '작성자', width: 16 },
+        { header: '최종 변경일', width: 17 },
+      ],
+      rows: files.map((f, i) => {
+        const { dir, name } = splitPath(f.path);
+        const ext = (name.match(/\.([^.]+)$/) || [])[1] || '';
+        return [
+          i + 1,
+          STATUS_KO[f.status],
+          f.path,
+          name,
+          dir,
+          ext,
+          f.orig || '',
+          f.commits.length,
+          f.commits.map((c) => c.hash.slice(0, 8)).join(', '),
+          [...new Set(f.commits.map((c) => c.subject))].join('\n'),
+          [...f.authors].join(', '),
+          d8(f.time),
+        ];
+      }),
+    },
+    {
+      name: '커밋 목록',
+      columns: [
+        { header: '번호', width: 6 },
+        { header: '커밋', width: 12 },
+        { header: '메시지', width: 70 },
+        { header: '작성자', width: 16 },
+        { header: '날짜', width: 17 },
+        { header: '변경 파일 수', width: 12 },
+      ],
+      rows: details.map((d, i) => [i + 1, d.hash.slice(0, 8), d.subject, d.author, d8(d.time), d.files.length]),
+    },
+  ];
+  const r = await window.api.file.saveXlsx(`자원리스트_${repoName}_${ymd}.xlsx`, sheets);
+  if (!r.ok) return toast(`엑셀로 저장하지 못했습니다: ${r.error}`, 'error', 6000);
+  if (!r.data) return;
+  toast(`엑셀로 저장했습니다: ${r.data}`, 'ok', 5000);
+  window.api.showItem(r.data);
 }
 
 async function showCommitDiff(d, f) {

@@ -6,8 +6,10 @@ import { $, h, esc, toast, modal, fmtDate, splitter } from './ui.js';
 import { state } from './state.js';
 import { md, bindLinks } from './ai.js';
 import { newBranch } from './branches.js';
+import { filterByIssue, currentIssueFilter } from './log.js';
 
 let root;
+let keepTok = null; // 다시 그릴 때 토큰 입력 칸 값·커서 유지
 let collapsed = localStorage.getItem('issues.collapsed') === '1';
 const view = { state: 'open', search: '', mine: false };
 const cache = new Map(); // repo|state|search|mine → { items, page, hasMore, total, service, auth, at }
@@ -15,6 +17,9 @@ let loading = false;
 let seq = 0;
 
 const key = () => `${(state.repo || '').toLowerCase()}|${view.state}|${view.search}|${view.mine}`;
+
+// 히스토리 위쪽의 이슈 필터 ✕ 로 해제하면 목록 선택 표시도 지운다
+window.addEventListener('issue-filter-changed', () => draw());
 
 export function initIssues(container, handle, branchesEl) {
   root = container;
@@ -68,6 +73,9 @@ function setCollapsed(v) {
 function draw() {
   if (!root) return;
   const c = cache.get(key());
+  // 다시 그려도 토큰 입력 칸에 넣던 값·커서는 그대로 (브라우저에서 토큰을 복사해 돌아오면 앱이 새로 고침되므로)
+  const oldTok = root.querySelector('.iss-token');
+  keepTok = oldTok ? { value: oldTok.value, focus: document.activeElement === oldTok } : null;
   root.innerHTML = '';
   const count = c?.total ?? (c?.items ? `${c.items.length}${c.hasMore ? '+' : ''}` : '');
   const head = h(
@@ -166,7 +174,24 @@ ${it.body.replace(/\s+/g, ' ').slice(0, 200)}` },
     h('div', { class: 'iss-l1' }, h('span', { class: 'iss-no', text: `#${it.number}` }), h('span', { class: 'iss-title', text: it.title })),
     meta.length ? h('div', { class: 'iss-l2' }, ...meta) : null
   );
-  r.onclick = () => openIssue(it, c.service);
+  // 누르면: 히스토리를 이 이슈의 커밋만 보이게 (다시 누르면 해제). 상세는 두 번 클릭 또는 ⓘ
+  const sel = currentIssueFilter()?.number === it.number;
+  r.classList.toggle('selected', sel);
+  r.title = `${r.title}\n\n클릭: 이 이슈의 커밋만 히스토리에 보기 · 두 번 클릭(또는 ⓘ): 이슈 내용`;
+  r.onclick = () => {
+    filterByIssue(currentIssueFilter()?.number === it.number ? null : it);
+    draw();
+  };
+  r.ondblclick = (e) => {
+    e.preventDefault();
+    openIssue(it, c.service);
+  };
+  const info = h('button', { class: 'iss-info', text: 'ⓘ', title: '이슈 내용 보기' });
+  info.onclick = (e) => {
+    e.stopPropagation();
+    openIssue(it, c.service);
+  };
+  r.querySelector('.iss-l1').append(info);
   return r;
 }
 
@@ -183,7 +208,11 @@ function problem(c) {
     );
     const make = h('button', { class: 'tb-btn small', text: '① 토큰 만들기 (브라우저)' });
     make.onclick = () => window.api.openExternal(svc.newTokenUrl);
-    const input = h('input', { class: 'iss-search', type: 'password', placeholder: '② 만든 토큰 붙여 넣기', spellcheck: 'false' });
+    const input = h('input', { class: 'iss-search iss-token', type: 'password', placeholder: '② 만든 토큰 붙여 넣기 (Ctrl+V 또는 오른쪽 클릭)', spellcheck: 'false' });
+    if (keepTok) {
+      input.value = keepTok.value;
+      if (keepTok.focus) setTimeout(() => input.focus());
+    }
     const save = h('button', { class: 'btn primary small', text: '연결' });
     save.onclick = async () => {
       if (!input.value.trim()) return input.focus();

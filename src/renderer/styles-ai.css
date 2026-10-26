@@ -813,3 +813,28 @@
   border-top: 1px solid var(--border);
   margin: 8px 0;
 }
+
+/* 이슈로 히스토리 거르기 */
+.iss-row.selected {
+  background: var(--sel);
+}
+.iss-row.selected .iss-title {
+  color: var(--text);
+}
+.iss-info {
+  margin-left: auto;
+  flex: none;
+  background: none;
+  border: 0;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 0 2px;
+  visibility: hidden;
+}
+.iss-row:hover .iss-info,
+.iss-row.selected .iss-info {
+  visibility: visible;
+}
+.iss-info:hover {
+  color: var(--accent2);
+}
