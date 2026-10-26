@@ -18,13 +18,25 @@ const COLORS = ['#3b82f6', '#2f9e44', '#d6409f', '#d39e00', '#8e4ec6', '#0c9fb5'
 
 const teams = new Map(); // teamId → team (열려 있는 팀)
 
-// ---------- 저장 (userData/ai/teams/<프로젝트 해시>/<팀 id>.json) ----------
-const teamsDir = (repo) => path.join(app.getPath('userData'), 'ai', 'teams', crypto.createHash('sha1').update(String(repo).toLowerCase()).digest('hex').slice(0, 16));
+// ---------- 범위: 개인 팀(프로젝트 1개) / 그룹 팀(탭 그룹의 프로젝트들) ----------
+// scope = { kind: 'repo', key: 프로젝트 경로, projects: [경로] } 또는 { kind: 'group', key: 그룹 id, name: 그룹 이름, projects: [경로들] }
+// 팀원은 scope.projects 폴더들만 쓴다 (첫 프로젝트가 작업 폴더, 나머지는 허용 폴더)
 const safeId = (id) => String(id).replace(/[^\w-]/g, '');
+const scopeKey = (sc) => (sc.kind === 'group' ? `group:${sc.key}` : `repo:${String(sc.key).toLowerCase()}`);
+// 저장 위치: userData/ai/teams/<프로젝트 해시 | g-그룹id>/<팀 id>.json
+const teamsDir = (sc) =>
+  path.join(app.getPath('userData'), 'ai', 'teams', sc.kind === 'group' ? `g-${safeId(sc.key)}` : crypto.createHash('sha1').update(String(sc.key).toLowerCase()).digest('hex').slice(0, 16));
+const normScope = (sc) => {
+  if (typeof sc === 'string') sc = { kind: 'repo', key: sc };
+  const projects = [...new Set((sc.projects && sc.projects.length ? sc.projects : [sc.key]).filter(Boolean))];
+  return { kind: sc.kind === 'group' ? 'group' : 'repo', key: sc.key, name: sc.name || '', projects };
+};
+const scopeLabel = (t) => (t.scope.kind === 'group' ? `${t.scope.name || '그룹'} AI 팀` : `${path.basename(t.scope.key)} AI 팀`);
 function serialize(t) {
   return {
     id: t.id,
     repo: t.repo,
+    scope: t.scope,
     provider: t.provider,
     model: t.model,
     created: t.created,
@@ -39,7 +51,7 @@ function saveNow(t) {
   clearTimeout(t.saveTimer);
   t.saveTimer = null;
   try {
-    const dir = teamsDir(t.repo);
+    const dir = teamsDir(t.scope);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${safeId(t.id)}.json`), JSON.stringify(serialize(t)));
   } catch (e) {
@@ -48,18 +60,19 @@ function saveNow(t) {
 }
 const scheduleSave = (t) => t.saveTimer || (t.saveTimer = setTimeout(() => saveNow(t), 800));
 
-// 이 프로젝트의 저장된 팀 목록 (최근 것부터)
-function listSaved(repo) {
+// 이 범위(프로젝트 / 그룹)의 저장된 팀 목록 (최근 것부터)
+function listSaved(scope) {
+  const sc = normScope(scope);
   let files = [];
   try {
-    files = fs.readdirSync(teamsDir(repo)).filter((f) => f.endsWith('.json'));
+    files = fs.readdirSync(teamsDir(sc)).filter((f) => f.endsWith('.json'));
   } catch {
     return [];
   }
   const out = [];
   for (const f of files) {
     try {
-      const t = JSON.parse(fs.readFileSync(path.join(teamsDir(repo), f), 'utf8'));
+      const t = JSON.parse(fs.readFileSync(path.join(teamsDir(sc), f), 'utf8'));
       const live = t.members.filter((m) => !m.removed);
       out.push({ id: t.id, title: t.title || '(대화 없음)', updated: t.updated, members: live.map((m) => m.name), open: teams.has(t.id) });
     } catch {}
@@ -68,10 +81,15 @@ function listSaved(repo) {
 }
 
 // 저장된 팀 열기: 대화방 기록과 팀원을 되살린다 (팀원 AI 는 말을 걸 때 띄움)
-function open(repo, id) {
-  if (teams.has(id)) return publicTeam(teams.get(id));
-  const d = JSON.parse(fs.readFileSync(path.join(teamsDir(repo), `${safeId(id)}.json`), 'utf8'));
-  const team = { id: d.id, repo, provider: d.provider, model: d.model, created: d.created, title: d.title, members: [], log: d.log || [], hops: 0, paused: false, memberSeq: d.memberSeq || d.members.length, rate: {} };
+function open(scope, id) {
+  const sc = normScope(scope);
+  if (teams.has(id)) {
+    setProjects(id, sc); // 그룹 구성이 바뀌었을 수 있다
+    return publicTeam(teams.get(id));
+  }
+  const d = JSON.parse(fs.readFileSync(path.join(teamsDir(sc), `${safeId(id)}.json`), 'utf8'));
+  // 저장해 둔 범위와 지금 범위(그룹의 프로젝트)가 다르면 지금 것을 쓴다
+  const team = { id: d.id, scope: sc, repo: sc.projects[0], provider: d.provider, model: d.model, created: d.created, title: d.title, members: [], log: d.log || [], hops: 0, paused: false, memberSeq: d.memberSeq || d.members.length, rate: {} };
   for (const x of d.members) {
     team.members.push({ ...x, status: x.removed ? 'removed' : 'offline', activity: '', queue: [], turnFrom: [], turnText: '', lastText: '', chatId: null, ctx: null });
   }
@@ -79,9 +97,9 @@ function open(repo, id) {
   return publicTeam(team);
 }
 
-function deleteSaved(repo, id) {
+function deleteSaved(scope, id) {
   dispose(id);
-  fs.rmSync(path.join(teamsDir(repo), `${safeId(id)}.json`), { force: true });
+  fs.rmSync(path.join(teamsDir(normScope(scope)), `${safeId(id)}.json`), { force: true });
 }
 let sendToRenderer = () => {};
 
@@ -91,6 +109,15 @@ function setSender(fn) {
 const emit = (team, ev) => sendToRenderer('team:event', team.id, ev);
 
 // ---------- 역할 지시 (각 에이전트의 시스템 프롬프트에 붙는다) ----------
+function projectsText(team) {
+  return team.scope.projects.map((p, i) => `- ${path.basename(p)}: ${p}${i === 0 ? ' (작업 폴더)' : ''}`).join('\n');
+}
+function scopeText(team) {
+  return team.scope.kind === 'group'
+    ? `이 팀은 탭 그룹 "${team.scope.name}" 의 팀입니다. 아래 프로젝트들만 읽고 고칠 수 있습니다 (그 밖의 폴더는 건드리지 마세요):\n${projectsText(team)}`
+    : `이 팀의 프로젝트 (이 폴더만 읽고 고칠 수 있습니다):\n${projectsText(team)}`;
+}
+
 function rosterText(team) {
   return team.members
     .filter((m) => m.status !== 'removed')
@@ -113,7 +140,10 @@ function pmPrompt(team, m) {
 - 팀원 메시지는 짧고 구체적으로. 같은 일을 여러 팀원에게 중복으로 맡기지 않는다.
 - 사용자가 팀원 추가/제외를 요청하면 team_add_member / team_remove_member 로 처리한다.
 - 결정이 필요한 것(요구가 모호함, 위험한 변경)은 추측하지 말고 사용자에게 묻는다 (team_send to "user" 또는 답으로).
+- 팀원끼리 나눈 대화나 지난 흐름이 필요하면 team_history 로 대화방 기록을 읽는다.
 - 답은 한국어로.
+
+${scopeText(team)}
 
 지금 팀원:
 ${rosterText(team)}`;
@@ -132,7 +162,10 @@ ${m.instructions || `${m.role} 로서 팀장이 맡기는 일을 처리한다.`}
 - 다른 팀원에게 물어보거나 넘길 일이 있으면 team_send 를 쓰세요 (to: 팀원 이름). 팀원 목록은 team_members.
 - 사용자가 직접 말을 걸면 사용자에게 답하세요.
 - 같은 프로젝트 폴더에서 다른 팀원도 일하므로, 고치는 파일과 범위를 분명히 하고 남의 작업을 덮어쓰지 마세요.
+- 다른 팀원끼리 나눈 대화나 지난 흐름이 필요하면 team_history 로 대화방 기록을 읽으세요.
 - 답은 한국어로, 짧고 구체적으로.
+
+${scopeText(team)}
 
 지금 팀원:
 ${rosterText(team)}`;
@@ -146,6 +179,8 @@ function publicTeam(t) {
   return {
     id: t.id,
     repo: t.repo,
+    scope: t.scope,
+    label: scopeLabel(t),
     provider: t.provider,
     model: t.model,
     title: t.title || '',
@@ -156,14 +191,22 @@ function publicTeam(t) {
     names: Object.fromEntries(t.members.map((m) => [m.id, { name: m.name, role: m.role, color: m.color, pm: !!m.pm }])),
     rate: t.rate || {},
     log: t.log.slice(-500),
+    more: t.log.length > 500, // 더 오래된 기록이 있음 (위로 올리면 불러옴)
   };
 }
 
-async function create(repo, { provider = 'claude', model = null, pmName = 'PM' } = {}) {
-  const team = { id: `t${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`, repo, provider, model, created: Date.now(), title: '', members: [], log: [], hops: 0, paused: false, memberSeq: 0, rate: {} };
+async function create(scope, { provider = 'claude', model = null, pmName = 'PM' } = {}) {
+  const sc = normScope(scope);
+  const team = { id: `t${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`, scope: sc, repo: sc.projects[0], provider, model, created: Date.now(), title: '', members: [], log: [], hops: 0, paused: false, memberSeq: 0, rate: {} };
   teams.set(team.id, team);
   await addMember(team, { name: pmName, role: '팀장 (PM)', pm: true });
-  post(team, { from: 'system', text: `팀을 만들었습니다. 팀장 ${pmName} 에게 하고 싶은 일과 필요한 팀원을 말해 주세요.` });
+  post(team, {
+    from: 'system',
+    text:
+      sc.kind === 'group'
+        ? `'${sc.name}' 그룹 팀을 만들었습니다. 이 팀은 그룹의 프로젝트 ${sc.projects.length}개(${sc.projects.map((p) => path.basename(p)).join(', ')})만 다룹니다. 팀장 ${pmName} 에게 하고 싶은 일과 필요한 팀원을 말해 주세요.`
+        : `팀을 만들었습니다. 팀장 ${pmName} 에게 하고 싶은 일과 필요한 팀원을 말해 주세요.`,
+  });
   return publicTeam(team);
 }
 
@@ -205,7 +248,8 @@ async function launch(team, m, { resume = false } = {}) {
   // 띄울 때마다 세대 번호: AI 를 바꾼 뒤 예전 프로세스가 늦게 보내는 이벤트(종료 등)는 무시
   const gen = (m.gen = (m.gen || 0) + 1);
   try {
-    const r = await ai.startChat({ provider: m.provider, repo: team.repo, model: m.model, resume: resumeId, team: { teamId: team.id, memberId: m.id, pm: m.pm }, extraPrompt }, (ch, id, ev) => {
+    m.launchedProjects = team.scope.projects.join('|');
+    const r = await ai.startChat({ provider: m.provider, repo: team.repo, addDirs: team.scope.projects.slice(1), model: m.model, resume: resumeId, team: { teamId: team.id, memberId: m.id, pm: m.pm }, extraPrompt }, (ch, id, ev) => {
       if (ch === 'ai:event' && gen === m.gen) onAgentEvent(team, m, ev);
     });
     m.chatId = r.id;
@@ -214,6 +258,57 @@ async function launch(team, m, { resume = false } = {}) {
     post(team, { from: 'system', text: `${m.name} 을(를) 시작하지 못했습니다: ${e.message}` });
     throw e;
   }
+}
+
+// 그룹 팀: 탭을 그룹에 넣거나 빼서 프로젝트가 바뀌었을 때. 떠 있는 팀원은 이전 대화에 이어 붙여 다시 띄운다
+// (일하는 중이면 그 일이 끝난 뒤)
+function setProjects(teamId, scope) {
+  const team = teams.get(teamId);
+  if (!team) return null;
+  const sc = normScope(scope);
+  const before = team.scope.projects;
+  const nameChanged = sc.name && sc.name !== team.scope.name;
+  team.scope = { ...team.scope, name: sc.name || team.scope.name, projects: sc.projects };
+  // 작업 폴더(첫 프로젝트)는 가능하면 그대로 둔다 (Claude 의 대화 기록이 작업 폴더별이라)
+  if (sc.projects.includes(team.repo)) team.scope.projects = [team.repo, ...sc.projects.filter((p) => p !== team.repo)];
+  else team.repo = sc.projects[0];
+  const low = (a) => a.map((x) => x.toLowerCase());
+  const added = sc.projects.filter((p) => !low(before).includes(p.toLowerCase()));
+  const removed = before.filter((p) => !low(sc.projects).includes(p.toLowerCase()));
+  if (!added.length && !removed.length) {
+    if (nameChanged) (emit(team, { type: 'team', team: publicTeam(team) }), scheduleSave(team));
+    return publicTeam(team);
+  }
+  const names = (a) => a.map((p) => path.basename(p)).join(', ');
+  post(team, { from: 'system', text: [added.length ? `${names(added)} 프로젝트가 팀에 추가되었습니다.` : '', removed.length ? `${names(removed)} 프로젝트가 팀에서 빠졌습니다.` : ''].filter(Boolean).join(' ') + ' 팀원들이 바뀐 프로젝트 목록으로 이어서 일합니다.' });
+  for (const m of team.members) relaunchIfNeeded(team, m);
+  emit(team, { type: 'team', team: publicTeam(team) });
+  scheduleSave(team);
+  return publicTeam(team);
+}
+function relaunchIfNeeded(team, m) {
+  if (!m.chatId || m.status === 'removed' || m.status === 'offline' || m.status === 'starting') return;
+  if (m.launchedProjects === team.scope.projects.join('|')) return;
+  if (m.status === 'busy') return (m.needsRelaunch = true); // 일이 끝나면
+  const old = m.chatId;
+  m.chatId = null;
+  m.gen = (m.gen || 0) + 1;
+  try {
+    ai.stopChat(old);
+  } catch {}
+  setStatus(team, m, 'starting', '프로젝트 목록 바꾸는 중');
+  launch(team, m, { resume: true }).catch(() => {});
+}
+
+// 이어 붙일 대화가 없을 때(이전 대화를 찾지 못함, AI 를 바꿈): 대화방의 최근 기록을 넘겨 준다
+function handoffText(team, m) {
+  const recent = team.log.filter((x) => x.from !== 'system' || x.kind === 'pause').slice(-40);
+  if (!recent.length) return '';
+  const who = (id) => (id === 'user' ? '사용자' : nameOf(team, id));
+  const lines = recent.map((x) => `- ${who(x.from)}${x.to?.length ? ` → ${x.to.map(who).join(', ')}` : ''}: ${String(x.text || '').replace(/\s+/g, ' ').slice(0, 400)}`);
+  let text = lines.join('\n');
+  if (text.length > 8000) text = text.slice(-8000);
+  return `[CodeFlow 안내] ${m.name} 님의 이전 AI 대화를 이어 붙일 수 없어 새로 시작했습니다. 아래는 팀 대화방의 최근 기록입니다 (더 필요하면 team_history). 이어서 일해 주세요.\n${text}`;
 }
 
 // 팀원의 AI·모델 바꾸기: 새로 띄운다 (이 팀원의 지난 대화 맥락은 이어지지 않음)
@@ -231,6 +326,7 @@ async function setMemberAI(teamId, memberId, { provider, model }) {
   m.queue = [];
   m.sessionId = null; // 다른 AI 의 대화에는 이어 붙일 수 없다
   m.ctx = null;
+  m.pendingHandoff = handoffText(team, m); // 대신 대화방의 최근 기록을 넘겨 준다
   setStatus(team, m, 'starting', '');
   scheduleSave(team);
   post(team, { from: 'system', text: `${m.name} 의 AI 를 ${provider === 'codex' ? 'Codex' : `Claude${m.model ? ` (${m.model})` : ''}`} 로 바꿨습니다. (이 팀원의 지난 대화 맥락은 새로 시작합니다)` });
@@ -301,6 +397,8 @@ function pump(team, m) {
         : `[팀 메시지${b.kind === 'reply' ? ' · 결과 보고' : ''}] ${nameOf(team, b.from)}(${team.members.find((x) => x.id === b.from)?.role || ''}) → 나: ${b.text}`
     )
     .join('\n\n');
+  const fullBody = m.pendingHandoff ? `${m.pendingHandoff}\n\n---\n\n${body}` : body;
+  m.pendingHandoff = '';
   setStatus(team, m, 'busy', '생각 중');
   const att = batch.flatMap((b) => b.attachments || []);
   const others = att.filter((a) => a.kind === 'file');
@@ -308,9 +406,9 @@ function pump(team, m) {
     ? [
         ...att.filter((a) => a.kind === 'image').map((a) => ({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.data } })),
         ...att.filter((a) => a.kind === 'pdf').map((a) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data }, title: a.name })),
-        { type: 'text', text: others.length ? `${body}\n\n[첨부 파일 — Read 도구로 읽어 주세요]\n${others.map((a) => a.path).join('\n')}` : body },
+        { type: 'text', text: others.length ? `${fullBody}\n\n[첨부 파일 — Read 도구로 읽어 주세요]\n${others.map((a) => a.path).join('\n')}` : fullBody },
       ]
-    : body;
+    : fullBody;
   try {
     ai.sendChat(m.chatId, content);
   } catch (e) {
@@ -336,6 +434,10 @@ function finishTurn(team, m, { error } = {}) {
   }
   if (error) post(team, { from: 'system', text: `${m.name}: ${error}` });
   if (m.status !== 'stopped' && m.status !== 'removed') setStatus(team, m, 'idle', '');
+  if (m.needsRelaunch) {
+    m.needsRelaunch = false;
+    return relaunchIfNeeded(team, m);
+  }
   pump(team, m);
 }
 
@@ -434,7 +536,8 @@ function onAgentEvent(team, m, ev) {
       // 저장된 이전 대화를 찾지 못함(지워졌거나 다른 PC) → 이 팀원만 새로 시작
       m.resuming = false;
       m.sessionId = null;
-      post(team, { from: 'system', text: `${m.name} 의 이전 대화를 찾지 못해 새로 시작합니다. (대화방 기록은 그대로)` });
+      m.pendingHandoff = handoffText(team, m);
+      post(team, { from: 'system', text: `${m.name} 의 이전 대화를 찾지 못해 새로 시작합니다. 대화방의 최근 기록을 넘겨 줍니다.` });
       launch(team, m).catch(() => {});
       return;
     }
@@ -462,6 +565,22 @@ tools.setTeamHandler(async ({ teamId, memberId }, name, args) => {
   if (!team || !me) return { error: '팀이 끝났습니다.' };
   if (name === 'team_members') {
     return { result: team.members.filter((m) => m.status !== 'removed').map((m) => ({ name: m.name, role: m.role, status: m.status === 'busy' ? `일하는 중 (${m.activity})` : m.status === 'idle' ? '대기' : m.status, leader: !!m.pm })) };
+  }
+  if (name === 'team_history') {
+    const limit = Math.max(1, Math.min(100, Number(args.limit) || 30));
+    const who = (id) => (id === 'user' ? '사용자' : id === 'system' ? '시스템' : nameOf(team, id));
+    let rows = team.log;
+    if (args.member) {
+      const f = findMember(team, args.member) || team.members.find((x) => x.name === args.member);
+      if (f) rows = rows.filter((x) => x.from === f.id || (x.to || []).includes(f.id));
+    }
+    if (args.query) rows = rows.filter((x) => String(x.text || '').includes(args.query));
+    return {
+      result: rows
+        .slice(-limit)
+        .map((x) => `[${new Date(x.time).toLocaleString('ko-KR')}] ${who(x.from)}${x.to?.length ? ` → ${x.to.map(who).join(', ')}` : ''}: ${String(x.text || '').slice(0, 1200)}`)
+        .join('\n'),
+    };
   }
   if (name === 'team_add_member') {
     if (!me.pm) return { error: '팀원은 팀장만 만들 수 있습니다.' };
@@ -574,8 +693,20 @@ function disposeAll() {
 
 const get = (teamId) => (teams.has(teamId) ? publicTeam(teams.get(teamId)) : null);
 const list = () => [...teams.values()].map((t) => ({ id: t.id, repo: t.repo }));
-// 지금 열려 있는 이 프로젝트의 팀 (화면을 다시 그릴 때)
-const openFor = (repo) => [...teams.values()].filter((t) => t.repo.toLowerCase() === String(repo).toLowerCase()).map((t) => t.id);
+// 지금 열려 있는 이 범위(프로젝트 / 그룹)의 팀 (화면을 다시 그릴 때)
+const openFor = (scope) => {
+  const k = scopeKey(normScope(scope));
+  return [...teams.values()].filter((t) => scopeKey(t.scope) === k).map((t) => t.id);
+};
+// 대화방의 더 오래된 기록 (화면은 최근 것부터 조금씩 그린다)
+function older(teamId, beforeId, count = 200) {
+  const team = teams.get(teamId);
+  if (!team) return { items: [], more: false };
+  const i = team.log.findIndex((x) => x.id === beforeId);
+  const end = i < 0 ? team.log.length : i;
+  const start = Math.max(0, end - count);
+  return { items: team.log.slice(start, end), more: start > 0 };
+}
 // 사용량을 다시 조회 (팀 화면을 열 때)
 function refreshUsage(teamId) {
   const team = teams.get(teamId);
@@ -599,5 +730,7 @@ module.exports = {
   open,
   deleteSaved,
   openFor,
+  older,
+  setProjects,
   refreshUsage,
 };

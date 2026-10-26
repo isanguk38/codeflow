@@ -4,9 +4,10 @@
 import { $, h, esc, toast, modal, promptDialog, confirmDialog, contextMenu, menuAt, fmtDate } from './ui.js';
 import { state } from './state.js';
 import { md, attachmentFromPath, attachmentFromBlob, attachChip, openAiSetup } from './ai.js';
+import { teamScopeFor, teamScopeOfGroup } from './repo.js';
 import { fileCard } from './preview.js';
 
-const teamOf = new Map(); // 프로젝트(소문자 경로) → teamId
+const teamOf = new Map(); // 범위 키(개인: repo:경로 / 그룹: group:그룹id) → teamId
 const data = new Map(); // teamId → { id, repo, members, log, paused }
 const streams = new Map(); // `${teamId}:${memberId}` → 진행 중인 답
 let target = null; // 받는 사람 memberId (null = PM)
@@ -14,7 +15,10 @@ let root = null;
 let provider = localStorage.getItem('team.provider') || 'claude';
 
 const key = (p) => String(p || '').toLowerCase();
-const curTeam = () => data.get(teamOf.get(key(state.repo)));
+// 지금 탭의 범위: 그룹에 있으면 그룹 팀, 아니면 그 프로젝트의 개인 팀
+const curScope = () => teamScopeFor(state.repo);
+const scopeKey = (sc) => (!sc ? '' : sc.kind === 'group' ? `group:${sc.key}` : `repo:${key(sc.key)}`);
+const curTeam = () => data.get(teamOf.get(scopeKey(curScope())));
 const member = (t, id) => t?.members.find((m) => m.id === id);
 // 나간 팀원도 지난 메시지에 이름이 보이도록 (names: 팀원 전체의 이름·역할·색)
 const anyMember = (t, id) => member(t, id) || (t?.names?.[id] ? { id, ...t.names[id] } : null);
@@ -57,43 +61,59 @@ function rateMeters(t) {
 // 이 프로젝트의 팀 불러오기: 열려 있는 팀 → 없으면 가장 최근에 저장된 팀
 let loading = null;
 async function ensureTeam() {
-  const repo = state.repo;
-  if (!repo || curTeam()) return;
-  if (loading === repo) return;
-  loading = repo;
+  const sc = curScope();
+  if (!sc || curTeam()) return;
+  const k = scopeKey(sc);
+  if (loading === k) return;
+  loading = k;
   try {
-    const live = await window.api.team.openFor(repo);
+    const live = await window.api.team.openFor(sc);
     let id = live.ok && live.data[0];
     if (!id) {
-      const saved = await window.api.team.listSaved(repo);
+      const saved = await window.api.team.listSaved(sc);
       id = saved.ok && saved.data[0]?.id;
     }
-    if (id) await openTeam(repo, id);
+    if (id) await openTeam(sc, id);
   } finally {
     loading = null;
   }
 }
-async function openTeam(repo, id) {
-  const r = await window.api.team.open(repo, id);
+async function openTeam(sc, id) {
+  const r = await window.api.team.open(sc, id);
   if (!r.ok) return toast(`팀을 열지 못했습니다: ${r.error}`, 'error', 6000);
   data.set(r.data.id, r.data);
-  teamOf.set(key(repo), r.data.id);
+  teamOf.set(scopeKey(sc), r.data.id);
   target = null;
   window.api.team.refreshUsage(r.data.id);
-  if (key(state.repo) === key(repo)) draw();
+  if (scopeKey(curScope()) === scopeKey(sc)) draw();
 }
 
-// 지난 팀 대화 (이 프로젝트)
+// 지난 팀 대화 (이 프로젝트 / 이 그룹)
 async function openHistory(anchor) {
-  const r = await window.api.team.listSaved(state.repo);
+  const sc = curScope();
+  const r = await window.api.team.listSaved(sc);
   const cur = curTeam();
   const items = (r.ok ? r.data : []).map((x) => ({
     label: `${x.id === cur?.id ? '● ' : ''}${x.title}`,
     hint: `${fmtDate(x.updated)} · ${x.members.join(', ')}`,
-    onClick: () => x.id !== cur?.id && openTeam(state.repo, x.id),
+    onClick: () => x.id !== cur?.id && openTeam(sc, x.id),
   }));
-  menuAt(anchor, items.length ? [{ header: '지난 팀 대화 (이 프로젝트)' }, ...items] : [{ header: '저장된 팀 대화가 없습니다' }]);
+  menuAt(anchor, items.length ? [{ header: `지난 팀 대화 (${sc.kind === 'group' ? `'${sc.name}' 그룹` : '이 프로젝트'})` }, ...items] : [{ header: '저장된 팀 대화가 없습니다' }]);
 }
+
+// 탭 그룹이 바뀌면: 그룹 팀의 프로젝트 목록을 맞추고, 지금 탭의 팀(그룹 ↔ 개인)이 바뀌었으면 다시 그린다
+window.addEventListener('cf-groups-changed', async () => {
+  for (const t of [...data.values()]) {
+    if (t.scope?.kind !== 'group') continue;
+    const sc = teamScopeOfGroup(t.scope.key);
+    if (!sc) continue; // 그룹이 닫히거나 없어짐: 팀은 저장된 채로 둔다
+    const same = sc.name === t.scope.name && sc.projects.map(key).sort().join('|') === t.scope.projects.map(key).sort().join('|');
+    if (same) continue;
+    const r = await window.api.team.setProjects(t.id, sc);
+    if (r.ok && r.data) Object.assign(t, { scope: r.data.scope, label: r.data.label });
+  }
+  if (teamShown()) draw();
+});
 
 // 새 팀: 지금 팀은 저장해 두고 닫는다 (지난 팀 대화에서 다시 열 수 있음)
 async function newTeam() {
@@ -102,7 +122,7 @@ async function newTeam() {
     await window.api.team.dispose(cur.id);
     data.delete(cur.id);
   }
-  teamOf.delete(key(state.repo));
+  teamOf.delete(scopeKey(curScope()));
   target = null;
   draw(true);
 }
@@ -191,9 +211,39 @@ function draw(fresh = false) {
   drawSide();
   drawHead();
   const log = root.querySelector('.team-log');
-  for (const m of t.log) appendMessage(t, m, false);
+  // 긴 대화: 최근 50개만 그리고, 위로 올리면 50개씩 더 (그래도 모자라면 저장된 더 오래된 기록을 불러옴)
+  t.shownFrom = Math.max(0, t.log.length - PAGE);
+  for (const m of t.log.slice(t.shownFrom)) appendMessage(t, m, false);
   log.scrollTop = log.scrollHeight;
+  log.onscroll = () => log.scrollTop < 80 && showOlder(t);
   drawLive();
+}
+
+const PAGE = 50;
+let olderBusy = false;
+async function showOlder(t) {
+  const log = root?.querySelector('.team-log');
+  if (!log || olderBusy || curTeam() !== t) return;
+  if (t.shownFrom === 0) {
+    if (!t.more) return;
+    olderBusy = true;
+    const r = await window.api.team.older(t.id, t.log[0]?.id, 200);
+    olderBusy = false;
+    if (!r.ok || !r.data.items.length) return (t.more = false);
+    t.log.unshift(...r.data.items);
+    t.shownFrom += r.data.items.length;
+    t.more = r.data.more;
+  }
+  const from = Math.max(0, t.shownFrom - PAGE);
+  const items = t.log.slice(from, t.shownFrom);
+  t.shownFrom = from;
+  // 위에 끼워 넣어도 보던 자리가 그대로 보이게
+  const h0 = log.scrollHeight;
+  const first = log.firstChild;
+  const tmp = document.createElement('div');
+  for (const m of items) appendMessage(t, m, false, tmp);
+  while (tmp.firstChild) log.insertBefore(tmp.firstChild, first);
+  log.scrollTop += log.scrollHeight - h0;
 }
 
 function emptyState() {
@@ -225,14 +275,15 @@ function emptyState() {
       return;
     }
     start.textContent = '팀장 PM 을 깨우는 중...';
-    const r = await window.api.team.create(state.repo, { provider, model: provider === 'claude' ? modelSel.value || null : null });
+    const sc = curScope();
+    const r = await window.api.team.create(sc, { provider, model: provider === 'claude' ? modelSel.value || null : null });
     if (!r.ok) {
       start.disabled = false;
       start.textContent = '팀 시작';
       return toast(`팀을 만들지 못했습니다: ${r.error}`, 'error', 8000);
     }
     data.set(r.data.id, r.data);
-    teamOf.set(key(state.repo), r.data.id);
+    teamOf.set(scopeKey(sc), r.data.id);
     target = null;
     draw();
   };
@@ -240,7 +291,8 @@ function emptyState() {
     'div',
     { class: 'team-empty' },
     h('div', { class: 'team-empty-box' },
-      h('div', { class: 'team-empty-title', text: '✦ AI 팀' }),
+      h('div', { class: 'team-empty-title', text: curScope()?.kind === 'group' ? `✦ ${curScope().name} AI 팀` : '✦ AI 팀' }),
+      curScope()?.kind === 'group' ? h('p', { class: 'team-empty-scope', text: `'${curScope().name}' 그룹의 프로젝트 ${curScope().projects.length}개(${curScope().projects.map((x) => x.split(/[\\/]/).pop()).join(', ')})를 함께 다루는 그룹 팀입니다. 팀원은 이 프로젝트들만 읽고 고칠 수 있습니다.` }) : null,
       h('p', { text: '팀장 PM(오케스트레이터)에게 하고 싶은 일과 필요한 팀원을 말하면, PM 이 기획자·개발자·테스터 같은 팀원 에이전트를 만들고 이름과 역할을 붙여 일을 나눕니다. 팀원끼리 대화하며 일하고, 모든 대화가 이 방에 보입니다.' }),
       h('ul', {},
         h('li', { text: '혼자 AI 와 대화하고 싶으면 팀원 없이 PM 과만 대화하면 됩니다.' }),
@@ -272,9 +324,9 @@ function drawSide() {
   const endBtn = h('button', { class: 'tb-btn small danger', text: '팀 삭제', title: '모든 에이전트를 끄고 이 팀과 대화 기록을 지웁니다' });
   endBtn.onclick = async () => {
     if (!(await confirmDialog('모든 에이전트를 끄고 이 팀과 대화 기록을 지울까요? (되돌릴 수 없음)\n지금 팀을 남겨 두고 새로 시작하려면 위쪽 ‘＋ 새 팀’ 을 쓰세요.', { title: '팀 삭제', okLabel: '삭제', danger: true }))) return;
-    await window.api.team.deleteSaved(state.repo, t.id);
+    await window.api.team.deleteSaved(t.scope || curScope(), t.id);
     data.delete(t.id);
-    teamOf.delete(key(state.repo));
+    teamOf.delete(scopeKey(curScope()));
     draw(true);
   };
   side.append(h('div', { class: 'team-side-head' }, h('b', { text: `팀원 ${t.members.length}` }), h('span', { class: 'tb-spacer' }), addBtn), h('div', { class: 'team-side-acts' }, stopBtn, endBtn));
@@ -334,14 +386,17 @@ function drawHead() {
   nw.onclick = () => newTeam();
   const setup = h('button', { class: 'tb-btn small', text: '⚙', title: 'AI 연결 · 설정 (설치·로그인, 업데이트, MCP·커넥터, 로그아웃)' });
   setup.onclick = () => openAiSetup(t.provider);
+  // (DOM 의 append 는 null 을 "null" 글자로 넣으므로 빈 칸은 걸러 낸다)
   head.append(
-    h('b', { class: 'team-title', text: t.title || `${state.repo.split(/[\\/]/).pop()} · AI 팀`, title: t.title || '' }),
-    h('span', { class: 'team-head-sub', text: `팀원 ${t.members.length}명` }),
-    h('span', { class: 'tb-spacer' }),
-    h('span', { class: 'ai-meters team-meters' }, ...rateMeters(t)),
-    hist,
-    nw,
-    setup
+    ...[
+      h('b', { class: 'team-title', text: t.label || 'AI 팀', title: t.scope?.kind === 'group' ? `그룹 팀 — 이 팀이 다루는 프로젝트:\n${t.scope.projects.join('\n')}` : t.repo }),
+      t.scope?.kind === 'group' ? h('span', { class: 'team-scope', text: `프로젝트 ${t.scope.projects.length}개`, title: t.scope.projects.join('\n') }) : null,
+      h('span', { class: 'team-head-sub', text: `${t.title ? `${t.title} · ` : ''}팀원 ${t.members.length}명`, title: t.title || '' }),
+      h('span', { class: 'ai-meters team-meters' }, ...rateMeters(t)),
+      hist,
+      nw,
+      setup,
+    ].filter(Boolean)
   );
   if (t.paused) {
     const go = h('button', { class: 'btn primary small', text: '계속' });
@@ -373,8 +428,8 @@ function drawLive() {
   if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 120) log.scrollTop = log.scrollHeight;
 }
 
-function appendMessage(t, msg, scroll) {
-  const log = root?.querySelector('.team-log');
+function appendMessage(t, msg, scroll, into) {
+  const log = into || root?.querySelector('.team-log');
   if (!log) return;
   const near = log.scrollHeight - log.scrollTop - log.clientHeight < 160;
   const toNames = (msg.to || []).map((id) => (id === 'user' ? '나' : anyMember(t, id)?.name || '?'));
@@ -556,7 +611,23 @@ export function askTeamApproval(args) {
   const detail = (input.new_string ?? input.content ?? (input.edits || []).map((e) => e.new_string).join('\n---\n') ?? (input.command ? '' : JSON.stringify(input, null, 2)) ?? '').slice(0, 1500);
   return new Promise((resolve) => {
     let dlg = null;
-    const card = h('div', { class: 'team-approve' }, avatar(m, 'sm'), h('div', { class: 'team-msg-body' }, h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '허용을 요청합니다' })), h('div', { class: 'team-approve-what', text: what }), detail ? h('pre', { class: 'ai-code-block', text: detail }) : null));
+    // 팀 프로젝트(그룹 팀이면 그룹의 프로젝트들) 밖의 파일이면 눈에 띄게 알린다
+    const fp = String(input.file_path || input.path || '');
+    const abs = /^([a-z]:[\\/]|[\\/]{2}|\/)/i.test(fp);
+    const outside = abs && t?.scope?.projects?.length && !t.scope.projects.some((p) => fp.toLowerCase().startsWith(p.toLowerCase()));
+    const card = h(
+      'div',
+      { class: `team-approve ${outside ? 'outside' : ''}` },
+      avatar(m, 'sm'),
+      h(
+        'div',
+        { class: 'team-msg-body' },
+        h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '허용을 요청합니다' })),
+        outside ? h('div', { class: 'team-out', text: `⚠ 이 팀의 프로젝트 밖 파일입니다 (${t.scope.kind === 'group' ? `'${t.scope.name}' 그룹 프로젝트가 아님` : '이 프로젝트 폴더가 아님'}). 꼭 필요한 경우에만 허용하세요.` }) : null,
+        h('div', { class: 'team-approve-what', text: what }),
+        detail ? h('pre', { class: 'ai-code-block', text: detail }) : null
+      )
+    );
     const done = (allow, keep) => {
       if (card.dataset.done) return;
       card.dataset.done = '1';

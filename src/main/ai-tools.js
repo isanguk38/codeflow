@@ -86,6 +86,14 @@ const TEAM_TOOLS = [
     description: '지금 팀원 목록 (이름, 역할, 상태)',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'team_history',
+    description: '팀 대화방의 지난 기록을 읽는다 (다른 팀원끼리 나눈 대화, 지난 흐름 확인용). member 를 주면 그 팀원이 보내거나 받은 것만, query 를 주면 그 글자가 들어간 것만.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: '최근 몇 개 (기본 30, 최대 100)' }, member: { type: 'string', description: '팀원 이름 (선택)' }, query: { type: 'string', description: '찾을 글자 (선택)' } },
+    },
+  },
 ];
 // 팀장(PM, 오케스트레이터)만 팀원을 만들 수 있다
 const PM_TOOLS = [

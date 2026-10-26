@@ -40,6 +40,24 @@ function saveGroups() {
   // 빈 그룹은 지운다
   groups = loadGroups().filter((g) => g.paths.length);
   window.api.setSettings({ tabGroups: groups });
+  // AI 팀: 그룹 팀의 프로젝트 목록을 맞춘다
+  window.dispatchEvent(new CustomEvent('cf-groups-changed'));
+}
+
+// AI 팀의 범위: 탭이 그룹에 있으면 그 그룹(그룹의 열린 프로젝트들), 아니면 그 프로젝트 하나
+export function teamScopeFor(p) {
+  if (!p) return null;
+  const g = groupOf(p);
+  if (!g) return { kind: 'repo', key: p, projects: [p] };
+  const projects = layout().flatMap((x) => (x.tab ? [x.tab] : x.tabs)).filter((t) => groupOf(t.path) === g).map((t) => t.path);
+  return { kind: 'group', key: g.id, name: groupLabel(g), projects: projects.length ? projects : [p] };
+}
+// 그룹 id 로 지금 범위 (그룹이 없어졌거나 닫혔으면 null)
+export function teamScopeOfGroup(id) {
+  const g = loadGroups().find((x) => x.id === id && !x.closed);
+  if (!g) return null;
+  const projects = tabs.filter((t) => groupOf(t.path) === g).map((t) => t.path);
+  return projects.length ? { kind: 'group', key: g.id, name: groupLabel(g), projects } : null;
 }
 const inGroup = (g, path) => g.paths.some((p) => norm(p) === norm(path));
 // 열려 있는 그룹 중에서 (닫힌 그룹의 프로젝트를 따로 열면 그룹 밖 탭으로 취급)

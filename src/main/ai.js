@@ -170,7 +170,7 @@ function guideFile(repo) {
 }
 
 // 승인 없이 써도 되는 CodeFlow 도구 (읽기·화면 이동만). 터미널 실행·파일 수정·명령 실행은 사용자 승인 필요
-const SAFE_TOOLS = ['mcp__codeflow__team_send', 'mcp__codeflow__team_members', 'mcp__codeflow__team_add_member', 'mcp__codeflow__team_remove_member', 'mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project', 'mcp__codeflow__save_document'];
+const SAFE_TOOLS = ['mcp__codeflow__team_send', 'mcp__codeflow__team_members', 'mcp__codeflow__team_history', 'mcp__codeflow__team_add_member', 'mcp__codeflow__team_remove_member', 'mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project', 'mcp__codeflow__save_document'];
 
 // team: 멀티 에이전트 팀의 팀원이면 { teamId, memberId, pm }, extraPrompt: 그 팀원의 역할 지시 (기본 안내 뒤에 붙임)
 async function startChat({ provider = 'claude', repo, resume, model, addDirs = [], team = null, extraPrompt = '' }, send) {

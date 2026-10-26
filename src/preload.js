@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
     deleteSaved: (repo, id) => ipcRenderer.invoke('team:deleteSaved', repo, id),
     openFor: (repo) => ipcRenderer.invoke('team:openFor', repo),
     refreshUsage: (id) => ipcRenderer.invoke('team:refreshUsage', id),
+    older: (id, beforeId, count) => ipcRenderer.invoke('team:older', id, beforeId, count),
+    setProjects: (id, scope) => ipcRenderer.invoke('team:setProjects', id, scope),
     onEvent: (cb) => ipcRenderer.on('team:event', (_e, id, ev) => cb(id, ev)),
   },
   search: {
