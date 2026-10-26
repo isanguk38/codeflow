@@ -31,6 +31,9 @@ let groups = null;
 function loadGroups() {
   if (groups) return groups;
   groups = (state.settings?.tabGroups || []).map((g) => ({ ...g, paths: [...(g.paths || [])] }));
+  // 예전에 이름 없이 만든 그룹: 이름은 필수이므로 '그룹 1' 처럼 붙여 준다
+  let n = 0;
+  for (const g of groups) if (!String(g.name || '').trim()) g.name = `그룹 ${++n}`;
   return groups;
 }
 function saveGroups() {
@@ -138,8 +141,12 @@ function editGroup(g, anchor) {
   document.querySelector('.tg-editor')?.remove();
   const box = h('div', { class: 'tg-editor' });
   const name = h('input', { class: 'input', value: g.name, placeholder: '그룹 이름 (예: 현대건설 스토어)', spellcheck: 'false' });
+  // 이름은 필수: 비우면 저장하지 않고(칸을 빨갛게) 기존 이름을 유지, 창을 닫으면 기존 이름으로 되돌림
   name.oninput = () => {
-    g.name = name.value.trim();
+    const v = name.value.trim();
+    name.classList.toggle('invalid', !v);
+    if (!v) return;
+    g.name = v;
     saveGroups();
     renderTabs();
   };
@@ -387,12 +394,13 @@ function tabEl(t, g) {
     contextMenu(e.clientX, e.clientY, [
       {
         label: '새 그룹에 추가...',
-        onClick: () => {
-          const ng = newGroup([t.path]);
+        // 그룹 이름은 필수: 이름을 받은 뒤에만 만든다 (빈 값이면 입력 창이 닫히지 않음, 취소하면 안 만듦)
+        onClick: async () => {
+          const name = await promptDialog(`'${repoName(t.path)}' 을(를) 넣을 새 그룹의 이름`, { title: '새 그룹', placeholder: '예: 현대건설 스토어', okLabel: '만들기' });
+          if (!name) return;
+          newGroup([t.path], name);
           saveGroups();
           renderTabs();
-          const chip = document.querySelector(`.tg-chip[data-id="${ng.id}"]`);
-          if (chip) editGroup(ng, chip);
         },
       },
       ...others.map((x) => ({ label: `'${groupLabel(x)}' 그룹으로 이동`, onClick: () => (setGroup(t.path, x), saveGroups(), renderTabs()) })),

@@ -962,3 +962,60 @@ body.is-busy .progress-bar::before {
   padding: 0;
   border-radius: 50%;
 }
+
+/* ---------- 그룹 이름표: 크롬식 연한 알약 ---------- */
+/* 연한 그룹색 배경 + 같은 계열의 진한 글씨, 탭 글자 높이에 맞춤 */
+.tg-chip {
+  align-self: center;
+  margin: 0 4px 5px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gc) 16%, transparent);
+  color: color-mix(in srgb, var(--gc) 62%, #000);
+  font-weight: 500;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.tg-chip:hover {
+  filter: none;
+  background: color-mix(in srgb, var(--gc) 26%, transparent);
+}
+[data-theme='dark'] .tg-chip {
+  background: color-mix(in srgb, var(--gc) 24%, transparent);
+  color: color-mix(in srgb, var(--gc) 55%, #fff);
+}
+[data-theme='dark'] .tg-chip:hover {
+  background: color-mix(in srgb, var(--gc) 34%, transparent);
+}
+/* 접힌 그룹: 조금 더 진하게 (숨긴 탭이 있다는 표시) */
+.tg-chip.collapsed {
+  opacity: 1;
+  background: color-mix(in srgb, var(--gc) 26%, transparent);
+}
+[data-theme='dark'] .tg-chip.collapsed {
+  background: color-mix(in srgb, var(--gc) 36%, transparent);
+}
+/* 닫힌 그룹(오른쪽 끝): 같은 알약에 테두리만 */
+.tg-chip.closed,
+[data-theme='dark'] .tg-chip.closed {
+  margin: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gc) 70%, transparent);
+}
+.tg-chip.closed:hover {
+  background: color-mix(in srgb, var(--gc) 12%, transparent);
+}
+/* 이름 없는 그룹: 작은 색 점 */
+.tg-chip.unnamed {
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0;
+  margin-bottom: 9px;
+  background: var(--gc);
+}
+/* 그룹 이름은 필수: 비우면 빨간 테두리 */
+.tg-editor input.invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
