@@ -1,0 +1,482 @@
+/* AI 팀 (멀티 에이전트 채팅방) */
+#view-team {
+  flex-direction: column;
+}
+.team {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* 왼쪽: 팀원 카드 */
+.team-side {
+  width: 250px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg2);
+  min-height: 0;
+}
+.team-side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 4px;
+}
+.team-side-acts {
+  display: flex;
+  gap: 4px;
+  padding: 2px 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tb-btn.danger {
+  color: var(--danger);
+}
+.team-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.team-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.team-card:hover {
+  background: var(--hover);
+}
+.team-card.target {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+.team-card-body {
+  min-width: 0;
+  flex: 1;
+}
+.team-card-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.team-card-role {
+  font-size: 11.5px;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.team-card-st {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.team-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text3);
+  flex: none;
+}
+.st-idle .team-dot {
+  background: #2f9e44;
+}
+.st-busy .team-dot {
+  background: var(--accent);
+  animation: ai-blink 1.2s infinite ease-in-out;
+}
+.st-starting .team-dot {
+  background: #d39e00;
+}
+.st-stopped .team-dot {
+  background: var(--danger);
+}
+.team-av {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+}
+.team-av.sm {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+/* 가운데: 대화 */
+.team-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.team-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.team-head-sub {
+  color: var(--text3);
+  font-size: 12px;
+}
+.team-paused {
+  color: #d39e00;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.team-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.team-live {
+  padding: 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 40%;
+  overflow-y: auto;
+}
+.team-live:not(:empty) {
+  padding: 8px 18px;
+  border-top: 1px dashed var(--border);
+}
+.team-msg {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  max-width: 920px;
+}
+.team-msg-body {
+  min-width: 0;
+  flex: 1;
+}
+.team-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 3px;
+  font-size: 12.5px;
+}
+.team-msg-role {
+  color: var(--text3);
+  font-size: 11.5px;
+}
+.team-to {
+  color: var(--accent2, var(--accent));
+  font-size: 11.5px;
+}
+.team-msg-text {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px 12px 12px 12px;
+  padding: 8px 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+/* 에이전트끼리의 메시지(팀 메시지): 보낸 사람 색 왼쪽 줄 */
+.team-msg.dm .team-msg-text {
+  border-left: 3px solid var(--mc, var(--accent));
+  background: var(--bg);
+}
+.team-msg.user {
+  align-self: flex-end;
+  max-width: 720px;
+}
+.team-msg.user .team-msg-head {
+  justify-content: flex-end;
+}
+.team-msg.user .team-msg-text {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 12px 4px 12px 12px;
+  white-space: pre-wrap;
+}
+.team-msg.live .team-msg-text {
+  opacity: 0.85;
+  max-height: 220px;
+  overflow: hidden;
+}
+.team-typing {
+  color: var(--text3);
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.team-typing i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text3);
+  animation: ai-blink 1.2s infinite ease-in-out;
+}
+.team-typing i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.team-typing i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.team-sys {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text3);
+  background: var(--bg2);
+  border-radius: 10px;
+  padding: 3px 12px;
+}
+.team-sys.pause {
+  color: #b7791f;
+  background: color-mix(in srgb, #d39e00 14%, var(--bg));
+}
+.team-approve {
+  display: flex;
+  gap: 10px;
+  max-width: 920px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #d39e00 55%, transparent);
+  background: color-mix(in srgb, #d39e00 8%, var(--bg));
+  border-radius: 10px;
+}
+.team-approve-what {
+  font-weight: 600;
+  margin: 2px 0 6px;
+}
+/* 아래: 받는 사람 + 입력 */
+.team-input {
+  border-top: 1px solid var(--border);
+  padding: 8px 16px 12px;
+  background: var(--bg);
+}
+.team-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.team-target-label {
+  color: var(--text3);
+}
+.team-chip {
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-weight: 600;
+}
+.team-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.team-input textarea {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.team-input textarea:focus {
+  border-color: var(--accent);
+}
+/* 팀이 없을 때 */
+.team-empty {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  overflow: auto;
+}
+.team-empty-box {
+  margin: auto;
+  width: 620px;
+  max-width: 92%;
+  padding: 32px 0;
+  line-height: 1.6;
+}
+.team-empty-title {
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.team-empty-box p {
+  color: var(--text2);
+}
+.team-empty-box ul {
+  color: var(--text2);
+  padding-left: 18px;
+  font-size: 13px;
+}
+.team-empty-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+.team-empty-row select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--text);
+}
+.team-empty-ex {
+  color: var(--text3);
+  font-size: 12.5px;
+}
+/* 레일: 팀에 새 소식 */
+.rail-btn.has-news::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ---------- 왼쪽 'AI' 화면: [1:1 대화] [팀] ---------- */
+#view-ai {
+  flex-direction: column;
+}
+.ai-hub-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex: none;
+}
+.ai-hub-tab {
+  position: relative;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  padding: 6px 16px 7px;
+  border-radius: 7px 7px 0 0;
+  color: var(--text2);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.ai-hub-tab:hover {
+  background: var(--bg3);
+}
+.ai-hub-tab.on {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+  margin-bottom: -1px;
+  padding-bottom: 8px;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.ai-hub-tab.has-news::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ai-hub-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* 1:1 대화: 예전 오른쪽 패널을 넓게 (가운데 읽기 좋은 폭으로) */
+#view-ai .ai-panel {
+  width: auto !important;
+  flex: 1;
+  background: var(--bg);
+  font-size: 13.5px;
+}
+#view-ai .ai-panel > .ai-body {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  min-height: 0;
+  flex: 1;
+}
+#view-team {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#view-team[hidden] {
+  display: none;
+}
+
+/* 팀원 카드: 쓰는 AI·모델 */
+.team-card-ai {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 첨부 */
+.team-attach {
+  margin: 0 0 6px;
+}
+.team-input.drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+.team-input-row > .tb-btn {
+  align-self: flex-end;
+  height: 34px;
+}
+.team-att-sent {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.team-att-name {
+  font-size: 11.5px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+}
+/* 문서 저장 카드 */
+.team-approve.save {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}

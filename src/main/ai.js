@@ -170,17 +170,18 @@ function guideFile(repo) {
 }
 
 // 승인 없이 써도 되는 CodeFlow 도구 (읽기·화면 이동만). 터미널 실행·파일 수정·명령 실행은 사용자 승인 필요
-const SAFE_TOOLS = ['mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project', 'mcp__codeflow__save_document'];
+const SAFE_TOOLS = ['mcp__codeflow__team_send', 'mcp__codeflow__team_members', 'mcp__codeflow__team_add_member', 'mcp__codeflow__team_remove_member', 'mcp__codeflow__read_terminal', 'mcp__codeflow__list_terminals', 'mcp__codeflow__open_file', 'mcp__codeflow__show_view', 'mcp__codeflow__git_status', 'mcp__codeflow__list_projects', 'mcp__codeflow__switch_project', 'mcp__codeflow__save_document'];
 
-async function startChat({ provider = 'claude', repo, resume, model, addDirs = [] }, send) {
+// team: 멀티 에이전트 팀의 팀원이면 { teamId, memberId, pm }, extraPrompt: 그 팀원의 역할 지시 (기본 안내 뒤에 붙임)
+async function startChat({ provider = 'claude', repo, resume, model, addDirs = [], team = null, extraPrompt = '' }, send) {
   if (provider === 'codex') {
     const id = ++chatSeq;
     const c = new codex.CodexChat(id, repo, (ev) => send('ai:event', id, ev));
     chats.set(id, { codex: c, repo });
     c.proc = null;
-    const guide = fs.readFileSync(guideFile(repo), 'utf8');
+    const guide = fs.readFileSync(guideFile(repo), 'utf8') + (extraPrompt ? `\n\n${extraPrompt}` : '');
     try {
-      await c.start({ resume, model, addDirs: [...addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)), outputDir(repo)], guide });
+      await c.start({ resume, model, addDirs: [...addDirs.filter((d) => d && d.toLowerCase() !== repo.toLowerCase() && fs.existsSync(d)), outputDir(repo)], guide, team });
     } catch (e) {
       c.stop();
       chats.delete(id);
@@ -191,10 +192,16 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
   }
   const exe = findExe(provider);
   if (!exe) throw new Error('AI 도구가 설치되어 있지 않습니다.');
-  const sessionKey = tools.registerSession(repo);
+  const sessionKey = tools.registerSession(repo, team ? { team } : {});
   const cfgFile = path.join(app.getPath('userData'), 'ai', `mcp-${sessionKey}.json`);
   fs.mkdirSync(path.dirname(cfgFile), { recursive: true });
   fs.writeFileSync(cfgFile, JSON.stringify(await tools.mcpConfig(sessionKey)));
+  // 팀원: 기본 안내 + 역할 지시를 한 파일로
+  let promptFile = guideFile(repo);
+  if (extraPrompt) {
+    promptFile = path.join(app.getPath('userData'), 'ai', `team-${sessionKey}.md`);
+    fs.writeFileSync(promptFile, `${fs.readFileSync(guideFile(repo), 'utf8')}\n\n${extraPrompt}`);
+  }
   const args = [
     '-p',
     '--input-format',
@@ -206,7 +213,7 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
     '--mcp-config',
     cfgFile,
     '--append-system-prompt-file',
-    guideFile(repo),
+    promptFile,
     // 위험할 수 있는 작업(파일 수정, 명령 실행)은 CodeFlow 화면에서 허용/거부를 묻는다
     '--permission-prompt-tool',
     'mcp__codeflow__approve',
@@ -279,6 +286,7 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
     if (c) {
       tools.unregisterSession(c.sessionKey);
       fs.rm(c.cfgFile, { force: true }, () => {});
+      if (extraPrompt) fs.rm(promptFile, { force: true }, () => {});
     }
     chats.delete(id);
     send('ai:event', id, { type: 'exit', code, stderr: stripAnsi(errText) });
@@ -392,6 +400,16 @@ function refreshUsage(id) {
   c?.refreshUsage?.();
 }
 
+// 하던 답만 중단 (대화는 유지): Claude Code 는 interrupt 제어 요청, Codex 는 turn/interrupt
+function interruptChat(id) {
+  const c = chats.get(id);
+  if (!c) return;
+  if (c.codex) return c.codex.interrupt();
+  try {
+    c.proc.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: `cf-interrupt-${Date.now()}`, request: { subtype: 'interrupt' } })}\n`);
+  } catch {}
+}
+
 function stopChat(id) {
   const c = chats.get(id);
   if (!c) return;
@@ -424,4 +442,4 @@ async function mcpList(id) {
   return out;
 }
 
-module.exports = { refreshUsage, outputDir, mcpList, readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, stopChat, stopAll };
+module.exports = { refreshUsage, outputDir, mcpList, readAttachment, sessions, transcript, PROVIDERS, status, install, login, loginInput, cancelLogin, logout, startChat, sendChat, interruptChat, stopChat, stopAll };

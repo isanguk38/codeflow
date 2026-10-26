@@ -276,6 +276,20 @@ ipcMain.handle('ai:sessions', aiSafe((_e, repo) => ai.sessions(repo)));
 ipcMain.handle('ai:transcript', aiSafe((_e, repo, id) => ai.transcript(repo, id)));
 app.on('before-quit', () => ai.stopAll());
 
+// 멀티 에이전트 팀 (팀 채팅방): 팀장 PM + 팀원 에이전트들, 화면에는 team:event 로 알린다
+const team = require('./team');
+team.setSender((ch, ...a) => win && !win.isDestroyed() && win.webContents.send(ch, ...a));
+ipcMain.handle('team:create', aiSafe((_e, repo, opts) => team.create(repo, opts)));
+ipcMain.handle('team:get', aiSafe((_e, id) => team.get(id)));
+ipcMain.handle('team:send', aiSafe((_e, id, msg) => team.userSend(id, msg)));
+ipcMain.handle('team:resume', aiSafe((_e, id) => team.resume(id)));
+ipcMain.handle('team:stopWork', aiSafe((_e, id) => team.stopAllWork(id)));
+ipcMain.handle('team:addMember', aiSafe((_e, id, opts) => team.addMemberByUser(id, opts)));
+ipcMain.handle('team:removeMember', aiSafe((_e, id, memberId) => team.removeMember(id, memberId)));
+ipcMain.handle('team:setMemberAI', aiSafe((_e, id, memberId, opts) => team.setMemberAI(id, memberId, opts)));
+ipcMain.handle('team:dispose', aiSafe((_e, id) => team.dispose(id)));
+app.on('before-quit', () => team.disposeAll());
+
 // 파일 미리보기(이미지) · 다른 이름으로 저장 — AI 대화의 파일 카드, 코드 화면 이미지 보기
 const PREVIEW_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml' };
 ipcMain.handle('file:preview', aiSafe((_e, p) => {

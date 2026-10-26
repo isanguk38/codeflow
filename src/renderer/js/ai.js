@@ -106,7 +106,7 @@ async function loadMcp(p, force = false) {
 }
 
 let panel;
-let visible = localStorage.getItem('ai.visible') === '1';
+let visible = false; // 왼쪽 'AI' 화면의 '1:1 대화' 가 지금 보이는지 (ai-hub 가 알려 줌)
 let provider = localStorage.getItem('ai.provider') || 'claude';
 let info = null; // 설치/로그인 상태
 let phase = 'checking'; // checking | install | installing | login | logging-in | ready | error
@@ -120,7 +120,6 @@ const repoKey = (r) => (r || '').toLowerCase();
 
 export function initAi() {
   panel = $('#aiPanel');
-  splitter($('#aiSplit'), panel, { axis: 'x', min: 300, max: 900, invert: true, key: 'aiPanel' });
   window.api.ai.onLog((line) => {
     logLines.push(line);
     if (logLines.length > 200) logLines = logLines.slice(-200);
@@ -135,19 +134,16 @@ export function initAi() {
   });
   window.api.ai.onEvent(onAiEvent);
   window.api.ai.onTool(onToolRequest);
-  setVisible(visible);
-  // 앱을 켜면 (패널이 닫혀 있어도) 고른 AI 를 미리 깨운다
-  if (!visible) setTimeout(() => refreshStatus().then(() => maybeWarm()), 1500);
+  // 앱을 켜면 (AI 화면을 열지 않아도) 고른 AI 를 미리 깨운다
+  setTimeout(() => refreshStatus().then(() => maybeWarm()), 1500);
   // Codex 업데이트 확인 (조금 뒤에, 그리고 6시간마다)
   setTimeout(() => checkCodexUpdate(), 8000);
   setInterval(() => checkCodexUpdate(), 6 * 3600e3);
 }
 
-export function setVisible(v) {
+// 왼쪽 'AI' 화면의 '1:1 대화' 가 보이게/안 보이게 될 때 (ai-hub 가 부름)
+export function onAiShown(v) {
   visible = v;
-  localStorage.setItem('ai.visible', v ? '1' : '0');
-  panel.hidden = !v;
-  $('#aiSplit').hidden = !v;
   $('#aiBtn')?.classList.toggle('on', v);
   if (v) {
     render();
@@ -156,7 +152,17 @@ export function setVisible(v) {
     setTimeout(() => $('#aiInput')?.focus(), 50);
   }
 }
-export const toggleAi = () => setVisible(!visible);
+// 1:1 대화 열기/닫기 (예전 오른쪽 패널 대신 왼쪽 'AI' 화면, app.js 가 처리)
+export function setVisible(v) {
+  window.dispatchEvent(new CustomEvent('cf-ai-open', { detail: v }));
+}
+export const toggleAi = () => window.dispatchEvent(new CustomEvent('cf-ai-toggle'));
+
+// AI 화면을 보고 있지 않을 때 알리기 (화면을 갑자기 옮기지 않는다)
+function notifyAi(text) {
+  document.querySelector('.rail-btn[data-view="ai"]')?.classList.add('has-news');
+  toast(text, 'info', 6000);
+}
 
 // 프로젝트 탭이 바뀌면 그 프로젝트의 대화를 보여 준다
 export function onAiRepoChanged() {
@@ -292,7 +298,7 @@ function render() {
       { label: '↻ 다시 확인', onClick: async () => (delete mcpBy[p], await loadMcp(p, true), toast('MCP 상태를 다시 확인했습니다. ⋯ 를 다시 눌러 보세요.', 'info')) },
     ].filter(Boolean));
   };
-  const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 패널 닫기 (Ctrl+Shift+A)' });
+  const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 화면 닫기 — 보던 화면으로 (Ctrl+Shift+A)' });
   close.onclick = () => setVisible(false);
   panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), phase === 'ready' ? newBtn : null, phase === 'ready' ? histBtn : null, more, close));
 
@@ -894,25 +900,47 @@ async function normalizeImage(mime, data) {
   return { mime: url.slice(5, url.indexOf(';')), data: url.slice(url.indexOf(',') + 1), w: cv.width, h: cv.height };
 }
 
-async function addPath(c, file) {
+// 파일 경로 → 첨부 (이미지는 AI 가 받을 수 있는 크기로 줄임). 팀 화면도 같이 쓴다
+export async function attachmentFromPath(file) {
   const r = await window.api.ai.readAttachment(file);
-  if (!r.ok) return toast(r.error, 'error', 5000);
+  if (!r.ok) {
+    toast(r.error, 'error', 5000);
+    return null;
+  }
   const a = r.data;
   if (a.kind === 'image') Object.assign(a, await normalizeImage(a.mime, a.data).catch(() => ({})));
-  pushAttach(c, a);
+  return a;
+}
+// 붙여넣기한 이미지(파일 경로가 없는 것) → 첨부
+export function attachmentFromBlob(f, n = 1) {
+  if (!f.type.startsWith('image/')) {
+    toast('붙여넣은 내용을 첨부할 수 없습니다. 📎 로 파일을 고르세요.', 'warn');
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const rd = new FileReader();
+    rd.onload = async () => {
+      const url = String(rd.result);
+      const img = await normalizeImage(url.slice(5, url.indexOf(';')), url.slice(url.indexOf(',') + 1)).catch(() => null);
+      if (!img) {
+        toast('이미지를 읽지 못했습니다.', 'error');
+        return resolve(null);
+      }
+      resolve({ kind: 'image', name: f.name && f.name !== 'image.png' ? f.name : `붙여넣은 이미지 ${n}.png`, ...img, size: Math.round((img.data.length * 3) / 4) });
+    };
+    rd.readAsDataURL(f);
+  });
+}
+
+async function addPath(c, file) {
+  const a = await attachmentFromPath(file);
+  if (a) pushAttach(c, a);
 }
 
 // 붙여넣기한 이미지(파일 경로가 없는 것)
-function addFileObject(c, f) {
-  if (!f.type.startsWith('image/')) return toast('붙여넣은 내용을 첨부할 수 없습니다. 📎 로 파일을 고르세요.', 'warn');
-  const rd = new FileReader();
-  rd.onload = async () => {
-    const url = String(rd.result);
-    const n = await normalizeImage(url.slice(5, url.indexOf(';')), url.slice(url.indexOf(',') + 1)).catch(() => null);
-    if (!n) return toast('이미지를 읽지 못했습니다.', 'error');
-    pushAttach(c, { kind: 'image', name: f.name && f.name !== 'image.png' ? f.name : `붙여넣은 이미지 ${c.attach.length + 1}.png`, ...n, size: Math.round((n.data.length * 3) / 4) });
-  };
-  rd.readAsDataURL(f);
+async function addFileObject(c, f) {
+  const a = await attachmentFromBlob(f, c.attach.length + 1);
+  if (a) pushAttach(c, a);
 }
 
 function pushAttach(c, a) {
@@ -925,7 +953,7 @@ function pushAttach(c, a) {
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
 
-function attachChip(a, onRemove) {
+export function attachChip(a, onRemove) {
   const chip = h('div', { class: `ai-chip ${a.kind}`, title: `${a.path || a.name} · ${fmtSize(a.size || 0)}${a.kind === 'file' ? '\nAI 가 경로로 직접 읽습니다' : ''}` });
   if (a.kind === 'image') chip.append(h('img', { src: `data:${a.mime};base64,${a.data}` }));
   else chip.append(h('span', { class: 'ai-chip-ico', text: a.kind === 'pdf' ? '📕' : '📄' }));
@@ -1526,7 +1554,11 @@ function onCfEvent(c, ev) {
 async function onToolRequest(reqId, repo, action, args) {
   const reply = (result) => window.api.ai.toolResult(reqId, result);
   try {
+    // 팀 채팅방 에이전트의 승인 요청은 팀 화면에서 묻는다
+    if (action === 'approve' && args?.team) return reply(await (await import('./team.js')).askTeamApproval(args));
     if (action === 'approve') return reply(await askApproval(repo, args));
+    // 팀 채팅방 에이전트가 만든 문서는 팀 화면에서 저장 위치를 묻는다
+    if (action === 'save_document' && args?.team) return reply(await (await import('./team.js')).askTeamSave(args));
     if (action === 'save_document') return reply(await askSaveLocation(repo, args));
     if (action === 'list_projects') {
       const cur = (state.repo || '').toLowerCase();
@@ -1582,7 +1614,7 @@ async function askSaveLocation(repo, { path: file, title }, { auto = false } = {
   const st = await window.api.file.stat(file);
   if (!st.ok || !st.data.isFile) return { error: `파일을 찾을 수 없습니다: ${file}` };
   const c = chatFor(repo);
-  if (!visible) setVisible(true);
+  if (!visible) notifyAi('AI 가 만든 문서를 어디에 저장할지 묻고 있습니다. 왼쪽 ✦ AI 화면에서 골라 주세요.');
   if (!auto) setActivity(c, 'waiting');
   (c.fileCards ||= new Map()).set(file.toLowerCase(), { remove() {} }); // 답변 끝의 경로 찾기에서 또 만들지 않게
   const name = file.split(/[\\/]/).pop();
@@ -1635,7 +1667,6 @@ function askApproval(repo, { tool_name: tool, input = {} }) {
   if (c.alwaysAllow.has(tool)) return Promise.resolve({ allow: true });
   // CodeFlow 임시 결과물 폴더(프로젝트 밖)에 문서를 만드는 것은 묻지 않는다 — 다 만든 뒤 저장 위치를 묻는다
   if (/^(Write|Edit|MultiEdit)$/.test(tool) && /[\\/]ai[\\/]drafts[\\/]/i.test(input.file_path || '')) return Promise.resolve({ allow: true });
-  if (!visible) setVisible(true);
   setActivity(c, 'waiting');
   return new Promise((resolve) => {
     const detail =
@@ -1665,8 +1696,8 @@ function askApproval(repo, { tool_name: tool, input = {} }) {
     card.append(h('div', { class: 'ai-row' }, yes, always, h('span', { class: 'tb-spacer' }), no));
     c.list.append(card);
     c.list.scrollTop = c.list.scrollHeight;
-    // 대화가 화면에 안 보이면(다른 프로젝트 탭 등) 창으로 묻는다
-    if (!c.list.isConnected) {
+    // 대화가 화면에 안 보이면(AI 화면을 닫았거나 다른 프로젝트 탭) 창으로 묻는다
+    if (!visible || !c.list.isConnected) {
       const body = h('div', { class: 'ai-approve-dlg' }, h('div', { class: 'ai-dim', text: `${(repo || '').split(/[\\/]/).pop()} 프로젝트의 ${aiName()}` }), h('div', { class: 'ai-approve-title', text: describeTool(tool, input) }), detail ? h('pre', { class: 'ai-code-block', text: detail }) : null);
       dlg = modal({
         title: '✦ AI 가 허용을 요청합니다',

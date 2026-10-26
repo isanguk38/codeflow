@@ -69,6 +69,54 @@ const TOOLS = [
   },
 ];
 
+// 멀티 에이전트 팀 전용 도구 (팀 채팅방에서 실행되는 에이전트에게만 보임)
+const TEAM_TOOLS = [
+  {
+    name: 'team_send',
+    description:
+      '팀 채팅방에서 다른 팀원(또는 사용자)에게 메시지를 보낸다. to 는 팀원 이름, 여러 명이면 쉼표로, 모두에게는 "all", 사용자에게는 "user". 받은 팀원이 일을 마치면 그 답이 자동으로 나에게 돌아온다. 사용자도 이 대화방을 모두 본다.',
+    inputSchema: {
+      type: 'object',
+      properties: { to: { type: 'string', description: '받는 사람: 팀원 이름 / "all" / "user"' }, message: { type: 'string', description: '보낼 내용 (구체적으로, 짧게)' } },
+      required: ['to', 'message'],
+    },
+  },
+  {
+    name: 'team_members',
+    description: '지금 팀원 목록 (이름, 역할, 상태)',
+    inputSchema: { type: 'object', properties: {} },
+  },
+];
+// 팀장(PM, 오케스트레이터)만 팀원을 만들 수 있다
+const PM_TOOLS = [
+  {
+    name: 'team_add_member',
+    description:
+      '팀에 새 에이전트(팀원)를 만든다. 사람 이름(한국어, 예: 지수)과 역할(예: 기획자, 백엔드 개발자, 프론트엔드 개발자, 테스터, 디자이너)을 정하고, 이 팀원이 무엇을 책임지는지 instructions 에 적는다. 만든 뒤 team_send 로 일을 맡긴다.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '팀원 이름 (짧게, 한국어 이름)' },
+        role: { type: 'string', description: '역할 (예: 백엔드 개발자)' },
+        instructions: { type: 'string', description: '맡을 일과 기준 (이 팀원의 시스템 지시)' },
+        ai: { type: 'string', enum: ['claude', 'codex'], description: '이 팀원이 쓸 AI (생략하면 팀 기본). 사용자가 특정 AI 를 원할 때만 지정' },
+        model: { type: 'string', description: 'Claude 모델 (sonnet / opus / haiku, 생략하면 팀 기본)' },
+      },
+      required: ['name', 'role'],
+    },
+  },
+  {
+    name: 'team_remove_member',
+    description: '더 필요 없는 팀원을 팀에서 내보낸다 (이름).',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+  },
+];
+const TEAM_HIDDEN = new Set(['open_file', 'show_view', 'switch_project']);
+let teamHandler = async () => ({ error: '팀 기능이 준비되지 않았습니다.' });
+function setTeamHandler(fn) {
+  teamHandler = fn;
+}
+
 // 렌더러에 요청을 보내고 응답을 기다린다
 let askRenderer = async () => {
   throw new Error('CodeFlow 화면이 준비되지 않았습니다.');
@@ -85,9 +133,10 @@ const token = crypto.randomBytes(24).toString('hex');
 // 접속 주소마다 어느 프로젝트(저장소)의 대화인지 구분 (/mcp/<세션키>)
 const sessions = new Map(); // key → { repo }
 
-function registerSession(repo) {
+// extra.team = { teamId, memberId, pm } — 팀 채팅방의 에이전트면 팀 도구를 보여 주고, 승인 요청을 팀 화면으로 보낸다
+function registerSession(repo, extra = {}) {
   const key = crypto.randomBytes(8).toString('hex');
-  sessions.set(key, { repo });
+  sessions.set(key, { repo, ...extra });
   return key;
 }
 function unregisterSession(key) {
@@ -111,15 +160,20 @@ async function callTool(name, args, ctx) {
   }
   if (name === 'save_document') {
     // 사용자가 고를 때까지 기다린다 (시간 제한 없음)
-    const r = await askRenderer(ctx.repo, name, args, 0);
+    const r = await askRenderer(ctx.repo, name, ctx.team ? { ...args, team: ctx.team } : args, 0);
+    return r.error ? text(r.error, true) : text(r.result ?? 'ok');
+  }
+  if (name.startsWith('team_')) {
+    if (!ctx.team) return text('팀 채팅방에서만 쓸 수 있는 도구입니다.', true);
+    const r = await teamHandler(ctx.team, name, args);
     return r.error ? text(r.error, true) : text(r.result ?? 'ok');
   }
   if (name === 'approve') {
     // Claude Code 권한 확인: { behavior: 'allow', updatedInput } 또는 { behavior: 'deny', message }
-    const r = await askRenderer(ctx.repo, 'approve', args, 0);
+    const r = await askRenderer(ctx.repo, 'approve', ctx.team ? { ...args, team: ctx.team } : args, 0);
     return text(r.allow ? { behavior: 'allow', updatedInput: args.input || {} } : { behavior: 'deny', message: r.message || '사용자가 거부했습니다.' });
   }
-  if (!TOOLS.some((t) => t.name === name)) return text(`알 수 없는 도구: ${name}`, true);
+  if (!TOOLS.some((t) => t.name === name) || (ctx.team && TEAM_HIDDEN.has(name))) return text(`알 수 없는 도구: ${name}`, true);
   const wait = name === 'run_in_terminal' ? Math.min(120, Math.max(1, Number(args.wait_seconds) || 5)) : 0;
   const r = await askRenderer(ctx.repo, name, args, (wait + 30) * 1000);
   return r.error ? text(r.error, true) : text(r.result ?? 'ok');
@@ -169,7 +223,8 @@ async function handle(req, res) {
       case 'ping':
         return reply({});
       case 'tools/list':
-        return reply({ tools: TOOLS });
+        // 팀 에이전트에게는 화면을 바꾸는 도구를 주지 않는다 (여러 명이 일하면서 사용자를 팀 채팅방 밖으로 끌고 가지 않게)
+        return reply({ tools: ctx.team ? [...TOOLS.filter((t) => !TEAM_HIDDEN.has(t.name)), ...TEAM_TOOLS, ...(ctx.team.pm ? PM_TOOLS : [])] : TOOLS });
       case 'tools/call':
         return reply(await callTool(msg.params?.name, msg.params?.arguments || {}, ctx));
       default:
@@ -202,4 +257,4 @@ function stopServer() {
   server = null;
 }
 
-module.exports = { approve, mcpConfig, registerSession, unregisterSession, setRendererBridge, stopServer, TOOLS };
+module.exports = { approve, mcpConfig, registerSession, unregisterSession, setRendererBridge, setTeamHandler, stopServer, TOOLS };

@@ -10,20 +10,38 @@ import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpen
 import { startUpdateCheck } from './update.js';
 import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
 import { initAi, toggleAi, onAiRepoChanged } from './ai.js';
+import { initHub, activateHub, deactivateHub, setHubMode } from './ai-hub.js';
 import { openSearch } from './search.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
 
+let prevView = 'code'; // AI 화면을 닫으면 돌아갈 화면
 function setView(view) {
   if (!state.repo) view = 'welcome';
+  if (view === 'ai' && state.view !== 'ai' && state.view !== 'welcome') prevView = state.view;
   state.view = view;
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === (view === 'welcome' ? 'welcome' : `view-${view}`)));
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'log') activateLog();
   if (view === 'stash') activateStash();
   if (view === 'code') activateCode();
+  if (view === 'ai') activateHub();
+  else deactivateHub();
 }
+// ✦ AI 버튼 / Ctrl+Shift+A: AI 화면을 열고, 다시 누르면 보던 화면으로
+function toggleAiView() {
+  if (state.view === 'ai') setView(prevView || 'code');
+  else setView('ai');
+}
+// AI 쪽에서 '1:1 대화를 열어/닫아' 요청 (예전 오른쪽 패널 열기/닫기 대신)
+window.addEventListener('cf-ai-open', (e) => {
+  if (e.detail) {
+    setHubMode('chat');
+    setView('ai');
+  } else if (state.view === 'ai') setView(prevView || 'code');
+});
+window.addEventListener('cf-ai-toggle', () => toggleAiView());
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -118,6 +136,7 @@ async function main() {
   initStash();
   initCode();
   initAi();
+  initHub();
   // AI 가 화면 이동을 요청할 때 (CodeFlow 도구)
   window.addEventListener('cf-set-view', (e) => state.repo && setView(e.detail));
   setOnOpened(onOpened);

@@ -23,6 +23,18 @@ contextBridge.exposeInMainWorld('api', {
   exists: (p) => ipcRenderer.invoke('path:exists', p),
   copy: (text) => clipboard.writeText(text),
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
+  team: {
+    create: (repo, opts) => ipcRenderer.invoke('team:create', repo, opts),
+    get: (id) => ipcRenderer.invoke('team:get', id),
+    send: (id, msg) => ipcRenderer.invoke('team:send', id, msg),
+    resume: (id) => ipcRenderer.invoke('team:resume', id),
+    stopWork: (id) => ipcRenderer.invoke('team:stopWork', id),
+    addMember: (id, opts) => ipcRenderer.invoke('team:addMember', id, opts),
+    removeMember: (id, memberId) => ipcRenderer.invoke('team:removeMember', id, memberId),
+    setMemberAI: (id, memberId, opts) => ipcRenderer.invoke('team:setMemberAI', id, memberId, opts),
+    dispose: (id) => ipcRenderer.invoke('team:dispose', id),
+    onEvent: (cb) => ipcRenderer.on('team:event', (_e, id, ev) => cb(id, ev)),
+  },
   search: {
     start: (repo, id, opts) => ipcRenderer.send('search:start', repo, id, opts),
     cancel: (id) => ipcRenderer.send('search:cancel', id),

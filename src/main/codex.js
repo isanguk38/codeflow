@@ -268,7 +268,8 @@ class CodexChat {
     this.proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
   }
 
-  async start({ resume, model, addDirs = [], guide }) {
+  async start({ resume, model, addDirs = [], guide, team }) {
+    this.team = team || null; // 팀 채팅방의 에이전트면 { teamId, memberId, pm }
     const found = findExe();
     if (!found) throw new Error('Codex 가 설치되어 있지 않습니다.');
     this.proc = spawn(found.exe, ['app-server'], { cwd: this.repo, windowsHide: true, env: envFor(found) });
@@ -308,7 +309,7 @@ class CodexChat {
     const useModel = model && models.some((m) => m.id === model) ? model : models.find((m) => m.isDefault)?.id || null;
 
     // CodeFlow 도구 서버(MCP) 연결
-    this.sessionKey = tools.registerSession(this.repo);
+    this.sessionKey = tools.registerSession(this.repo, this.team ? { team: this.team } : {});
     const mcp = (await tools.mcpConfig(this.sessionKey)).mcpServers.codeflow;
     const common = {
       cwd: this.repo,
@@ -460,7 +461,7 @@ class CodexChat {
     const pr = m.params || {};
     if (m.method === 'item/commandExecution/requestApproval' || m.method === 'execCommandApproval') {
       const cmd = Array.isArray(pr.command) ? pr.command.join(' ') : pr.command || '';
-      const r = await tools.approve(this.repo, { tool_name: 'Bash', input: { command: cleanCommand(cmd), reason: pr.reason || undefined } });
+      const r = await tools.approve(this.repo, { tool_name: 'Bash', input: { command: cleanCommand(cmd), reason: pr.reason || undefined }, ...(this.team ? { team: this.team } : {}) });
       return this.reply(m.id, { decision: r.allow ? 'accept' : 'decline' });
     }
     if (m.method === 'item/fileChange/requestApproval' || m.method === 'applyPatchApproval') {
@@ -470,6 +471,7 @@ class CodexChat {
       const r = await tools.approve(this.repo, {
         tool_name: first.kind?.type === 'add' ? 'Write' : 'Edit',
         input: { file_path: first.path || pr.grantRoot || '', content: ch.map((c) => `${c.path}\n${c.diff || ''}`).join('\n\n').slice(0, 4000) },
+        ...(this.team ? { team: this.team } : {}),
       });
       return this.reply(m.id, { decision: r.allow ? 'accept' : 'decline' });
     }
