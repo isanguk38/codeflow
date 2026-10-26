@@ -21,6 +21,26 @@ function newer(a, b) {
   return false;
 }
 
+// 주소가 어디로 이동하는지(Location)만 알아낸다. 실제로 따라가지는 않는다
+function redirectTarget(url) {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url, redirect: 'manual' });
+    const timer = setTimeout(() => (req.abort(), reject(new Error('시간 초과'))), 15000);
+    req.on('redirect', (_status, _method, to) => {
+      clearTimeout(timer);
+      resolve(to);
+      req.abort();
+    });
+    req.on('response', (res) => {
+      clearTimeout(timer);
+      resolve(String(res.headers.location || ''));
+      res.on('data', () => {});
+    });
+    req.on('error', (e) => (clearTimeout(timer), reject(e)));
+    req.end();
+  });
+}
+
 async function fetchLatest() {
   // 1) GitHub API (시간당 60회 제한이 있어 실패하면 2번으로)
   try {
@@ -31,9 +51,10 @@ async function fetchLatest() {
     const setup = (r.assets || []).find((a) => /^CodeFlow-Setup-[\d.]+\.exe$/.test(a.name));
     return { version, notes: r.body || '', page: r.html_url, url: setup?.browser_download_url || null, date: r.published_at };
   } catch (apiError) {
-    // 2) 일반 웹 주소: /releases/latest 는 최신 태그 주소로 이동한다
-    const res = await net.fetch(`https://github.com/${REPO}/releases/latest`, { redirect: 'manual' });
-    const tag = /\/releases\/tag\/([^/?#]+)$/.exec(res.headers.get('location') || '')?.[1];
+    // 2) 일반 웹 주소: /releases/latest 는 최신 태그 주소로 이동한다 → 이동할 주소만 읽는다
+    //    (net.fetch 의 redirect: 'manual' 은 Electron 에서 'Redirect was cancelled' 오류가 나므로 net.request 의 redirect 이벤트를 쓴다)
+    const location = await redirectTarget(`https://github.com/${REPO}/releases/latest`).catch(() => '');
+    const tag = /\/releases\/tag\/([^/?#]+)$/.exec(location)?.[1];
     if (!tag) throw new Error(`최신 버전을 확인하지 못했습니다 (${apiError.message})`);
     const version = decodeURIComponent(tag).replace(/^v/i, '');
     return {
