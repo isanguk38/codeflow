@@ -128,9 +128,9 @@ function layout() {
   }
   return out;
 }
-// Ctrl+Tab 순서: 화면 순서, 접힌 그룹은 건너뜀 (지금 탭은 포함)
+// Ctrl+Tab 순서: 화면 순서, 접힌 그룹은 건너뜀
 function visibleOrder() {
-  return layout().flatMap((x) => (x.tab ? [x.tab] : x.group.collapsed ? x.tabs.filter(isActive) : x.tabs));
+  return layout().flatMap((x) => (x.tab ? [x.tab] : x.group.collapsed ? [] : x.tabs));
 }
 
 // 이름·색 바꾸기 + 그룹 닫기/해제/삭제 (크롬의 그룹 편집 말풍선처럼)
@@ -215,9 +215,38 @@ function barMenu(x, y) {
     { label: '모든 프로젝트 목록... (Ctrl+Shift+E)', onClick: () => openProjectList() },
     '-',
     { label: '상위 폴더별로 자동 묶기', disabled: tabs.filter((t) => !groupOf(t.path)).length < 2, onClick: groupByFolder },
-    { label: '모든 그룹 접기', disabled: !open.length, onClick: () => (open.forEach((g) => (g.collapsed = true)), saveGroups(), renderTabs()) },
+    { label: '모든 그룹 접기', disabled: !open.length, onClick: () => collapseGroups(open) },
     { label: '모든 그룹 펼치기', disabled: !open.length, onClick: () => (open.forEach((g) => (g.collapsed = false)), saveGroups(), renderTabs()) },
   ]);
+}
+
+// 그룹 접기 (크롬처럼 완전히 숨김). 지금 탭이 접는 그룹 안에 있으면
+// 그룹 오른쪽(없으면 왼쪽)의 그룹 밖 탭으로 옮기고, 그런 탭이 없으면 선택을 뺀다(시작 화면)
+async function collapseGroups(list) {
+  const cur = state.repo && groupOf(state.repo);
+  const order = layout().flatMap((x) => (x.tab ? [x.tab] : x.tabs));
+  for (const g of list) g.collapsed = true;
+  saveGroups();
+  if (cur && list.includes(cur)) {
+    const i = order.findIndex(isActive);
+    const outside = (t) => {
+      const x = groupOf(t.path);
+      return !x || !x.collapsed;
+    };
+    const next = order.slice(i + 1).find(outside) || order.slice(0, i).reverse().find(outside);
+    if (next) return switchTab(next.path);
+    state.repo = null;
+    state.status = null;
+    saveTabs();
+    renderTabs();
+    return onOpened();
+  }
+  renderTabs();
+}
+function expandGroup(g) {
+  g.collapsed = false;
+  saveGroups();
+  renderTabs();
 }
 
 // 드래그: 그룹 안 탭이나 이름표 위에 놓으면 그 그룹으로, 그룹 밖 탭 위에 놓으면 그룹에서 빠짐
@@ -327,12 +356,8 @@ export function renderTabs() {
       continue;
     }
     const g = item.group;
-    const shown = g.collapsed ? item.tabs.filter(isActive) : item.tabs;
-    const chip = chipEl(g, item.tabs.length, () => {
-      g.collapsed = !g.collapsed;
-      saveGroups();
-      renderTabs();
-    });
+    const shown = g.collapsed ? [] : item.tabs; // 접으면 이름표만 (지금 탭도 숨김)
+    const chip = chipEl(g, item.tabs.length, () => (g.collapsed ? expandGroup(g) : collapseGroups([g])));
     chip.ondragover = (e) => e.preventDefault();
     chip.ondrop = (e) => dropOn(e, null, g);
     const box = h('div', { class: `tab-group ${g.collapsed ? 'collapsed' : ''}` }, chip, ...shown.map((t) => tabEl(t, g)));
@@ -402,7 +427,7 @@ export function renderTabs() {
 export async function openProjectList(anchor) {
   document.querySelector('.pl-pop')?.remove();
   // 닫은 탭: 최근에 연 프로젝트 중 지금 열려 있지 않고 닫힌 그룹에도 없는 것 (누르면 다시 열기)
-  const recent = ((await window.api.getSettings()).recent || []).filter(
+  let recent = ((await window.api.getSettings()).recent || []).filter(
     (p) => !tabs.some((t) => norm(t.path) === norm(p)) && !loadGroups().some((g) => g.closed && inGroup(g, p))
   );
   anchor = anchor || document.querySelector('.tab-list-btn');
@@ -416,7 +441,8 @@ export async function openProjectList(anchor) {
     pop.remove();
     document.removeEventListener('mousedown', outside, true);
   };
-  const outside = (e) => !pop.contains(e.target) && e.target !== anchor && close();
+  // 우클릭 메뉴(목록에서 지우기)를 누를 때는 닫지 않는다
+  const outside = (e) => !pop.contains(e.target) && !e.target.closest?.('.ctx-menu') && e.target !== anchor && close();
   const go = (it) => {
     close();
     if (it.group) reopenGroup(it.group);
@@ -439,6 +465,24 @@ export async function openProjectList(anchor) {
       );
       el.onmousemove = () => sel !== i && ((sel = i), mark());
       el.onclick = () => go(it);
+      // 닫은 탭: 우클릭 → 목록에서 지우기 (기록만 지움. 프로젝트를 다시 열면 다시 생김)
+      if (it.closedPath)
+        el.oncontextmenu = (e) => {
+          e.preventDefault();
+          contextMenu(e.clientX, e.clientY, [
+            { label: '다시 열기', onClick: () => go(it) },
+            {
+              label: '목록에서 지우기',
+              danger: true,
+              onClick: async () => {
+                await window.api.removeRecent(it.closedPath);
+                recent = recent.filter((p) => p !== it.closedPath);
+                draw();
+                q.focus();
+              },
+            },
+          ]);
+        };
       list.append(el);
     };
     for (const item of layout()) {
@@ -514,6 +558,9 @@ export async function switchTab(dir) {
     return closeTab(t.path);
   }
   state.repo = t.path;
+  // 접힌 그룹 안의 탭으로 가면 그 그룹을 펼친다 (크롬처럼)
+  const tg = groupOf(t.path);
+  if (tg?.collapsed) (tg.collapsed = false), saveGroups();
   // 마지막으로 본 상태를 바로 보여주고(빠른 전환), 최신 상태는 onOpened 에서 새로 불러온다
   state.status = t.status || null;
   state.view = t.view || 'code';

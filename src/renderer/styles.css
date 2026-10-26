@@ -1152,7 +1152,7 @@ input[type='checkbox'] {
 /* ---------- 컨텍스트 메뉴 ---------- */
 .ctx-menu {
   position: fixed;
-  z-index: 200;
+  z-index: 1100; /* 목록 창(.pl-pop 1000) 위에도 뜨게 */
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 8px;
