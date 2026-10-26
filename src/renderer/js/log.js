@@ -1024,36 +1024,24 @@ async function exportResources(details, files) {
   const sheets = [
     {
       name: '자원 리스트',
+      // 열 순서: 번호 / 폴더 / 파일명 / 커밋 / 커밋 메시지 / 작성자
       columns: [
         { header: '번호', width: 6 },
-        { header: '구분', width: 9 },
-        { header: '파일 경로', width: 60 },
-        { header: '파일명', width: 28 },
-        { header: '폴더', width: 40 },
-        { header: '확장자', width: 8 },
-        { header: '이전 경로', width: 30 },
-        { header: '변경 커밋 수', width: 10 },
+        { header: '폴더', width: 45 },
+        { header: '파일명', width: 30 },
         { header: '커밋', width: 22 },
-        { header: '커밋 메시지', width: 50 },
+        { header: '커밋 메시지', width: 55 },
         { header: '작성자', width: 16 },
-        { header: '최종 변경일', width: 17 },
       ],
       rows: files.map((f, i) => {
         const { dir, name } = splitPath(f.path);
-        const ext = (name.match(/\.([^.]+)$/) || [])[1] || '';
         return [
           i + 1,
-          STATUS_KO[f.status],
-          f.path,
-          name,
           dir,
-          ext,
-          f.orig || '',
-          f.commits.length,
+          name,
           f.commits.map((c) => c.hash.slice(0, 8)).join(', '),
           [...new Set(f.commits.map((c) => c.subject))].join('\n'),
           [...f.authors].join(', '),
-          d8(f.time),
         ];
       }),
     },
