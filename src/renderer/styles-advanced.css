@@ -937,3 +937,28 @@ body.is-busy .progress-bar::before {
   padding: 14px;
   color: var(--text3);
 }
+
+/* 끌어 놓기: 놓일 자리 */
+.tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tab.drop-after {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+.tg-chip.drop-before {
+  box-shadow: -4px 0 0 var(--accent);
+}
+.tg-chip.drop-after {
+  box-shadow: 4px 0 0 var(--accent);
+}
+.tg-chip.drop-into {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 이름 없는 그룹: 작은 색 점 */
+.tg-chip.unnamed {
+  min-width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+}

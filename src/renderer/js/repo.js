@@ -249,23 +249,100 @@ function expandGroup(g) {
   renderTabs();
 }
 
-// 드래그: 그룹 안 탭이나 이름표 위에 놓으면 그 그룹으로, 그룹 밖 탭 위에 놓으면 그룹에서 빠짐
-function dropOn(e, target, g) {
-  e.preventDefault();
-  e.stopPropagation();
-  const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
-  if (from < 0) return;
-  const moving = tabs[from];
-  setGroup(moving.path, g);
-  if (target && target !== moving) tabs.splice(tabs.indexOf(target), 0, tabs.splice(from, 1)[0]);
-  else if (!target && g) {
-    // 이름표 위: 그룹의 맨 앞으로
-    const first = tabs.find((x) => x !== moving && groupOf(x.path) === g);
-    if (first) tabs.splice(tabs.indexOf(first), 0, tabs.splice(tabs.indexOf(moving), 1)[0]);
-  }
+// ---------- 끌어 놓기 ----------
+// - 탭을 다른 탭 위에 놓으면 순서만 바뀐다 (놓은 위치의 왼쪽/오른쪽). 다른 그룹의 탭 위면 그 그룹의 앞/뒤로 (그룹에 들어가지 않음)
+// - 그룹 안 탭을 같은 그룹 안에서 끌면 그룹 안 순서만 바뀜. 그룹 밖 탭 위에 놓으면 그룹에서 빠짐
+// - 탭을 그룹 이름표 위에 놓을 때만 그 그룹에 들어감
+// - 이름표를 끌면 그룹 통째로 옮김
+let dragging = null; // { tab } | { group }
+const sideOf = (e, el) => {
+  const r = el.getBoundingClientRect();
+  return e.clientX < r.left + r.width / 2 ? 'before' : 'after';
+};
+// 탭 배열을 화면 순서로 맞춘다 (그룹은 모아서)
+function normalizeOrder() {
+  const order = layout().flatMap((x) => (x.tab ? [x.tab] : x.tabs));
+  tabs.splice(0, tabs.length, ...order);
+}
+const blockOf = (g) => tabs.filter((x) => groupOf(x.path) === g);
+// 탭 묶음(list)을 anchor 묶음의 앞/뒤로 옮긴다
+function moveBlock(list, anchorList, side) {
+  if (!list.length || !anchorList.length) return;
+  for (const t of list) tabs.splice(tabs.indexOf(t), 1);
+  const at = side === 'before' ? tabs.indexOf(anchorList[0]) : tabs.indexOf(anchorList[anchorList.length - 1]) + 1;
+  tabs.splice(at, 0, ...list);
+}
+function finishDrop() {
   saveGroups();
   saveTabs();
   renderTabs();
+}
+function clearDropMarks() {
+  document.querySelectorAll('.drop-before, .drop-after, .drop-into').forEach((x) => x.classList.remove('drop-before', 'drop-after', 'drop-into'));
+}
+
+// 탭 위에 놓기
+function dropOnTab(e, target, tg) {
+  e.preventDefault();
+  e.stopPropagation();
+  clearDropMarks();
+  const d = dragging;
+  dragging = null;
+  if (!d) return;
+  normalizeOrder();
+  const side = sideOf(e, e.currentTarget);
+  if (d.group) {
+    // 그룹을 탭 쪽으로: 대상이 다른 그룹 탭이면 그 그룹 묶음 기준, 아니면 그 탭 기준
+    if (tg === d.group) return;
+    moveBlock(blockOf(d.group), tg ? blockOf(tg) : [target], side);
+    return finishDrop();
+  }
+  const moving = d.tab;
+  if (moving === target) return;
+  const mg = groupOf(moving.path);
+  if (tg && tg === mg) {
+    moveBlock([moving], [target], side); // 같은 그룹 안 순서
+  } else if (tg) {
+    setGroup(moving.path, null); // 다른 그룹 쪽: 들어가지 않고 그 그룹의 앞/뒤로
+    moveBlock([moving], blockOf(tg), side);
+  } else {
+    setGroup(moving.path, null); // 그룹 밖 탭 위: 그룹에서 빠져서 그 자리로
+    moveBlock([moving], [target], side);
+  }
+  finishDrop();
+}
+
+// 이름표 위에 놓기: 탭이면 그룹에 넣기, 그룹이면 그룹 순서 바꾸기
+function dropOnChip(e, g) {
+  e.preventDefault();
+  e.stopPropagation();
+  clearDropMarks();
+  const d = dragging;
+  dragging = null;
+  if (!d) return;
+  normalizeOrder();
+  if (d.group) {
+    if (d.group === g) return;
+    moveBlock(blockOf(d.group), blockOf(g), sideOf(e, e.currentTarget));
+    return finishDrop();
+  }
+  const moving = d.tab;
+  if (groupOf(moving.path) === g) return;
+  setGroup(moving.path, g);
+  // 그룹의 맨 뒤로
+  const rest = blockOf(g).filter((x) => x !== moving);
+  if (rest.length) moveBlock([moving], rest, 'after');
+  if (g.collapsed) g.collapsed = false;
+  finishDrop();
+}
+
+// 끄는 동안 놓일 자리 표시: 세로 막대(앞/뒤) 또는 이름표 강조(그룹에 넣기)
+function markDrop(e, el, kind) {
+  if (!dragging) return;
+  e.preventDefault();
+  clearDropMarks();
+  if (kind === 'chip' && dragging.tab) return el.classList.add('drop-into');
+  el.classList.add(sideOf(e, el) === 'before' ? 'drop-before' : 'drop-after');
 }
 
 function tabEl(t, g) {
@@ -312,9 +389,15 @@ function tabEl(t, g) {
       { label: '경로 복사', onClick: () => window.api.copy(t.path) },
     ]);
   };
-  el.ondragstart = (e) => e.dataTransfer.setData('text/tab', t.path);
-  el.ondragover = (e) => e.preventDefault();
-  el.ondrop = (e) => dropOn(e, t, g);
+  el.ondragstart = (e) => {
+    dragging = { tab: t };
+    e.dataTransfer.setData('text/tab', t.path);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  el.ondragend = () => ((dragging = null), clearDropMarks());
+  el.ondragover = (e) => markDrop(e, el, 'tab');
+  el.ondragleave = () => el.classList.remove('drop-before', 'drop-after');
+  el.ondrop = (e) => dropOnTab(e, t, g);
   return el;
 }
 
@@ -328,9 +411,9 @@ function chipEl(g, count, onClick) {
         ? `${groupLabel(g)} — 닫힌 그룹 (${g.paths.length}개 프로젝트)\n클릭: 다시 열기 · 우클릭: 이름·색 / 삭제`
         : `${groupLabel(g)} — 프로젝트 ${count}개\n클릭: ${g.collapsed ? '펼치기' : '접기'} · 우클릭: 이름·색 / 그룹 닫기`,
     },
-    h('span', { class: 'tg-name', text: g.name || '' }),
-    g.closed || g.collapsed || !g.name ? h('span', { class: 'tg-n', text: count }) : null
+    h('span', { class: 'tg-name', text: g.name || '' })
   );
+  if (!g.name) chip.classList.add('unnamed'); // 이름 없는 그룹: 작은 색 점
   chip.style.setProperty('--gc', colorOf(g));
   chip.onclick = onClick;
   chip.oncontextmenu = (e) => {
@@ -358,8 +441,16 @@ export function renderTabs() {
     const g = item.group;
     const shown = g.collapsed ? [] : item.tabs; // 접으면 이름표만 (지금 탭도 숨김)
     const chip = chipEl(g, item.tabs.length, () => (g.collapsed ? expandGroup(g) : collapseGroups([g])));
-    chip.ondragover = (e) => e.preventDefault();
-    chip.ondrop = (e) => dropOn(e, null, g);
+    chip.draggable = true;
+    chip.ondragstart = (e) => {
+      dragging = { group: g };
+      e.dataTransfer.setData('text/group', g.id);
+      e.dataTransfer.effectAllowed = 'move';
+    };
+    chip.ondragend = () => ((dragging = null), clearDropMarks());
+    chip.ondragover = (e) => markDrop(e, chip, 'chip');
+    chip.ondragleave = () => chip.classList.remove('drop-before', 'drop-after', 'drop-into');
+    chip.ondrop = (e) => dropOnChip(e, g);
     const box = h('div', { class: `tab-group ${g.collapsed ? 'collapsed' : ''}` }, chip, ...shown.map((t) => tabEl(t, g)));
     box.style.setProperty('--gc', colorOf(g)); // 이름표·색 줄·현재 탭 표시에 쓰는 그룹 색
     scroll.append(box);
@@ -394,17 +485,23 @@ export function renderTabs() {
     barMenu(e.clientX, e.clientY);
   };
   // 빈 곳에 놓으면 그룹에서 빼서 맨 뒤로
-  scroll.ondragover = (e) => e.preventDefault();
-  scroll.ondrop = (e) => {
-    if (e.target !== scroll) return;
+  scroll.ondragover = (e) => {
+    if (!dragging) return;
     e.preventDefault();
-    const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
-    if (from < 0) return;
-    setGroup(tabs[from].path, null);
-    tabs.push(tabs.splice(from, 1)[0]);
-    saveGroups();
-    saveTabs();
-    renderTabs();
+    if (e.target === scroll) clearDropMarks();
+  };
+  scroll.ondrop = (e) => {
+    if (e.target !== scroll || !dragging) return;
+    e.preventDefault();
+    clearDropMarks();
+    const d = dragging;
+    dragging = null;
+    normalizeOrder();
+    const list = d.group ? blockOf(d.group) : [d.tab];
+    if (d.tab) setGroup(d.tab.path, null);
+    for (const t of list) tabs.splice(tabs.indexOf(t), 1);
+    tabs.push(...list);
+    finishDrop();
   };
   // 자리가 모자라면: 먼저 탭을 줄이고(브랜치 이름 숨김) → 그래도 넘치면 스크롤. 지금 탭이 보이도록 이동
   requestAnimationFrame(() => {
