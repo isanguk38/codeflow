@@ -6,7 +6,7 @@ import { initLog, activateLog } from './log.js';
 import { initStash, activateStash } from './stash.js';
 import { openBranchPopup, newBranch } from './branches.js';
 import { doFetch, doPull, doPush } from './remote.js';
-import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs } from './repo.js';
+import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs, openProjectList } from './repo.js';
 import { startUpdateCheck } from './update.js';
 import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
 import { initAi, toggleAi, onAiRepoChanged } from './ai.js';
@@ -146,6 +146,12 @@ async function main() {
         e.preventDefault();
         e.stopPropagation();
         openSearch();
+      }
+      // 모든 프로젝트 목록 (탭이 많을 때 검색해서 바로 이동)
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE' && !document.querySelector('.modal-backdrop')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openProjectList();
       }
     },
     true

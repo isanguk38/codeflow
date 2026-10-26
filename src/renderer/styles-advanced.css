@@ -679,3 +679,261 @@ body.is-busy .progress-bar::before {
   color: var(--text3);
   padding: 24px;
 }
+
+/* ---------- 탭 그룹 ---------- */
+.tab-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  position: relative;
+  padding-right: 2px;
+  margin-right: 4px;
+}
+/* 그룹 탭들 아래에 그룹 색 줄 */
+.tab-group::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gc);
+  pointer-events: none;
+}
+.tab-group.collapsed::after {
+  display: none;
+}
+.tg-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  margin: 0 2px 3px;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--gc);
+  color: #fff;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tg-chip:hover {
+  filter: brightness(1.08);
+}
+.tg-chip .tg-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tg-chip .tg-name:empty {
+  display: none;
+}
+.tg-chip .tg-n {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 7px;
+  padding: 0 5px;
+  line-height: 15px;
+}
+.tg-chip.collapsed {
+  opacity: 0.92;
+}
+.tab.in-group.active {
+  box-shadow: inset 0 2px 0 var(--gc);
+}
+.tg-editor {
+  position: fixed;
+  z-index: 1000;
+  width: 250px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+.tg-colors {
+  display: flex;
+  gap: 7px;
+  padding: 2px;
+}
+.tg-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.tg-dot.on {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--text2);
+}
+.tg-act {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 5px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.tg-act:hover {
+  background: var(--hover);
+}
+.tg-act.danger {
+  color: var(--danger);
+}
+
+/* ---------- 탭 바: 스크롤 영역 + 오른쪽 고정 영역 ---------- */
+.tabbar {
+  overflow: hidden;
+  padding-right: 4px;
+}
+.tab-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar {
+  height: 0;
+}
+/* 숨은 탭이 있는 쪽 끝을 흐리게 */
+.tab-scroll.fade-r {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+}
+.tab-scroll.fade-l {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 36px);
+}
+.tab-scroll.fade-l.fade-r {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+}
+/* 자리가 모자라면 탭을 줄인다: 지금 탭이 아닌 탭의 브랜치 이름부터 숨김 */
+.tab-scroll .tab {
+  flex-shrink: 0;
+}
+.tab-scroll.tight .tab:not(.active) .tab-branch {
+  display: none;
+}
+.tab-scroll.tight .tab:not(.active) {
+  padding-left: 9px;
+}
+.tab-scroll.tighter .tab:not(.active) {
+  max-width: 130px;
+}
+.tab-fixed {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 4px 8px;
+  margin-left: 4px;
+  border-left: 1px solid var(--border);
+  align-self: stretch;
+}
+.tab-list-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text2);
+  padding: 3px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tab-list-btn:hover {
+  background: var(--bg3);
+}
+.tab-list-n {
+  font-size: 11px;
+  color: var(--text3);
+}
+/* 닫힌 그룹 이름표: 테두리만 */
+.tg-chip.closed {
+  background: transparent;
+  color: var(--gc);
+  box-shadow: inset 0 0 0 1.5px var(--gc);
+  margin: 0;
+}
+.tg-chip.closed .tg-n {
+  background: color-mix(in srgb, var(--gc) 18%, transparent);
+}
+.tg-chip.closed:hover {
+  background: color-mix(in srgb, var(--gc) 12%, transparent);
+  filter: none;
+}
+/* 모든 프로젝트 목록 */
+.pl-pop {
+  position: fixed;
+  z-index: 1000;
+  width: 340px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.pl-q {
+  margin: 8px;
+}
+.pl-list {
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+.pl-sec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+}
+.pl-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.pl-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 12px 4px 27px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pl-row.sel {
+  background: var(--sel);
+}
+.pl-row.current .pl-name {
+  font-weight: 700;
+}
+.pl-name {
+  flex: none;
+}
+.pl-sub {
+  color: var(--text3);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-empty {
+  padding: 14px;
+  color: var(--text3);
+}

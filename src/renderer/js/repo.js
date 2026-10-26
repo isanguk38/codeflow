@@ -13,52 +13,473 @@ function saveTabs() {
   window.api.setSettings({ tabs: tabs.map((t) => t.path), last: state.repo });
 }
 
-export function renderTabs() {
-  const bar = $('#tabbar');
-  bar.innerHTML = '';
-  bar.hidden = !tabs.length;
+// ---------- 탭 그룹 (크롬처럼: 색깔 이름표로 묶고, 이름표를 누르면 접기/펼치기) ----------
+// settings.tabGroups = [{ id, name, color, collapsed, closed, paths: [프로젝트 경로...] }]
+// closed: '그룹 닫기' 로 탭은 모두 닫았지만 그룹은 기억 (오른쪽 끝 이름표를 누르면 다시 열림)
+const GROUP_COLORS = [
+  ['grey', '#8a8f98'],
+  ['blue', '#3b82f6'],
+  ['red', '#e5484d'],
+  ['yellow', '#d39e00'],
+  ['green', '#2f9e44'],
+  ['pink', '#d6409f'],
+  ['purple', '#8e4ec6'],
+  ['cyan', '#0c9fb5'],
+];
+const colorOf = (g) => (GROUP_COLORS.find(([k]) => k === g.color) || GROUP_COLORS[1])[1];
+let groups = null;
+function loadGroups() {
+  if (groups) return groups;
+  groups = (state.settings?.tabGroups || []).map((g) => ({ ...g, paths: [...(g.paths || [])] }));
+  return groups;
+}
+function saveGroups() {
+  // 빈 그룹은 지운다
+  groups = loadGroups().filter((g) => g.paths.length);
+  window.api.setSettings({ tabGroups: groups });
+}
+const inGroup = (g, path) => g.paths.some((p) => norm(p) === norm(path));
+// 열려 있는 그룹 중에서 (닫힌 그룹의 프로젝트를 따로 열면 그룹 밖 탭으로 취급)
+const groupOf = (path) => loadGroups().find((g) => !g.closed && inGroup(g, path)) || null;
+function setGroup(path, g) {
+  for (const x of loadGroups()) if (!x.closed) x.paths = x.paths.filter((p) => norm(p) !== norm(path));
+  if (g) g.paths.push(path);
+}
+function newGroup(paths, name = '') {
+  const used = new Set(loadGroups().map((g) => g.color));
+  const color = (GROUP_COLORS.find(([k]) => !used.has(k)) || GROUP_COLORS[groups.length % GROUP_COLORS.length])[0];
+  const g = { id: `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, color, collapsed: false, closed: false, paths: [] };
+  groups.push(g);
+  for (const p of paths) setGroup(p, g);
+  return g;
+}
+const isActive = (t) => state.repo && norm(t.path) === norm(state.repo);
+const groupLabel = (g) => g.name || '이름 없는 그룹';
+
+// 그룹 닫기: 그룹은 기억하고, 속한 프로젝트 탭만 모두 닫는다
+let closingGroup = false;
+async function closeGroup(g) {
+  const members = tabs.filter((t) => groupOf(t.path) === g);
+  // 지금 보고 있는 탭이 이 그룹이면 다른 탭으로 먼저 옮긴다 (닫는 동안 그룹 안에서 이리저리 바뀌지 않게)
+  if (members.some(isActive)) {
+    const other = visibleOrder().find((t) => groupOf(t.path) !== g);
+    if (other) await switchTab(other.path);
+  }
+  g.closed = true;
+  g.collapsed = false;
+  closingGroup = true;
+  try {
+    for (const t of members) await closeTab(t.path);
+  } finally {
+    closingGroup = false;
+  }
+  saveGroups();
+  renderTabs();
+  toast(`'${groupLabel(g)}' 그룹을 닫았습니다. 탭 바 오른쪽 끝 이름표를 누르면 ${g.paths.length}개 프로젝트가 다시 열립니다.`, 'ok', 5000);
+}
+
+// 닫힌 그룹 다시 열기: 프로젝트를 모두 탭으로 열고 첫 번째로 이동
+async function reopenGroup(g) {
+  g.closed = false;
+  const missing = [];
+  let first = null;
+  for (const p of [...g.paths]) {
+    if (!(await window.api.exists(p))) {
+      missing.push(p);
+      continue;
+    }
+    const r = await window.api.openRepo(p);
+    if (!r.ok) {
+      missing.push(p);
+      continue;
+    }
+    // 다른 그룹에 열려 있던 프로젝트면 이 그룹으로 옮긴다
+    setGroup(r.data, null);
+    if (!inGroup(g, r.data)) g.paths.push(r.data);
+    if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'code' });
+    first = first || r.data;
+  }
+  if (missing.length) {
+    g.paths = g.paths.filter((p) => !missing.includes(p));
+    toast(`찾을 수 없는 폴더 ${missing.length}개는 그룹에서 뺐습니다.`, 'warn', 5000);
+  }
+  saveGroups();
+  if (first) await switchTab(first);
+  else renderTabs();
+}
+
+// 그룹 삭제: 탭도 닫고 그룹도 지운다
+async function deleteGroup(g) {
+  const ok = await confirmDialog(`'${groupLabel(g)}' 그룹을 삭제할까요?${g.closed ? '' : '\n그룹에 속한 탭도 모두 닫힙니다.'}\n(프로젝트 폴더는 그대로입니다)`, { title: '그룹 삭제', okLabel: '삭제', danger: true });
+  if (!ok) return;
+  if (!g.closed) for (const t of tabs.filter((x) => groupOf(x.path) === g)) await closeTab(t.path);
+  g.paths = [];
+  saveGroups();
+  renderTabs();
+}
+
+// 화면에 그리는 순서: 그룹은 첫 탭 자리에 모아서 [이름표, 탭들], 나머지는 원래 순서대로
+function layout() {
+  const out = [];
+  const seen = new Set();
   for (const t of tabs) {
-    const active = state.repo && norm(t.path) === norm(state.repo);
-    const st = t.status;
-    const n = st?.files?.length || 0;
-    const el = h(
-      'div',
-      { class: `tab ${active ? 'active' : ''}`, title: t.path, draggable: 'true' },
-      h('span', { class: 'tab-name', text: repoName(t.path) }),
-      st ? h('span', { class: `tab-branch ${st.detached ? 'detached' : ''}`, text: st.detached ? `HEAD` : st.branch || '' }) : null,
-      n ? h('span', { class: 'tab-count', text: n, title: `변경 ${n}개` }) : null,
-      st?.state || st?.files?.some((f) => f.status === 'conflict') ? h('span', { class: 'tab-warn', text: '⚠', title: '병합/리베이스 진행 중' }) : null,
-      h('button', { class: 'tab-x', text: '✕', title: '탭 닫기 (Ctrl+W)', onclick: (e) => (e.stopPropagation(), closeTab(t.path)) })
-    );
-    el.onclick = () => !active && switchTab(t.path);
-    el.onauxclick = (e) => e.button === 1 && closeTab(t.path);
-    el.oncontextmenu = (e) => {
-      e.preventDefault();
-      contextMenu(e.clientX, e.clientY, [
-        { label: '탭 닫기', onClick: () => closeTab(t.path) },
-        { label: '다른 탭 모두 닫기', disabled: tabs.length < 2, onClick: () => tabs.filter((x) => x !== t).forEach((x) => closeTab(x.path)) },
-        '-',
-        { label: '탐색기에서 열기', onClick: () => window.api.openPath(t.path) },
-        { label: '경로 복사', onClick: () => window.api.copy(t.path) },
-      ]);
-    };
-    // 드래그로 탭 순서 바꾸기
-    el.ondragstart = (e) => e.dataTransfer.setData('text/tab', t.path);
-    el.ondragover = (e) => e.preventDefault();
-    el.ondrop = (e) => {
-      e.preventDefault();
-      const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
-      const to = tabs.indexOf(t);
-      if (from < 0 || from === to) return;
-      tabs.splice(to, 0, tabs.splice(from, 1)[0]);
-      saveTabs();
+    const g = groupOf(t.path);
+    if (!g) out.push({ tab: t });
+    else if (!seen.has(g.id)) {
+      seen.add(g.id);
+      out.push({ group: g, tabs: tabs.filter((x) => groupOf(x.path) === g) });
+    }
+  }
+  return out;
+}
+// Ctrl+Tab 순서: 화면 순서, 접힌 그룹은 건너뜀 (지금 탭은 포함)
+function visibleOrder() {
+  return layout().flatMap((x) => (x.tab ? [x.tab] : x.group.collapsed ? x.tabs.filter(isActive) : x.tabs));
+}
+
+// 이름·색 바꾸기 + 그룹 닫기/해제/삭제 (크롬의 그룹 편집 말풍선처럼)
+function editGroup(g, anchor) {
+  document.querySelector('.tg-editor')?.remove();
+  const box = h('div', { class: 'tg-editor' });
+  const name = h('input', { class: 'input', value: g.name, placeholder: '그룹 이름 (예: 현대건설 스토어)', spellcheck: 'false' });
+  name.oninput = () => {
+    g.name = name.value.trim();
+    saveGroups();
+    renderTabs();
+  };
+  const colors = h('div', { class: 'tg-colors' });
+  for (const [k, c] of GROUP_COLORS) {
+    const dot = h('button', { class: `tg-dot ${g.color === k ? 'on' : ''}`, title: k, style: { background: c } });
+    dot.onclick = () => {
+      g.color = k;
+      colors.querySelectorAll('.tg-dot').forEach((d) => d.classList.toggle('on', d === dot));
+      saveGroups();
       renderTabs();
     };
-    bar.append(el);
+    colors.append(dot);
   }
-  const add = h('button', { class: 'tab-add', text: '＋', title: '프로젝트 열기 (새 탭)' });
+  const close = () => {
+    box.remove();
+    document.removeEventListener('mousedown', outside, true);
+  };
+  const outside = (e) => !box.contains(e.target) && close();
+  const act = (text, title, fn, cls = '') => {
+    const b = h('button', { class: `tg-act ${cls}`, text, title });
+    b.onclick = () => (close(), fn());
+    return b;
+  };
+  name.onkeydown = (e) => (e.key === 'Enter' || e.key === 'Escape') && close();
+  box.append(
+    name,
+    colors,
+    g.closed
+      ? act(`다시 열기 (${g.paths.length}개 프로젝트)`, '그룹의 프로젝트를 모두 탭으로 엽니다', () => reopenGroup(g))
+      : act('그룹 닫기', '그룹은 기억하고 탭만 모두 닫습니다. 오른쪽 끝 이름표로 다시 열 수 있습니다', () => closeGroup(g)),
+    g.closed ? null : act('그룹 해제 (탭은 그대로)', '묶음만 풀고 탭은 그대로 둡니다', () => ((g.paths = []), saveGroups(), renderTabs())),
+    act(g.closed ? '그룹 삭제' : '그룹 삭제 (탭도 닫기)', '그룹을 지웁니다. 프로젝트 폴더는 그대로입니다', () => deleteGroup(g), 'danger')
+  );
+  document.body.append(box);
+  const r = anchor.getBoundingClientRect();
+  box.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - box.offsetWidth - 8))}px`;
+  box.style.top = `${r.bottom + 4}px`;
+  setTimeout(() => {
+    name.focus();
+    name.select();
+    document.addEventListener('mousedown', outside, true);
+  });
+}
+
+// 같은 상위 폴더에 있는 프로젝트끼리 자동으로 묶기 (2개 이상인 폴더만)
+function groupByFolder() {
+  const parentOf = (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).slice(0, -1).join('\\');
+  const by = new Map();
+  for (const t of tabs) {
+    if (groupOf(t.path)) continue;
+    const k = parentOf(t.path).toLowerCase();
+    if (!by.has(k)) by.set(k, { name: parentOf(t.path).split('\\').pop(), list: [] });
+    by.get(k).list.push(t.path);
+  }
+  let n = 0;
+  for (const { name, list } of by.values()) {
+    if (list.length < 2) continue;
+    newGroup(list, name);
+    n++;
+  }
+  saveGroups();
+  renderTabs();
+  toast(n ? `폴더별로 ${n}개 그룹을 만들었습니다. 이름표를 누르면 접고, 우클릭하면 이름·색 바꾸기와 그룹 닫기가 있습니다.` : '같은 폴더에 있는 프로젝트(2개 이상)가 없습니다.', n ? 'ok' : 'info', 5000);
+}
+
+function barMenu(x, y) {
+  const open = loadGroups().filter((g) => !g.closed);
+  contextMenu(x, y, [
+    { label: '모든 프로젝트 목록... (Ctrl+Shift+E)', onClick: () => openProjectList() },
+    '-',
+    { label: '상위 폴더별로 자동 묶기', disabled: tabs.filter((t) => !groupOf(t.path)).length < 2, onClick: groupByFolder },
+    { label: '모든 그룹 접기', disabled: !open.length, onClick: () => (open.forEach((g) => (g.collapsed = true)), saveGroups(), renderTabs()) },
+    { label: '모든 그룹 펼치기', disabled: !open.length, onClick: () => (open.forEach((g) => (g.collapsed = false)), saveGroups(), renderTabs()) },
+  ]);
+}
+
+// 드래그: 그룹 안 탭이나 이름표 위에 놓으면 그 그룹으로, 그룹 밖 탭 위에 놓으면 그룹에서 빠짐
+function dropOn(e, target, g) {
+  e.preventDefault();
+  e.stopPropagation();
+  const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
+  if (from < 0) return;
+  const moving = tabs[from];
+  setGroup(moving.path, g);
+  if (target && target !== moving) tabs.splice(tabs.indexOf(target), 0, tabs.splice(from, 1)[0]);
+  else if (!target && g) {
+    // 이름표 위: 그룹의 맨 앞으로
+    const first = tabs.find((x) => x !== moving && groupOf(x.path) === g);
+    if (first) tabs.splice(tabs.indexOf(first), 0, tabs.splice(tabs.indexOf(moving), 1)[0]);
+  }
+  saveGroups();
+  saveTabs();
+  renderTabs();
+}
+
+function tabEl(t, g) {
+  const active = isActive(t);
+  const st = t.status;
+  const n = st?.files?.length || 0;
+  const el = h(
+    'div',
+    { class: `tab ${active ? 'active' : ''} ${g ? 'in-group' : ''}`, title: `${t.path}${g ? `\n그룹: ${groupLabel(g)}` : ''}`, draggable: 'true' },
+    h('span', { class: 'tab-name', text: repoName(t.path) }),
+    st ? h('span', { class: `tab-branch ${st.detached ? 'detached' : ''}`, text: st.detached ? `HEAD` : st.branch || '' }) : null,
+    n ? h('span', { class: 'tab-count', text: n, title: `변경 ${n}개` }) : null,
+    st?.state || st?.files?.some((f) => f.status === 'conflict') ? h('span', { class: 'tab-warn', text: '⚠', title: '병합/리베이스 진행 중' }) : null,
+    h('button', { class: 'tab-x', text: '✕', title: '탭 닫기 (Ctrl+W)', onclick: (e) => (e.stopPropagation(), closeTab(t.path)) })
+  );
+  el.onclick = () => !active && switchTab(t.path);
+  el.onauxclick = (e) => e.button === 1 && closeTab(t.path);
+  el.oncontextmenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const others = loadGroups().filter((x) => x !== g && !x.closed);
+    contextMenu(e.clientX, e.clientY, [
+      {
+        label: '새 그룹에 추가...',
+        onClick: () => {
+          const ng = newGroup([t.path]);
+          saveGroups();
+          renderTabs();
+          const chip = document.querySelector(`.tg-chip[data-id="${ng.id}"]`);
+          if (chip) editGroup(ng, chip);
+        },
+      },
+      ...others.map((x) => ({ label: `'${groupLabel(x)}' 그룹으로 이동`, onClick: () => (setGroup(t.path, x), saveGroups(), renderTabs()) })),
+      g ? { label: '그룹에서 빼기', onClick: () => (setGroup(t.path, null), saveGroups(), renderTabs()) } : null,
+      g ? { label: `'${groupLabel(g)}' 그룹 닫기 (나중에 다시 열기)`, onClick: () => closeGroup(g) } : null,
+      '-',
+      { label: '탭 닫기', onClick: () => closeTab(t.path) },
+      { label: '다른 탭 모두 닫기', disabled: tabs.length < 2, onClick: () => tabs.filter((x) => x !== t).forEach((x) => closeTab(x.path)) },
+      '-',
+      { label: '상위 폴더별로 자동 묶기', disabled: tabs.filter((x) => !groupOf(x.path)).length < 2, onClick: groupByFolder },
+      { label: '모든 프로젝트 목록... (Ctrl+Shift+E)', onClick: () => openProjectList() },
+      '-',
+      { label: '탐색기에서 열기', onClick: () => window.api.openPath(t.path) },
+      { label: '경로 복사', onClick: () => window.api.copy(t.path) },
+    ]);
+  };
+  el.ondragstart = (e) => e.dataTransfer.setData('text/tab', t.path);
+  el.ondragover = (e) => e.preventDefault();
+  el.ondrop = (e) => dropOn(e, t, g);
+  return el;
+}
+
+function chipEl(g, count, onClick) {
+  const chip = h(
+    'button',
+    {
+      class: `tg-chip ${g.collapsed ? 'collapsed' : ''} ${g.closed ? 'closed' : ''}`,
+      'data-id': g.id,
+      title: g.closed
+        ? `${groupLabel(g)} — 닫힌 그룹 (${g.paths.length}개 프로젝트)\n클릭: 다시 열기 · 우클릭: 이름·색 / 삭제`
+        : `${groupLabel(g)} — 프로젝트 ${count}개\n클릭: ${g.collapsed ? '펼치기' : '접기'} · 우클릭: 이름·색 / 그룹 닫기`,
+    },
+    h('span', { class: 'tg-name', text: g.name || '' }),
+    g.closed || g.collapsed || !g.name ? h('span', { class: 'tg-n', text: count }) : null
+  );
+  chip.style.setProperty('--gc', colorOf(g));
+  chip.onclick = onClick;
+  chip.oncontextmenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    editGroup(g, chip);
+  };
+  return chip;
+}
+
+export function renderTabs() {
+  const bar = $('#tabbar');
+  const oldScroll = bar.querySelector('.tab-scroll');
+  const keepLeft = oldScroll ? oldScroll.scrollLeft : 0;
+  bar.innerHTML = '';
+  const closedGroups = loadGroups().filter((g) => g.closed);
+  bar.hidden = !tabs.length && !closedGroups.length;
+  // 왼쪽: 탭들(넘치면 가로 스크롤) / 오른쪽 고정: 닫힌 그룹 이름표, 모든 프로젝트 목록, ＋
+  const scroll = h('div', { class: 'tab-scroll' });
+  for (const item of layout()) {
+    if (item.tab) {
+      scroll.append(tabEl(item.tab, null));
+      continue;
+    }
+    const g = item.group;
+    const shown = g.collapsed ? item.tabs.filter(isActive) : item.tabs;
+    const chip = chipEl(g, item.tabs.length, () => {
+      g.collapsed = !g.collapsed;
+      saveGroups();
+      renderTabs();
+    });
+    chip.ondragover = (e) => e.preventDefault();
+    chip.ondrop = (e) => dropOn(e, null, g);
+    const box = h('div', { class: `tab-group ${g.collapsed ? 'collapsed' : ''}` }, chip, ...shown.map((t) => tabEl(t, g)));
+    box.style.setProperty('--gc', colorOf(g)); // 이름표·색 줄·현재 탭 표시에 쓰는 그룹 색
+    scroll.append(box);
+  }
+  const add = h('button', { class: 'tab-add', text: '＋', title: '프로젝트 열기 (새 탭) · 우클릭: 탭 그룹 메뉴' });
   add.onclick = () => repoMenu(add);
-  bar.append(add);
+  add.oncontextmenu = (e) => (e.preventDefault(), barMenu(e.clientX, e.clientY));
+  scroll.append(add);
+
+  const fixed = h('div', { class: 'tab-fixed' });
+  for (const g of closedGroups) fixed.append(chipEl(g, g.paths.length, () => reopenGroup(g)));
+  const all = h('button', { class: 'tab-list-btn', title: '모든 프로젝트 목록 (Ctrl+Shift+E)' }, h('span', { text: '▾' }), h('span', { class: 'tab-list-n', text: tabs.length }));
+  all.onclick = () => openProjectList(all);
+  fixed.append(all);
+  bar.append(scroll, fixed);
+
+  // 휠: 탭 바에서는 가로로 스크롤
+  scroll.onwheel = (e) => {
+    if (scroll.scrollWidth <= scroll.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    scroll.scrollLeft += e.deltaY;
+  };
+  const fades = () => {
+    scroll.classList.toggle('fade-l', scroll.scrollLeft > 2);
+    scroll.classList.toggle('fade-r', scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 2);
+  };
+  scroll.onscroll = fades;
+  // 탭 바 빈 곳 우클릭: 그룹 메뉴
+  scroll.oncontextmenu = (e) => {
+    if (e.target !== scroll) return;
+    e.preventDefault();
+    barMenu(e.clientX, e.clientY);
+  };
+  // 빈 곳에 놓으면 그룹에서 빼서 맨 뒤로
+  scroll.ondragover = (e) => e.preventDefault();
+  scroll.ondrop = (e) => {
+    if (e.target !== scroll) return;
+    e.preventDefault();
+    const from = tabs.findIndex((x) => x.path === e.dataTransfer.getData('text/tab'));
+    if (from < 0) return;
+    setGroup(tabs[from].path, null);
+    tabs.push(tabs.splice(from, 1)[0]);
+    saveGroups();
+    saveTabs();
+    renderTabs();
+  };
+  // 자리가 모자라면: 먼저 탭을 줄이고(브랜치 이름 숨김) → 그래도 넘치면 스크롤. 지금 탭이 보이도록 이동
+  requestAnimationFrame(() => {
+    scroll.classList.remove('tight', 'tighter');
+    if (scroll.scrollWidth > scroll.clientWidth) scroll.classList.add('tight');
+    if (scroll.scrollWidth > scroll.clientWidth) scroll.classList.add('tighter');
+    scroll.scrollLeft = keepLeft;
+    const act = scroll.querySelector('.tab.active');
+    if (act) {
+      const a = act.getBoundingClientRect();
+      const r = scroll.getBoundingClientRect();
+      if (a.left < r.left + 24) scroll.scrollLeft -= r.left + 24 - a.left;
+      else if (a.right > r.right - 24) scroll.scrollLeft += a.right - (r.right - 24);
+    }
+    fades();
+  });
+}
+
+// ---------- 모든 프로젝트 목록 (탭이 많을 때: 그룹별로 보고, 검색해서 바로 이동) ----------
+export function openProjectList(anchor) {
+  document.querySelector('.pl-pop')?.remove();
+  anchor = anchor || document.querySelector('.tab-list-btn');
+  const pop = h('div', { class: 'pl-pop' });
+  const q = h('input', { class: 'input pl-q', placeholder: '프로젝트 이름으로 찾기 (Enter: 이동 · ↑↓ · Esc)', spellcheck: 'false' });
+  const list = h('div', { class: 'pl-list' });
+  pop.append(q, list);
+  let items = [];
+  let sel = 0;
+  const close = () => {
+    pop.remove();
+    document.removeEventListener('mousedown', outside, true);
+  };
+  const outside = (e) => !pop.contains(e.target) && e.target !== anchor && close();
+  const go = (it) => {
+    close();
+    if (it.group) reopenGroup(it.group);
+    else switchTab(it.tab.path);
+  };
+  const draw = () => {
+    const f = q.value.trim().toLowerCase();
+    const hit = (s) => !f || s.toLowerCase().includes(f);
+    list.innerHTML = '';
+    items = [];
+    const section = (title, color) => list.append(h('div', { class: 'pl-sec' }, color ? h('span', { class: 'pl-dot', style: { background: color } }) : null, h('span', { text: title })));
+    const row = (it, label, sub) => {
+      const i = items.push(it) - 1;
+      const el = h('div', { class: `pl-row ${it.tab && isActive(it.tab) ? 'current' : ''}`, title: it.tab ? it.tab.path : '' }, h('span', { class: 'pl-name', text: label }), sub ? h('span', { class: 'pl-sub', text: sub }) : null);
+      el.onmousemove = () => sel !== i && ((sel = i), mark());
+      el.onclick = () => go(it);
+      list.append(el);
+    };
+    for (const item of layout()) {
+      if (item.tab) continue;
+      const ts = item.tabs.filter((t) => hit(repoName(t.path)) || hit(groupLabel(item.group)));
+      if (!ts.length) continue;
+      section(`${groupLabel(item.group)}${item.group.collapsed ? ' (접힘)' : ''}`, colorOf(item.group));
+      for (const t of ts) row({ tab: t }, repoName(t.path), t.status?.branch || '');
+    }
+    const loose = tabs.filter((t) => !groupOf(t.path) && hit(repoName(t.path)));
+    if (loose.length) {
+      section('그룹 없는 탭');
+      for (const t of loose) row({ tab: t }, repoName(t.path), t.status?.branch || '');
+    }
+    const closed = loadGroups().filter((g) => g.closed && (hit(groupLabel(g)) || g.paths.some((p) => hit(repoName(p)))));
+    if (closed.length) {
+      section('닫힌 그룹 (누르면 다시 열기)');
+      for (const g of closed) row({ group: g }, `● ${groupLabel(g)}`, `${g.paths.length}개 · ${g.paths.map(repoName).join(', ')}`);
+      list.querySelectorAll('.pl-row').forEach((el, i) => items[i].group && el.firstChild.style.setProperty('color', colorOf(items[i].group)));
+    }
+    if (!items.length) list.append(h('div', { class: 'pl-empty', text: '찾는 프로젝트가 없습니다.' }));
+    sel = Math.max(0, items.findIndex((it) => it.tab && isActive(it.tab) && !f));
+    mark();
+  };
+  const mark = () => {
+    list.querySelectorAll('.pl-row').forEach((el, i) => el.classList.toggle('sel', i === sel));
+    list.querySelectorAll('.pl-row')[sel]?.scrollIntoView({ block: 'nearest' });
+  };
+  q.oninput = () => {
+    draw();
+    sel = 0;
+    mark();
+  };
+  q.onkeydown = (e) => {
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      sel = Math.max(0, Math.min(items.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1)));
+      mark();
+    } else if (e.key === 'Enter' && items[sel]) go(items[sel]);
+  };
+  draw();
+  document.body.append(pop);
+  const r = anchor ? anchor.getBoundingClientRect() : { right: window.innerWidth - 8, bottom: 80 };
+  pop.style.left = `${Math.max(8, r.right - pop.offsetWidth)}px`;
+  pop.style.top = `${r.bottom + 4}px`;
+  setTimeout(() => {
+    q.focus();
+    document.addEventListener('mousedown', outside, true);
+  });
 }
 
 export function cacheTabStatus(s) {
@@ -96,6 +517,8 @@ export async function closeTab(dir) {
   const closingActive = state.repo && norm(state.repo) === norm(dir);
   if (closingActive && isBusy()) return toast('진행 중인 작업이 끝난 뒤에 닫을 수 있습니다.', 'warn');
   tabs.splice(i, 1);
+  // 닫은 탭은 그룹에서도 뺀다 (빈 그룹은 사라짐). '그룹 닫기' 중에는 그룹이 기억해야 하므로 그대로 둔다
+  if (!closingGroup && groupOf(dir)) (setGroup(dir, null), saveGroups());
   // 닫은 프로젝트의 언어 서버(특히 무거운 Java)를 끈다
   import('./lsp-client.js').then((m) => m.stopRepoServers(dir)).catch(() => {});
   if (closingActive) {
@@ -116,9 +539,10 @@ export async function closeTab(dir) {
 }
 
 export function cycleTab(dir) {
-  if (tabs.length < 2) return;
-  const i = tabs.findIndex((x) => norm(x.path) === norm(state.repo));
-  switchTab(tabs[(i + dir + tabs.length) % tabs.length].path);
+  const order = visibleOrder();
+  if (order.length < 2) return;
+  const i = order.findIndex((x) => norm(x.path) === norm(state.repo));
+  switchTab(order[(i + dir + order.length) % order.length].path);
 }
 
 // 저장소를 탭으로 연다. 이미 열려 있으면 그 탭으로 이동.
