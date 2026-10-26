@@ -338,6 +338,7 @@ pre,
 }
 .panel-title {
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .splitter-x {
@@ -1647,4 +1648,213 @@ input[type='checkbox'] {
 .ver-tag.after {
   color: var(--c-added);
   border-color: color-mix(in srgb, var(--c-added) 45%, transparent);
+}
+
+/* 프로젝트 전체 찾기 (Ctrl+Shift+F) */
+.fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 6vh;
+}
+.find-search {
+  width: min(1000px, 92vw);
+  height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  font-size: 12.5px;
+}
+.fs-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 4px;
+}
+.fs-status {
+  color: var(--text3);
+}
+.fs-err {
+  color: var(--danger);
+}
+.fs-keys {
+  color: var(--text3);
+  font-size: 11px;
+}
+.fs-close {
+  background: none;
+  border: 0;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 13px;
+}
+.fs-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+}
+.fs-query,
+.fs-mask {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+}
+.fs-query:focus,
+.fs-mask:focus {
+  border-color: var(--accent);
+}
+.fs-mask {
+  font-size: 12px;
+  padding: 4px 8px;
+  flex: 0 1 320px;
+  margin-left: auto;
+}
+.fs-opt {
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text2);
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.fs-opt.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.fs-scope {
+  display: flex;
+  min-width: 0;
+}
+.fs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--sel);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fs-chip.all {
+  background: none;
+  color: var(--text3);
+  padding-left: 0;
+}
+.fs-list {
+  flex: 1 1 55%;
+  min-height: 80px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-top: 4px;
+}
+.fs-group {
+  padding: 4px 12px 2px;
+  font-size: 11px;
+  color: var(--text3);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+.fs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fs-item:hover {
+  background: var(--hover);
+}
+.fs-item.sel {
+  background: var(--sel);
+}
+.fs-ico {
+  flex: none;
+  font-size: 12px;
+}
+.fs-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fs-text.code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.fs-file {
+  flex: none;
+  color: var(--text3);
+  font-size: 11.5px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.find-search mark {
+  background: #f2c94c88;
+  color: inherit;
+  border-radius: 2px;
+}
+.fs-empty {
+  padding: 16px 12px;
+  color: var(--text3);
+}
+.fs-preview {
+  flex: 1 1 45%;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg2);
+}
+.fs-pv-head {
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fs-pv-body {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  position: relative;
+}
+.fs-pv-line {
+  display: flex;
+  white-space: pre;
+  line-height: 18px;
+}
+.fs-pv-line.cur {
+  background: var(--sel);
+}
+.fs-pv-line .ln {
+  flex: none;
+  width: 48px;
+  text-align: right;
+  padding-right: 10px;
+  color: var(--text3);
+  user-select: none;
 }

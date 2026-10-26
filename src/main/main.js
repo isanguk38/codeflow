@@ -123,6 +123,14 @@ function addRecent(dir) {
   saveSettings(s);
 }
 
+// 프로젝트 전체 검색 (Ctrl+Shift+F): 결과는 찾는 대로 search:found / search:done 으로 보낸다
+const search = require('./search');
+ipcMain.on('search:start', (e, repo, id, opts) => {
+  const wc = e.sender;
+  search.start(repo, id, opts, (kind, data) => !wc.isDestroyed() && wc.send(`search:${kind}`, data));
+});
+ipcMain.on('search:cancel', (_e, id) => search.cancel(id));
+
 // 코드 화면: 파일 작업
 const files = require('./files');
 for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash']) {

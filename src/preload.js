@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('api', {
   exists: (p) => ipcRenderer.invoke('path:exists', p),
   copy: (text) => clipboard.writeText(text),
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
+  search: {
+    start: (repo, id, opts) => ipcRenderer.send('search:start', repo, id, opts),
+    cancel: (id) => ipcRenderer.send('search:cancel', id),
+    onFound: (cb) => ipcRenderer.on('search:found', (_e, d) => cb(d)),
+    onDone: (cb) => ipcRenderer.on('search:done', (_e, d) => cb(d)),
+  },
   fs: Object.fromEntries(['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash'].map((n) => [n, (...a) => ipcRenderer.invoke(`fs:${n}`, ...a)])),
   file: {
     preview: (p) => ipcRenderer.invoke('file:preview', p),

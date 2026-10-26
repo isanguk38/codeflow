@@ -38,6 +38,7 @@ export function initCode() {
       <div class="panel-bar">
         <span class="panel-title">탐색기</span>
         <span class="tb-spacer"></span>
+        <button class="tb-btn small" id="codeSearch" title="프로젝트에서 찾기 (Ctrl+Shift+F)">🔍</button>
         <button class="tb-btn small" id="codeNewFile" title="새 파일">＋파일</button>
         <button class="tb-btn small" id="codeNewFolder" title="새 폴더">＋폴더</button>
         <button class="tb-btn small" id="codeCollapse" title="모두 접기">⊟</button>
@@ -51,7 +52,7 @@ export function initCode() {
       <div class="code-notice" id="codeNotice" hidden></div>
       <div class="code-editor-wrap">
         <div class="code-editor" id="codeEditor"></div>
-        <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Shift+Alt+F 서식 정리</small></div></div>
+        <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+Shift+F 프로젝트 전체 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Shift+Alt+F 서식 정리</small></div></div>
       </div>
       <div class="splitter-y" id="termSplit" hidden></div>
       <div class="term-panel" id="termPanel" hidden></div>
@@ -66,6 +67,7 @@ export function initCode() {
     view().expanded.clear();
     renderTree();
   };
+  $('#codeSearch').onclick = () => window.dispatchEvent(new CustomEvent('cf-open-search'));
   $('#codeNewFile').onclick = () => createIn(state.repo, 'file');
   $('#codeNewFolder').onclick = () => createIn(state.repo, 'folder');
 
@@ -309,6 +311,8 @@ function treeMenu(e) {
     { label: '이름 변경...', onClick: () => renameEntry(e) },
     { label: '삭제 (휴지통으로)', danger: true, onClick: () => deleteEntry(e) },
     '-',
+    e.dir ? { label: '이 폴더에서 찾기... (Ctrl+Shift+F)', onClick: () => window.dispatchEvent(new CustomEvent('cf-open-search', { detail: { dir: relOf(state.repo, e.path) } })) } : null,
+    e.dir ? '-' : null,
     { label: '경로 복사', onClick: () => window.api.copy(e.path) },
     { label: '상대 경로 복사', onClick: () => window.api.copy(relOf(state.repo, e.path)) },
     { label: '탐색기에서 보기', onClick: () => window.api.showItem(e.path) },
@@ -395,6 +399,14 @@ async function ensureDoc(path) {
   lsp.attachModel(repo, model).catch((e) => console.warn('언어 서버 연결 실패', e));
   loadHead(doc);
   return doc;
+}
+
+// 편집기에서 선택한 한 줄 글자 (프로젝트 검색어로 미리 채우기)
+export function selectedText() {
+  if (!editor || state.view !== 'code') return '';
+  const sel = editor.getSelection();
+  if (!sel || sel.isEmpty() || sel.startLineNumber !== sel.endLineNumber) return '';
+  return editor.getModel()?.getValueInRange(sel) || '';
 }
 
 export async function openFile(path, selection, opts = {}) {

@@ -10,6 +10,7 @@ import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpen
 import { startUpdateCheck } from './update.js';
 import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
 import { initAi, toggleAi, onAiRepoChanged } from './ai.js';
+import { openSearch } from './search.js';
 import { openConflicts, continueOperation, abortOperation } from './conflicts.js';
 
 const OP_LABEL = { merge: '병합', rebase: '리베이스', 'cherry-pick': '체리픽', revert: '되돌리기' };
@@ -134,6 +135,18 @@ async function main() {
   $$('.rail-btn').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
   $('#aiBtn').onclick = toggleAi;
 
+  // 프로젝트 전체 찾기: 편집기·터미널 안에서도 (편집기가 먼저 가져가지 않도록 capture 단계에서)
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF' && !document.querySelector('.modal-backdrop')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openSearch();
+      }
+    },
+    true
+  );
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.modal-backdrop')) return;
     const k = e.key.toLowerCase();
