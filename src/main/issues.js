@@ -254,13 +254,14 @@ async function list(repo, opts = {}) {
   let r;
   let items = [];
   let raw = 0; // 서버가 준 개수 (GitHub 는 PR 을 걸러 내므로 '더 있음' 판단은 이걸로)
-  // 검색어가 번호뿐이면(23, #23) 그 번호의 이슈를 바로 찾는다 (열림/닫힘 상관없이). 서버 글자 검색은 번호를 못 찾음
+  // 검색어가 번호뿐이면(23, #23) 그 번호의 이슈를 바로 찾는다 — 지금 보고 있는 탭(열림/닫힘/내 담당) 안에서만.
+  // 서버 글자 검색은 번호를 못 찾음
   const num = page === 1 ? String(opts.search || '').trim().match(/^#?(\d+)$/)?.[1] : null;
   if (svc.kind === 'github') {
     const st = opts.state || 'open';
-    if (num) {
+    if (num && !opts.mine) {
       const x = await request(svc, `/repos/${svc.project}/issues/${num}`);
-      if (x?.status === 200 && !x.body.pull_request) {
+      if (x?.status === 200 && !x.body.pull_request && (st === 'all' || x.body.state === st)) {
         r = x;
         items = [x.body];
       }
@@ -295,7 +296,9 @@ async function list(repo, opts = {}) {
       return x;
     };
     if (num) {
-      const x = await get(new URLSearchParams({ state: 'all', 'iids[]': num }));
+      const nq = new URLSearchParams({ state: st, 'iids[]': num });
+      if (opts.mine) nq.set('scope', 'assigned_to_me');
+      const x = await get(nq);
       if (x?.status === 200 && x.body.length) r = x;
     }
     if (!r) r = await get(q);

@@ -70,12 +70,17 @@ function setCollapsed(v) {
   else draw();
 }
 
+let searchTimer = null;
+
 function draw() {
   if (!root) return;
   const c = cache.get(key());
   // 다시 그려도 토큰 입력 칸에 넣던 값·커서는 그대로 (브라우저에서 토큰을 복사해 돌아오면 앱이 새로 고침되므로)
   const oldTok = root.querySelector('.iss-token');
   keepTok = oldTok ? { value: oldTok.value, focus: document.activeElement === oldTok } : null;
+  // 검색 결과가 와서 다시 그려도 검색 칸의 입력 중 상태(포커스·커서 위치)는 그대로
+  const oldSearch = root.querySelector('.iss-search:not(.iss-token)');
+  const keepSearch = oldSearch && document.activeElement === oldSearch ? { value: oldSearch.value, start: oldSearch.selectionStart, end: oldSearch.selectionEnd } : null;
   root.innerHTML = '';
   const count = c?.total ?? (c?.items ? `${c.items.length}${c.hasMore ? '+' : ''}` : '');
   const head = h(
@@ -128,19 +133,20 @@ function draw() {
     tabs.append(b);
   }
   const search = h('input', { class: 'iss-search', placeholder: '제목·내용 검색 또는 #번호', value: view.search, spellcheck: 'false' });
-  let t;
+  if (keepSearch) {
+    // 입력하던 글자(아직 검색 전인 것 포함)와 커서를 되살린다
+    search.value = keepSearch.value;
+    setTimeout(() => {
+      search.focus();
+      search.setSelectionRange(keepSearch.start, keepSearch.end);
+    });
+  }
   search.oninput = () => {
-    clearTimeout(t);
-    t = setTimeout(() => {
+    // 타이머는 하나만: 다시 그려진 뒤에도 이전 칸의 글자로 검색하지 않게
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
       view.search = search.value.trim().replace(/^#(\d+)$/, '$1');
       refreshIssues();
-      setTimeout(() => {
-        const s = root.querySelector('.iss-search');
-        if (s) {
-          s.focus();
-          s.setSelectionRange(s.value.length, s.value.length);
-        }
-      });
     }, 400);
   };
   root.append(tabs, search);
