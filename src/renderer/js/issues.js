@@ -150,13 +150,6 @@ function draw() {
   if (c?.error) return list.append(problem(c));
   if (!c && loading) return list.append(h('div', { class: 'iss-note', html: '<span class="spinner"></span> 이슈를 불러오는 중...' }));
   if (!c) return;
-  if (c.scope?.kind === 'group')
-    list.prepend(
-      h('div', {
-        class: 'iss-note iss-scope',
-        text: `${c.scope.reason === 'disabled' ? '이 프로젝트는 이슈 기능이 꺼져 있어' : '이 프로젝트에서 이슈가 보이지 않아'} 그룹 ${c.scope.name} 의 이슈를 보여 줍니다.`,
-      })
-    );
   if (!c.items.length) list.append(h('div', { class: 'iss-note', text: view.search ? '검색 결과가 없습니다.' : view.mine ? '나에게 배정된 열린 이슈가 없습니다.' : view.state === 'open' ? '열린 이슈가 없습니다.' : '닫힌 이슈가 없습니다.' }));
   for (const it of c.items) list.append(row(it, c));
   if (c.hasMore) {

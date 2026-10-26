@@ -208,28 +208,40 @@ function errorFor(svc, r) {
 
 const publicSvc = (svc) => ({ kind: svc.kind, host: svc.host, project: svc.project, issuesUrl: svc.issuesUrl, newTokenUrl: svc.newTokenUrl });
 
-// GitLab: 프로젝트 이슈가 안 보일 때 원인을 찾고, 가능하면 상위 그룹의 이슈를 보여 준다
-async function groupFallback(svc, q) {
-  const proj = await request(svc, `/projects/${encodeURIComponent(svc.project)}`);
-  const visible = proj?.status === 200;
-  const reason = visible ? (proj.body?.issues_enabled === false || proj.body?.issues_access_level === 'disabled' ? 'disabled' : 'hidden') : 'no-access';
-  // 상위 그룹부터: laos-corp/hstore/store-front → laos-corp/hstore → laos-corp
-  const parts = svc.project.split('/').slice(0, -1);
-  for (let n = parts.length; n >= 1; n--) {
-    const name = parts.slice(0, n).join('/');
-    const r = await request(svc, `/groups/${encodeURIComponent(name)}/issues?${q}`);
-    if (r?.status === 200 && (r.body.length || n === 1 || reason !== 'no-access')) return { ok: true, r, scope: { kind: 'group', name, reason } };
+// GitLab API 에서 프로젝트는 보통 'group/sub/project' 를 %2F 로 바꾼 경로로 가리킨다.
+// 회사 서버 앞단(프록시)이 %2F 를 풀어 버리면 이 주소가 404 가 되므로, 그때는 숫자 ID 를 찾아서 쓴다.
+const projectIds = new Map(); // 'host/경로'(소문자) → 숫자 ID
+const idKey = (svc) => `${svc.host}/${svc.project}`.toLowerCase();
+const projectRef = (svc) => projectIds.get(idKey(svc)) || encodeURIComponent(svc.project);
+
+async function findProjectId(svc) {
+  if (projectIds.has(idKey(svc))) return projectIds.get(idKey(svc));
+  const want = svc.project.toLowerCase();
+  const name = svc.project.split('/').pop();
+  let id = null;
+  for (let page = 1; page <= 5 && !id; page++) {
+    const r = await request(svc, `/projects?search=${encodeURIComponent(name)}&simple=true&per_page=100&page=${page}`);
+    if (r?.status !== 200 || !Array.isArray(r.body)) break;
+    id = r.body.find((p) => String(p.path_with_namespace).toLowerCase() === want)?.id || null;
+    if (r.body.length < 100) break;
   }
-  if (visible) return { why: { error: 'not-found', message: `이 프로젝트(${svc.project})는 이슈 기능이 꺼져 있고, 상위 그룹의 이슈도 볼 수 없습니다.` } };
-  // 프로젝트 자체가 안 보임: 저장된 토큰/로그인 계정에 이 프로젝트 권한이 없음
+  if (id) projectIds.set(idKey(svc), id);
+  return id;
+}
+
+// 프로젝트 이슈가 안 보일 때 원인 (이슈 기능이 꺼짐 / 계정에 권한 없음)
+async function whyNoIssues(svc, ref) {
+  const proj = await request(svc, `/projects/${ref}`);
+  if (proj?.status === 200) {
+    const off = proj.body?.issues_enabled === false || proj.body?.issues_access_level === 'disabled';
+    return { error: 'not-found', message: off ? `이 프로젝트(${svc.project})는 이슈 기능이 꺼져 있습니다.` : `이 프로젝트(${svc.project})의 이슈를 볼 권한이 없습니다.` };
+  }
   const who = await request(svc, '/user');
   const user = who?.status === 200 ? who.body?.username : null;
   return {
-    why: {
-      error: 'no-access',
-      user,
-      message: `${user ? `'${user}' 계정으로는` : '지금 로그인 정보로는'} ${svc.project} 프로젝트가 보이지 않습니다. 이 프로젝트 멤버인 계정의 토큰(read_api)을 넣어 주세요.`,
-    },
+    error: 'no-access',
+    user,
+    message: `${user ? `'${user}' 계정으로는` : '지금 로그인 정보로는'} ${svc.project} 프로젝트가 보이지 않습니다. 이 프로젝트 멤버인 계정의 토큰(read_api)을 넣어 주세요.`,
   };
 }
 
@@ -242,7 +254,6 @@ async function list(repo, opts = {}) {
   let r;
   let items = [];
   let raw = 0; // 서버가 준 개수 (GitHub 는 PR 을 걸러 내므로 '더 있음' 판단은 이걸로)
-  let scope = null; // 그룹 이슈를 보여 줄 때 { kind: 'group', name, reason }
   if (svc.kind === 'github') {
     const st = opts.state || 'open';
     if (opts.search || opts.mine) {
@@ -258,26 +269,24 @@ async function list(repo, opts = {}) {
     const q = new URLSearchParams({ state: st, order_by: 'updated_at', sort: 'desc', per_page: String(per), page: String(page) });
     if (opts.search) q.set('search', opts.search);
     if (opts.mine) q.set('scope', 'assigned_to_me');
-    r = await request(svc, `/projects/${encodeURIComponent(svc.project)}/issues?${q}`);
-    if (r?.status === 200) (items = r.body), (raw = items.length);
-    // 프로젝트에서 이슈가 안 보이면: 이슈 기능이 꺼져 있고 그룹(상위 폴더)에서 이슈를 관리하는 경우가 많다 → 그룹 이슈로
-    if (r && (r.status === 404 || r.status === 403) && r.source !== 'none') {
-      const g = await groupFallback(svc, q);
-      if (g.ok) {
-        r = g.r;
-        items = r.body;
-        raw = items.length;
-        scope = g.scope;
-      } else {
-        return { ...g.why, service: publicSvc(svc) };
+    let ref = projectRef(svc);
+    r = await request(svc, `/projects/${ref}/issues?${q}`);
+    const hidden = (x) => x && (x.status === 404 || x.status === 403) && x.source !== 'none';
+    // 경로(%2F)로 못 찾으면 숫자 ID 로 다시 (프록시가 %2F 를 막는 회사 서버)
+    if (hidden(r) && typeof ref === 'string') {
+      const id = await findProjectId(svc);
+      if (id) {
+        ref = id;
+        r = await request(svc, `/projects/${id}/issues?${q}`);
       }
     }
+    if (r?.status === 200) (items = r.body), (raw = items.length);
+    else if (hidden(r)) return { ...(await whyNoIssues(svc, ref)), service: publicSvc(svc) };
   }
   if (r?.status !== 200) return errorFor(svc, r);
   const total = Number(r.headers.get('x-total')) || null; // GitLab 은 전체 개수를 알려 줌
   return {
-    service: { ...publicSvc(svc), ...(scope ? { issuesUrl: `${svc.web}/groups/${scope.name}/-/issues` } : {}) },
-    scope,
+    service: publicSvc(svc),
     auth: r.source,
     items: items.map(norm[svc.kind]),
     page,
