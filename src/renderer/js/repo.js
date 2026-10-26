@@ -60,11 +60,7 @@ const groupLabel = (g) => g.name || '이름 없는 그룹';
 let closingGroup = false;
 async function closeGroup(g) {
   const members = tabs.filter((t) => groupOf(t.path) === g);
-  // 지금 보고 있는 탭이 이 그룹이면 다른 탭으로 먼저 옮긴다 (닫는 동안 그룹 안에서 이리저리 바뀌지 않게)
-  if (members.some(isActive)) {
-    const other = visibleOrder().find((t) => groupOf(t.path) !== g);
-    if (other) await switchTab(other.path);
-  }
+  // 지금 보고 있는 프로젝트가 이 그룹이면 그것도 닫고, 다른 탭으로 옮기지 않는다 (아무 프로젝트도 선택 안 된 상태)
   g.closed = true;
   g.collapsed = false;
   closingGroup = true;
@@ -168,7 +164,10 @@ function editGroup(g, anchor) {
     b.onclick = () => (close(), fn());
     return b;
   };
-  name.onkeydown = (e) => (e.key === 'Enter' || e.key === 'Escape') && close();
+  // on... 처리기가 false 를 돌려주면 키 입력이 취소되므로(영문·띄어쓰기가 안 써짐) 값을 돌려주지 않는다
+  name.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') close();
+  };
   box.append(
     name,
     colors,
@@ -400,8 +399,12 @@ export function renderTabs() {
 }
 
 // ---------- 모든 프로젝트 목록 (탭이 많을 때: 그룹별로 보고, 검색해서 바로 이동) ----------
-export function openProjectList(anchor) {
+export async function openProjectList(anchor) {
   document.querySelector('.pl-pop')?.remove();
+  // 닫은 탭: 최근에 연 프로젝트 중 지금 열려 있지 않고 닫힌 그룹에도 없는 것 (누르면 다시 열기)
+  const recent = ((await window.api.getSettings()).recent || []).filter(
+    (p) => !tabs.some((t) => norm(t.path) === norm(p)) && !loadGroups().some((g) => g.closed && inGroup(g, p))
+  );
   anchor = anchor || document.querySelector('.tab-list-btn');
   const pop = h('div', { class: 'pl-pop' });
   const q = h('input', { class: 'input pl-q', placeholder: '프로젝트 이름으로 찾기 (Enter: 이동 · ↑↓ · Esc)', spellcheck: 'false' });
@@ -417,6 +420,7 @@ export function openProjectList(anchor) {
   const go = (it) => {
     close();
     if (it.group) reopenGroup(it.group);
+    else if (it.closedPath) openRepo(it.closedPath);
     else switchTab(it.tab.path);
   };
   const draw = () => {
@@ -427,7 +431,12 @@ export function openProjectList(anchor) {
     const section = (title, color) => list.append(h('div', { class: 'pl-sec' }, color ? h('span', { class: 'pl-dot', style: { background: color } }) : null, h('span', { text: title })));
     const row = (it, label, sub) => {
       const i = items.push(it) - 1;
-      const el = h('div', { class: `pl-row ${it.tab && isActive(it.tab) ? 'current' : ''}`, title: it.tab ? it.tab.path : '' }, h('span', { class: 'pl-name', text: label }), sub ? h('span', { class: 'pl-sub', text: sub }) : null);
+      const el = h(
+        'div',
+        { class: `pl-row ${it.tab && isActive(it.tab) ? 'current' : ''} ${it.closedPath ? 'closed-tab' : ''}`, title: it.tab ? it.tab.path : it.closedPath ? `${it.closedPath}\n닫은 탭 — 누르면 다시 열기` : '' },
+        h('span', { class: 'pl-name', text: label }),
+        sub ? h('span', { class: 'pl-sub', text: sub }) : null
+      );
       el.onmousemove = () => sel !== i && ((sel = i), mark());
       el.onclick = () => go(it);
       list.append(el);
@@ -440,9 +449,12 @@ export function openProjectList(anchor) {
       for (const t of ts) row({ tab: t }, repoName(t.path), t.status?.branch || '');
     }
     const loose = tabs.filter((t) => !groupOf(t.path) && hit(repoName(t.path)));
-    if (loose.length) {
+    // 닫은 탭은 검색하지 않을 때 최근 10개까지만
+    const gone = recent.filter((p) => hit(repoName(p)) || (f && hit(p))).slice(0, f ? 50 : 10);
+    if (loose.length || gone.length) {
       section('그룹 없는 탭');
       for (const t of loose) row({ tab: t }, repoName(t.path), t.status?.branch || '');
+      for (const p of gone) row({ closedPath: p }, repoName(p), `닫힘 · ${p.split(/[\\/]/).slice(-2, -1)[0] || ''}`);
     }
     const closed = loadGroups().filter((g) => g.closed && (hit(groupLabel(g)) || g.paths.some((p) => hit(repoName(p)))));
     if (closed.length) {
@@ -517,6 +529,16 @@ export async function closeTab(dir) {
   const closingActive = state.repo && norm(state.repo) === norm(dir);
   if (closingActive && isBusy()) return toast('진행 중인 작업이 끝난 뒤에 닫을 수 있습니다.', 'warn');
   tabs.splice(i, 1);
+  if (closingActive && closingGroup) {
+    // 그룹 닫기: 다른 탭으로 옮기지 않고 '선택 없음' (시작 화면)
+    import('./lsp-client.js').then((m) => m.stopRepoServers(dir)).catch(() => {});
+    state.repo = null;
+    state.status = null;
+    saveTabs();
+    renderTabs();
+    onOpened();
+    return;
+  }
   // 닫은 탭은 그룹에서도 뺀다 (빈 그룹은 사라짐). '그룹 닫기' 중에는 그룹이 기억해야 하므로 그대로 둔다
   if (!closingGroup && groupOf(dir)) (setGroup(dir, null), saveGroups());
   // 닫은 프로젝트의 언어 서버(특히 무거운 Java)를 끈다
@@ -663,11 +685,13 @@ export function toWebUrl(url) {
   return null;
 }
 
+let recentShown = 5; // 시작 화면 최근 저장소: 처음 5개, '더 보기' 를 누를 때마다 5개씩
 export async function renderWelcome() {
   const s = await window.api.getSettings();
   const el = $('#welcome');
   el.innerHTML = '';
-  const recent = (s.recent || []).map((r) =>
+  const all = s.recent || [];
+  const recent = all.slice(0, recentShown).map((r) =>
     h(
       'div',
       { class: 'recent-item', onclick: () => openRepo(r), title: r },
@@ -697,7 +721,24 @@ export async function renderWelcome() {
         h('button', { class: 'big-btn', onclick: cloneDialog }, h('span', { class: 'ico', text: '⇣' }), h('b', { text: '복제 (Clone)' }), h('small', { text: 'GitHub 등에서 내려받기' })),
         h('button', { class: 'big-btn', onclick: () => initRepo() }, h('span', { class: 'ico', text: '＋' }), h('b', { text: '새 저장소' }), h('small', { text: '폴더를 Git 저장소로 만들기' }))
       ),
-      recent.length ? h('div', { class: 'recent' }, h('div', { class: 'recent-title', text: '최근 저장소' }), ...recent) : null
+      recent.length
+        ? h(
+            'div',
+            { class: 'recent' },
+            h('div', { class: 'recent-title', text: `최근 저장소${all.length > 5 ? ` (${all.length}개)` : ''}` }),
+            ...recent,
+            all.length > recentShown
+              ? h('button', {
+                  class: 'recent-more',
+                  text: `더 보기 (${Math.min(5, all.length - recentShown)}개 · 남은 ${all.length - recentShown}개)`,
+                  onclick: () => {
+                    recentShown += 5;
+                    renderWelcome();
+                  },
+                })
+              : null
+          )
+        : null
     )
   );
 }

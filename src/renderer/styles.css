@@ -1879,3 +1879,33 @@ input[type='checkbox'] {
 .more-files-row {
   padding: 6px 10px 10px 22px;
 }
+
+/* 시작 화면: 화면보다 길면 위에서부터 보이게 (가운데 정렬로 위가 잘리지 않게) */
+#welcome {
+  align-items: flex-start;
+}
+#welcome > .welcome-box {
+  margin: auto;
+}
+.recent-more {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.recent-more:hover {
+  background: var(--bg2);
+  color: var(--text);
+}
+.pl-row.closed-tab .pl-name {
+  color: var(--text3);
+}
+.pl-row.closed-tab .pl-sub {
+  font-style: italic;
+}

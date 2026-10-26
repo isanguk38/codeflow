@@ -234,7 +234,10 @@ function problem(c) {
       cache.clear();
       load(1);
     };
-    input.onkeydown = (e) => e.key === 'Enter' && save.click();
+    // false 를 돌려주면 키 입력(영문·Ctrl+V 붙여넣기)이 취소되므로 값을 돌려주지 않는다
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') save.click();
+    };
     box.append(make, input, save);
   } else box.append(h('div', { text: c.message || '이슈를 불러오지 못했습니다.' }));
   return box;

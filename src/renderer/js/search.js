@@ -110,7 +110,10 @@ function build() {
     )
   );
   // 바깥(어두운 곳)을 누르면 닫기
-  root.onmousedown = (e) => e.target === root && close();
+  // false 를 돌려주면 창 안을 누를 때 포커스·글자 선택이 막히므로 값을 돌려주지 않는다
+  root.onmousedown = (e) => {
+    if (e.target === root) close();
+  };
   document.body.append(root);
   document.addEventListener('keydown', onKey, true);
   drawScope();
