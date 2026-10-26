@@ -459,6 +459,17 @@ function appendMessage(t, msg, scroll, into) {
     );
     el.querySelector('.team-msg-body').style.setProperty('--mc', m.color);
   }
+  // 우클릭: 이 메시지 복사 / 고른 글만 복사
+  if (msg.text && msg.from !== 'system') {
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      const picked = String(window.getSelection?.() || '').trim();
+      contextMenu(e.clientX, e.clientY, [
+        picked ? { label: '선택한 글 복사', onClick: () => (window.api.copy(picked), toast('복사했습니다.', 'ok', 1500)) } : null,
+        { label: '이 메시지 복사', onClick: () => (window.api.copy(msg.text), toast('복사했습니다.', 'ok', 1500)) },
+      ]);
+    };
+  }
   log.append(el);
   if (scroll && near) log.scrollTop = log.scrollHeight;
 }

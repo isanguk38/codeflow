@@ -601,3 +601,12 @@
   flex-wrap: nowrap;
   flex-direction: row;
 }
+
+/* 대화방 글은 골라서 복사할 수 있게 (앱 전체는 선택을 막아 둠) */
+.team-log,
+.team-live {
+  user-select: text;
+}
+.team-msg-text {
+  cursor: text;
+}
