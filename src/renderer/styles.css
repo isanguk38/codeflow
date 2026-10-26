@@ -1858,3 +1858,21 @@ input[type='checkbox'] {
   color: var(--text3);
   user-select: none;
 }
+
+/* 결과 목록: 보이는 줄만 그림 (줄 높이 고정) */
+.fs-vbox {
+  position: relative;
+}
+.fs-vbox > .fs-item,
+.fs-vbox > .fs-group {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px;
+  box-sizing: border-box;
+}
+.fs-vbox > .fs-group {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 3px;
+}

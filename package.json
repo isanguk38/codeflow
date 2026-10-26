@@ -1,7 +1,7 @@
 {
   "name": "codeflow",
   "productName": "CodeFlow",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "CodeFlow",
   "main": "src/main/main.js",
   "author": "isanguk38",
@@ -69,7 +69,9 @@
       "node_modules/typescript-language-server/**",
       "node_modules/typescript/**",
       "node_modules/@lydell/**",
-      "node_modules/pyright/**"
+      "node_modules/pyright/**",
+      "src/main/search.js",
+      "src/main/git.js"
     ]
   }
 }

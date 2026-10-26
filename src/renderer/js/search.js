@@ -22,6 +22,7 @@ let seq = 0;
 let curId = null;
 let rows = []; // { kind: 'name'|'hit', rel, dir?, line?, text?, ranges? }
 let sel = -1;
+let nameCount = 0;
 let summary = null;
 let timer = null;
 
@@ -31,7 +32,7 @@ const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) :
 
 window.api.search.onFound((d) => {
   if (d.id !== curId || !root) return;
-  if (d.names) for (const n of d.names) rows.push({ kind: 'name', rel: n.rel, dir: n.dir });
+  if (d.names) for (const n of d.names) rows.push({ kind: 'name', rel: n.rel, dir: n.dir }), nameCount++;
   if (d.hits) for (const f of d.hits) for (const m of f.matches) rows.push({ kind: 'hit', rel: f.rel, ...m });
   drawList();
   // 첫 내용 결과가 오면 바로 골라서 미리 보기 (다 찾을 때까지 기다리지 않음)
@@ -137,8 +138,10 @@ function run() {
   saveOpts();
   if (curId) window.api.search.cancel(curId);
   rows = [];
+  nameCount = 0;
   sel = -1;
   summary = null;
+  root.querySelector('.fs-list').scrollTop = 0;
   drawList();
   drawPreview();
   if (!opts.query) {
@@ -147,17 +150,19 @@ function run() {
   }
   curId = `s${++seq}`;
   drawStatus();
-  window.api.search.start(state.repo, curId, { query: opts.query, matchCase: opts.matchCase, words: opts.words, regex: opts.regex, mask: opts.mask, dir: opts.dir });
+  // 한 글자는 거의 모든 줄이 맞아서 느려진다: 내용은 2글자부터 (이름은 1글자도)
+  window.api.search.start(state.repo, curId, { query: opts.query, matchCase: opts.matchCase, words: opts.words, regex: opts.regex, mask: opts.mask, dir: opts.dir, namesOnly: [...opts.query].length < 2 });
 }
 
 function drawStatus() {
   const st = root.querySelector('.fs-status');
-  const hits = rows.filter((r) => r.kind === 'hit').length;
-  const names = rows.length - hits;
+  const names = nameCount;
+  const hits = rows.length - names;
   if (!opts.query) st.textContent = '';
   else if (summary?.error) st.innerHTML = `<span class="fs-err">${esc(summary.error)}</span>`;
   else if (!summary) st.innerHTML = `<span class="spinner"></span> 찾는 중... ${hits ? `${hits}줄` : ''}`;
-  else st.textContent = `${summary.files}개 파일에서 ${hits}줄${summary.truncated ? '+ (너무 많아 일부만)' : ''}${names ? ` · 이름 ${names}개` : ''} · ${summary.searched}개 파일 검색`;
+  else if (summary.namesOnly) st.textContent = `이름 ${names}개 · 파일 내용은 2글자부터 찾습니다`;
+  else st.textContent = `${summary.files}개 파일에서 ${hits}줄${summary.truncated ? '+ (너무 많아 앞부분만, 검색어를 더 길게)' : ''}${names ? ` · 이름 ${names}개` : ''} · ${summary.searched}개 파일 검색`;
 }
 
 // 글자 안 찾은 부분 강조
@@ -172,6 +177,60 @@ function marked(text, ranges) {
   return html + esc(text.slice(at));
 }
 
+// 결과가 수천 줄이어도 빠르도록 화면에 보이는 줄만 그린다 (한 줄 높이 고정)
+const RH = 22;
+// 화면 줄 번호 → 결과(또는 묶음 제목). 이름 결과가 있으면 0번은 '이름' 제목, 내용 제목은 이름 결과 뒤
+const headAt = () => (nameCount ? [0, rows.length > nameCount ? nameCount + 1 : -1] : [-1, rows.length ? 0 : -1]);
+const viewLen = () => rows.length + (nameCount ? 1 : 0) + (rows.length > nameCount ? 1 : 0);
+function viewItem(v) {
+  const [nh, ch] = headAt();
+  if (v === nh) return { group: '이름이 맞는 파일·폴더' };
+  if (v === ch) return { group: '파일 내용' };
+  return { i: v - (nh >= 0 ? 1 : 0) - (ch >= 0 && v > ch ? 1 : 0) };
+}
+const viewOf = (i) => i + (nameCount ? 1 : 0) + (i >= nameCount && rows.length > nameCount ? 1 : 0);
+
+function rowEl(i) {
+  const r = rows[i];
+  let el;
+  if (r.kind === 'name') {
+    el = h('div', { class: `fs-item name ${i === sel ? 'sel' : ''}`, title: r.dir ? `${r.rel}/\n클릭: 이 폴더 안에서만 찾기` : r.rel }, h('span', { class: 'fs-ico', text: r.dir ? '📁' : '📄' }), h('span', { class: 'fs-text', text: baseOf(r.rel) + (r.dir ? '/' : '') }), h('span', { class: 'fs-file', text: dirOf(r.rel) }));
+  } else {
+    const lead = r.text.match(/^\s*/)[0].length;
+    const text = r.text.slice(lead);
+    const ranges = r.ranges.map(([s, n]) => [s - lead, n]);
+    el = h('div', { class: `fs-item ${i === sel ? 'sel' : ''}`, title: `${r.rel}:${r.line}` }, h('span', { class: 'fs-text code', html: marked(text, ranges) }), h('span', { class: 'fs-file', text: `${baseOf(r.rel)} ${r.line}` }));
+  }
+  el.dataset.i = i;
+  el.onclick = () => select(i);
+  el.ondblclick = () => openRow(i);
+  return el;
+}
+
+function renderWindow() {
+  if (!root) return;
+  const list = root.querySelector('.fs-list');
+  let box = list.querySelector('.fs-vbox');
+  if (!box) {
+    list.innerHTML = '';
+    box = h('div', { class: 'fs-vbox' });
+    list.append(box);
+    list.onscroll = () => renderWindow();
+  }
+  const n = viewLen();
+  box.style.height = `${n * RH}px`;
+  const from = Math.max(0, Math.floor(list.scrollTop / RH) - 10);
+  const to = Math.min(n, Math.ceil((list.scrollTop + list.clientHeight) / RH) + 10);
+  const frag = document.createDocumentFragment();
+  for (let v = from; v < to; v++) {
+    const it = viewItem(v);
+    const el = it.group ? h('div', { class: 'fs-group', text: it.group }) : rowEl(it.i);
+    el.style.top = `${v * RH}px`;
+    frag.append(el);
+  }
+  box.replaceChildren(frag);
+}
+
 let drawPending = false;
 function drawList() {
   if (drawPending) return;
@@ -179,37 +238,14 @@ function drawList() {
   requestAnimationFrame(() => {
     drawPending = false;
     if (!root) return;
-    const list = root.querySelector('.fs-list');
-    const top = list.scrollTop;
-    list.innerHTML = '';
     if (!rows.length) {
-      if (opts.query && summary && !summary.error) list.append(h('div', { class: 'fs-empty', text: '찾은 결과가 없습니다.' }));
+      const list = root.querySelector('.fs-list');
+      list.innerHTML = '';
+      if (opts.query && summary && !summary.error && !summary.namesOnly) list.append(h('div', { class: 'fs-empty', text: '찾은 결과가 없습니다.' }));
       drawStatus();
       return;
     }
-    const frag = document.createDocumentFragment();
-    let lastKind = null;
-    rows.forEach((r, i) => {
-      if (r.kind !== lastKind) {
-        frag.append(h('div', { class: 'fs-group', text: r.kind === 'name' ? '이름이 맞는 파일·폴더' : '파일 내용' }));
-        lastKind = r.kind;
-      }
-      let el;
-      if (r.kind === 'name') {
-        el = h('div', { class: `fs-item name ${i === sel ? 'sel' : ''}`, title: r.dir ? `${r.rel}/\n클릭: 이 폴더 안에서만 찾기` : r.rel }, h('span', { class: 'fs-ico', text: r.dir ? '📁' : '📄' }), h('span', { class: 'fs-text', text: baseOf(r.rel) + (r.dir ? '/' : '') }), h('span', { class: 'fs-file', text: dirOf(r.rel) }));
-      } else {
-        const lead = r.text.match(/^\s*/)[0].length;
-        const text = r.text.slice(lead);
-        const ranges = r.ranges.map(([s, n]) => [s - lead, n]);
-        el = h('div', { class: `fs-item ${i === sel ? 'sel' : ''}`, title: `${r.rel}:${r.line}` }, h('span', { class: 'fs-text code', html: marked(text, ranges) }), h('span', { class: 'fs-file', text: `${baseOf(r.rel)} ${r.line}` }));
-      }
-      el.dataset.i = i;
-      el.onclick = () => select(i);
-      el.ondblclick = () => openRow(i);
-      frag.append(el);
-    });
-    list.append(frag);
-    list.scrollTop = top;
+    renderWindow();
     drawStatus();
   });
 }
@@ -218,12 +254,11 @@ function select(i) {
   if (!rows.length) return;
   sel = Math.max(0, Math.min(rows.length - 1, i));
   const list = root.querySelector('.fs-list');
-  list.querySelectorAll('.fs-item.sel').forEach((e) => e.classList.remove('sel'));
-  const el = list.querySelector(`.fs-item[data-i="${sel}"]`);
-  if (el) {
-    el.classList.add('sel');
-    el.scrollIntoView({ block: 'nearest' });
-  }
+  // 고른 줄이 보이도록 스크롤
+  const y = viewOf(sel) * RH;
+  if (y < list.scrollTop + RH) list.scrollTop = Math.max(0, y - RH);
+  else if (y + RH > list.scrollTop + list.clientHeight) list.scrollTop = y + RH - list.clientHeight;
+  renderWindow();
   drawPreview();
 }
 

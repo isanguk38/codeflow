@@ -6,8 +6,8 @@ const path = require('path');
 const git = require('./git');
 
 const MAX_FILE = 3 * 1024 * 1024; // 이보다 큰 파일은 내용 검색 생략
-const MAX_LINES = 5000; // 내용 결과 줄 수 한도
-const PER_FILE = 300;
+const MAX_LINES = 2000; // 내용 결과 줄 수 한도 (넘으면 멈추고 '앞부분만' 표시)
+const PER_FILE = 100;
 const MAX_NAMES = 100;
 
 const running = new Map(); // id → { cancelled }
@@ -101,6 +101,7 @@ async function start(repo, id, opts, send) {
     for (const d of dirs) if (names.length < MAX_NAMES && inScope(d) && d !== scope && nameHit(d)) names.push({ rel: d, dir: true });
     for (const rel of all) if (names.length < MAX_NAMES && okMask(rel) && nameHit(rel)) names.push({ rel, dir: false });
     send('found', { id, names });
+    if (opts.namesOnly) return send('done', { id, total: 0, files: 0, searched: 0, namesOnly: true, ms: Date.now() - t0 });
 
     // 2) 파일 내용
     const targets = all.filter((rel) => okMask(rel) && !BIN_EXT.test(rel));
@@ -150,6 +151,7 @@ async function start(repo, id, opts, send) {
           if (ranges.length) found.push({ line: i + 1, text: line.length > 400 ? line.slice(0, 400) : line, ranges });
         }
         if (!found.length) continue;
+        if (job.cancelled || truncated) return;
         fileCount++;
         total += found.length;
         batch.push({ rel, matches: found });
@@ -174,3 +176,12 @@ function cancel(id) {
 }
 
 module.exports = { start, cancel, maskFilter, buildRegex };
+
+// 별도 스레드(worker)로 실행될 때: 메인 프로세스가 검색 때문에 멈추지 않도록 (멈추면 창 전체가 버벅임)
+const { parentPort, isMainThread } = require('worker_threads');
+if (!isMainThread && parentPort) {
+  parentPort.on('message', (m) => {
+    if (m.type === 'start') start(m.repo, m.id, m.opts, (kind, data) => parentPort.postMessage({ kind, data }));
+    else if (m.type === 'cancel') cancel(m.id);
+  });
+}

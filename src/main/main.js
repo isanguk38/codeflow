@@ -124,12 +124,38 @@ function addRecent(dir) {
 }
 
 // 프로젝트 전체 검색 (Ctrl+Shift+F): 결과는 찾는 대로 search:found / search:done 으로 보낸다
-const search = require('./search');
+// 검색은 별도 스레드에서 (메인 프로세스가 바쁘면 창이 다시 그려지지 않아 입력이 버벅인다)
+const { Worker } = require('worker_threads');
+let searchWorker = null;
+const searchSenders = new Map(); // 검색 id → 결과를 받을 창
+function getSearchWorker() {
+  if (searchWorker) return searchWorker;
+  // 설치본에서는 asar 밖(app.asar.unpacked)에 풀어 둔 파일로 실행
+  const file = path.join(__dirname, 'search.js').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+  searchWorker = new Worker(file);
+  searchWorker.on('message', ({ kind, data }) => {
+    const wc = searchSenders.get(data.id);
+    if (wc && !wc.isDestroyed()) wc.send(`search:${kind}`, data);
+    if (kind === 'done') searchSenders.delete(data.id);
+  });
+  const reset = (err) => {
+    if (err) console.error('search worker', err);
+    for (const [id, wc] of searchSenders) if (!wc.isDestroyed()) wc.send('search:done', { id, error: '검색 중 오류가 났습니다. 다시 시도해 주세요.' });
+    searchSenders.clear();
+    searchWorker = null;
+  };
+  searchWorker.on('error', reset);
+  searchWorker.on('exit', () => searchWorker && reset());
+  return searchWorker;
+}
 ipcMain.on('search:start', (e, repo, id, opts) => {
-  const wc = e.sender;
-  search.start(repo, id, opts, (kind, data) => !wc.isDestroyed() && wc.send(`search:${kind}`, data));
+  searchSenders.set(id, e.sender);
+  getSearchWorker().postMessage({ type: 'start', repo, id, opts });
 });
-ipcMain.on('search:cancel', (_e, id) => search.cancel(id));
+ipcMain.on('search:cancel', (_e, id) => {
+  searchSenders.delete(id);
+  searchWorker?.postMessage({ type: 'cancel', id });
+});
 
 // 코드 화면: 파일 작업
 const files = require('./files');
