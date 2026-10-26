@@ -632,17 +632,22 @@ body.is-busy .progress-bar::before {
   pointer-events: none;
   opacity: 0.85;
 }
+/* 아이콘 자리에 스피너를 넣는다 (자리를 넓혀서 글자와 겹치지 않게) */
 .tb-btn.loading .ico {
-  visibility: hidden;
+  position: relative;
+  display: inline-block;
+  min-width: 14px;
+  margin-right: 2px;
+  color: transparent;
 }
-.tb-btn.loading::before {
+.tb-btn.loading .ico::after {
   content: '';
   position: absolute;
-  left: 9px;
+  left: 50%;
   top: 50%;
-  width: 12px;
-  height: 12px;
-  margin-top: -6px;
+  width: 10px;
+  height: 10px;
+  margin: -7px 0 0 -7px;
   border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-top-color: var(--accent2);
   border-radius: 50%;

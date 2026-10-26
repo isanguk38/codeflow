@@ -254,9 +254,20 @@ async function list(repo, opts = {}) {
   let r;
   let items = [];
   let raw = 0; // 서버가 준 개수 (GitHub 는 PR 을 걸러 내므로 '더 있음' 판단은 이걸로)
+  // 검색어가 번호뿐이면(23, #23) 그 번호의 이슈를 바로 찾는다 (열림/닫힘 상관없이). 서버 글자 검색은 번호를 못 찾음
+  const num = page === 1 ? String(opts.search || '').trim().match(/^#?(\d+)$/)?.[1] : null;
   if (svc.kind === 'github') {
     const st = opts.state || 'open';
-    if (opts.search || opts.mine) {
+    if (num) {
+      const x = await request(svc, `/repos/${svc.project}/issues/${num}`);
+      if (x?.status === 200 && !x.body.pull_request) {
+        r = x;
+        items = [x.body];
+      }
+    }
+    if (r) {
+      // 번호로 찾음
+    } else if (opts.search || opts.mine) {
       const q = [`repo:${svc.project}`, 'is:issue', st === 'all' ? '' : `is:${st}`, opts.mine ? 'assignee:@me' : '', opts.search || ''].filter(Boolean).join(' ');
       r = await request(svc, `/search/issues?q=${encodeURIComponent(q)}&sort=updated&per_page=${per}&page=${page}`);
       if (r?.status === 200) (items = r.body.items), (raw = items.length);
@@ -270,16 +281,24 @@ async function list(repo, opts = {}) {
     if (opts.search) q.set('search', opts.search);
     if (opts.mine) q.set('scope', 'assigned_to_me');
     let ref = projectRef(svc);
-    r = await request(svc, `/projects/${ref}/issues?${q}`);
     const hidden = (x) => x && (x.status === 404 || x.status === 403) && x.source !== 'none';
-    // 경로(%2F)로 못 찾으면 숫자 ID 로 다시 (프록시가 %2F 를 막는 회사 서버)
-    if (hidden(r) && typeof ref === 'string') {
-      const id = await findProjectId(svc);
-      if (id) {
-        ref = id;
-        r = await request(svc, `/projects/${id}/issues?${q}`);
+    const get = async (query) => {
+      let x = await request(svc, `/projects/${ref}/issues?${query}`);
+      // 경로(%2F)로 못 찾으면 숫자 ID 로 다시 (프록시가 %2F 를 막는 회사 서버)
+      if (hidden(x) && typeof ref === 'string') {
+        const id = await findProjectId(svc);
+        if (id) {
+          ref = id;
+          x = await request(svc, `/projects/${id}/issues?${query}`);
+        }
       }
+      return x;
+    };
+    if (num) {
+      const x = await get(new URLSearchParams({ state: 'all', 'iids[]': num }));
+      if (x?.status === 200 && x.body.length) r = x;
     }
+    if (!r) r = await get(q);
     if (r?.status === 200) (items = r.body), (raw = items.length);
     else if (hidden(r)) return { ...(await whyNoIssues(svc, ref)), service: publicSvc(svc) };
   }
