@@ -480,3 +480,73 @@
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 6%, var(--bg));
 }
+
+/* 머리글: 팀 제목 + 사용량 */
+.team-title {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-meters {
+  display: inline-flex;
+  gap: 10px;
+  margin-right: 6px;
+}
+.team-meters .ai-meter:first-child {
+  margin-left: 0;
+}
+/* 팀원 카드: AI 이름 + 컨텍스트 막대 */
+.team-card {
+  position: relative;
+}
+.team-card-ai {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.team-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text3);
+}
+.team-ctx .ai-bar {
+  width: 46px;
+}
+.team-ctx.warn {
+  color: #b7791f;
+}
+/* 강퇴: 카드에 마우스를 올리면 */
+.team-kick {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--bg);
+  color: var(--danger);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 1px 7px;
+  cursor: pointer;
+  visibility: hidden;
+}
+.team-card:hover .team-kick {
+  visibility: visible;
+}
+.team-kick:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
+}
+/* 'AI 연결·설정' 창 안의 예전 AI 패널 */
+.ai-setup .ai-panel {
+  width: 100% !important;
+  min-height: 360px;
+  max-height: 68vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.st-offline .team-dot {
+  background: var(--text3);
+}

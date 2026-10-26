@@ -43,7 +43,7 @@
         <button class="rail-btn" data-view="changes" title="커밋 (Ctrl+K)"><span class="ico">✎</span><span>커밋</span><span id="changeCount" class="rail-count" hidden></span></button>
         <button class="rail-btn" data-view="log" title="히스토리 (Alt+9)"><span class="ico">◷</span><span>히스토리</span></button>
         <button class="rail-btn" data-view="stash" title="스태시"><span class="ico">⧉</span><span>스태시</span></button>
-        <button class="rail-btn" data-view="ai" title="AI — 1:1 대화 / 팀 채팅방 (Ctrl+Shift+A)"><span class="ico">✦</span><span>AI</span></button>
+        <button class="rail-btn" data-view="ai" title="AI 팀 채팅방 (Ctrl+Shift+A)"><span class="ico">✦</span><span>AI</span></button>
       </nav>
 
       <main id="views">
@@ -52,13 +52,10 @@
         <section id="view-stash" class="view"></section>
         <section id="view-code" class="view"></section>
         <section id="view-ai" class="view">
-          <div class="ai-hub-tabs">
-            <button class="ai-hub-tab" data-mode="chat" title="AI 한 명과 대화 (Claude Code / Codex)">✦ 1:1 대화</button>
-            <button class="ai-hub-tab" data-mode="team" title="PM 과 여러 에이전트가 함께 일하는 팀 채팅방">◎ 팀</button>
-          </div>
+          <!-- AI 는 팀 채팅방 하나 (1:1 대화는 팀장 PM 과). aiPanel 은 'AI 연결·설정' 창에서만 쓴다 -->
           <div class="ai-hub-body">
-            <aside id="aiPanel" class="ai-panel"></aside>
-            <div id="view-team" hidden></div>
+            <aside id="aiPanel" class="ai-panel" hidden></aside>
+            <div id="view-team"></div>
           </div>
         </section>
         <section id="welcome" class="view"></section>

@@ -288,6 +288,11 @@ ipcMain.handle('team:addMember', aiSafe((_e, id, opts) => team.addMemberByUser(i
 ipcMain.handle('team:removeMember', aiSafe((_e, id, memberId) => team.removeMember(id, memberId)));
 ipcMain.handle('team:setMemberAI', aiSafe((_e, id, memberId, opts) => team.setMemberAI(id, memberId, opts)));
 ipcMain.handle('team:dispose', aiSafe((_e, id) => team.dispose(id)));
+ipcMain.handle('team:listSaved', aiSafe((_e, repo) => team.listSaved(repo)));
+ipcMain.handle('team:open', aiSafe((_e, repo, id) => team.open(repo, id)));
+ipcMain.handle('team:deleteSaved', aiSafe((_e, repo, id) => team.deleteSaved(repo, id)));
+ipcMain.handle('team:openFor', aiSafe((_e, repo) => team.openFor(repo)));
+ipcMain.handle('team:refreshUsage', aiSafe((_e, id) => team.refreshUsage(id)));
 app.on('before-quit', () => team.disposeAll());
 
 // 파일 미리보기(이미지) · 다른 이름으로 저장 — AI 대화의 파일 카드, 코드 화면 이미지 보기

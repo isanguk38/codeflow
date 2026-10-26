@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('api', {
     removeMember: (id, memberId) => ipcRenderer.invoke('team:removeMember', id, memberId),
     setMemberAI: (id, memberId, opts) => ipcRenderer.invoke('team:setMemberAI', id, memberId, opts),
     dispose: (id) => ipcRenderer.invoke('team:dispose', id),
+    listSaved: (repo) => ipcRenderer.invoke('team:listSaved', repo),
+    open: (repo, id) => ipcRenderer.invoke('team:open', repo, id),
+    deleteSaved: (repo, id) => ipcRenderer.invoke('team:deleteSaved', repo, id),
+    openFor: (repo) => ipcRenderer.invoke('team:openFor', repo),
+    refreshUsage: (id) => ipcRenderer.invoke('team:refreshUsage', id),
     onEvent: (cb) => ipcRenderer.on('team:event', (_e, id, ev) => cb(id, ev)),
   },
   search: {

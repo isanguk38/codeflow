@@ -1,9 +1,9 @@
 // 팀 화면: 멀티 에이전트 팀 채팅방
 // 왼쪽: 팀원 카드(이름·역할·상태) / 가운데: 모두의 대화 / 아래: 받는 사람(기본 PM, @이름 또는 카드 클릭) + 입력
 // 실제 에이전트 실행과 메시지 전달은 메인 프로세스(src/main/team.js)가 한다
-import { $, h, esc, toast, modal, promptDialog, confirmDialog, contextMenu } from './ui.js';
+import { $, h, esc, toast, modal, promptDialog, confirmDialog, contextMenu, menuAt, fmtDate } from './ui.js';
 import { state } from './state.js';
-import { md, attachmentFromPath, attachmentFromBlob, attachChip } from './ai.js';
+import { md, attachmentFromPath, attachmentFromBlob, attachChip, openAiSetup } from './ai.js';
 import { fileCard } from './preview.js';
 
 const teamOf = new Map(); // 프로젝트(소문자 경로) → teamId
@@ -16,21 +16,95 @@ let provider = localStorage.getItem('team.provider') || 'claude';
 const key = (p) => String(p || '').toLowerCase();
 const curTeam = () => data.get(teamOf.get(key(state.repo)));
 const member = (t, id) => t?.members.find((m) => m.id === id);
+// 나간 팀원도 지난 메시지에 이름이 보이도록 (names: 팀원 전체의 이름·역할·색)
+const anyMember = (t, id) => member(t, id) || (t?.names?.[id] ? { id, ...t.names[id] } : null);
 const pmOf = (t) => t?.members.find((m) => m.pm);
-const STATUS = { starting: '준비 중', idle: '대기', busy: '작업 중', stopped: '멈춤' };
+const STATUS = { starting: '준비 중', idle: '대기', busy: '작업 중', stopped: '멈춤', offline: '쉬는 중 · 말을 걸면 이어서' };
 const MODELS = [['', '기본 모델'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
 const aiLabel = (m) => (m.provider === 'codex' ? 'Codex' : `Claude${m.model ? ` · ${MODELS.find(([v]) => v === m.model)?.[1] || m.model}` : ''}`);
 let attach = []; // 보낼 첨부 (이미지·PDF·파일)
 
-// 쓰려는 AI 가 설치·로그인되어 있는지 확인. 안 되어 있으면 '1:1 대화' 탭에서 설치/로그인하도록 안내
+// 쓰려는 AI 가 설치·로그인되어 있는지 확인. 안 되어 있으면 'AI 연결·설정' 창에서 설치/로그인
 async function aiReady(prov) {
   const r = await window.api.ai.status(prov);
-  const name = prov === 'codex' ? 'Codex' : 'Claude Code';
   if (r.ok && r.data.installed && r.data.loggedIn !== false) return true;
-  toast(r.ok && !r.data.installed ? `${name} 가 설치되어 있지 않습니다. '1:1 대화' 탭에서 설치해 주세요.` : `${name} 에 로그인해야 합니다. '1:1 대화' 탭에서 로그인해 주세요.`, 'warn', 7000);
-  localStorage.setItem('ai.provider', prov);
-  document.querySelector('.ai-hub-tab[data-mode="chat"]')?.click();
+  const name = prov === 'codex' ? 'Codex' : 'Claude Code';
+  toast(r.ok && !r.data.installed ? `${name} 가 설치되어 있지 않습니다. 설치한 뒤 다시 시도해 주세요.` : `${name} 에 로그인한 뒤 다시 시도해 주세요.`, 'warn', 7000);
+  openAiSetup(prov);
   return false;
+}
+
+// 사용량 막대 (1:1 대화 때와 같은 모양): 계정의 5시간·주간·월간, 팀원별 컨텍스트
+function meter(label, pct, title) {
+  return h('span', { class: `ai-meter ${pct >= 80 ? 'warn' : ''}`, title }, h('span', { text: `${label} ${pct}%` }), h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } })));
+}
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
+function rateMeters(t) {
+  const out = [];
+  const used = [...new Set(t.members.map((m) => m.provider))];
+  for (const prov of used) {
+    for (const w0 of t.rate?.[prov] || []) {
+      const w = w0.resetsAt && w0.resetsAt * 1000 < Date.now() ? { ...w0, utilization: 0 } : w0;
+      const pct = Math.round((w.utilization || 0) * 100);
+      const left = w.resetsAt ? Math.max(0, w.resetsAt * 1000 - Date.now()) : 0;
+      const when = !w.resetsAt ? '' : left < 3600e3 ? `${Math.round(left / 60000)}분 후` : left < 86400e3 ? `${Math.floor(left / 3600e3)}시간 ${Math.round((left % 3600e3) / 60000)}분 후` : new Date(w.resetsAt * 1000).toLocaleString('ko-KR', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      out.push(meter(`${used.length > 1 ? (prov === 'codex' ? 'Codex ' : 'Claude ') : ''}${w.label}`, pct, `${prov === 'codex' ? 'Codex' : 'Claude'} ${w.label} 사용량 ${pct}%${when ? ` · ${when} 초기화` : ''} (계정 전체)`));
+    }
+  }
+  return out;
+}
+
+// 이 프로젝트의 팀 불러오기: 열려 있는 팀 → 없으면 가장 최근에 저장된 팀
+let loading = null;
+async function ensureTeam() {
+  const repo = state.repo;
+  if (!repo || curTeam()) return;
+  if (loading === repo) return;
+  loading = repo;
+  try {
+    const live = await window.api.team.openFor(repo);
+    let id = live.ok && live.data[0];
+    if (!id) {
+      const saved = await window.api.team.listSaved(repo);
+      id = saved.ok && saved.data[0]?.id;
+    }
+    if (id) await openTeam(repo, id);
+  } finally {
+    loading = null;
+  }
+}
+async function openTeam(repo, id) {
+  const r = await window.api.team.open(repo, id);
+  if (!r.ok) return toast(`팀을 열지 못했습니다: ${r.error}`, 'error', 6000);
+  data.set(r.data.id, r.data);
+  teamOf.set(key(repo), r.data.id);
+  target = null;
+  window.api.team.refreshUsage(r.data.id);
+  if (key(state.repo) === key(repo)) draw();
+}
+
+// 지난 팀 대화 (이 프로젝트)
+async function openHistory(anchor) {
+  const r = await window.api.team.listSaved(state.repo);
+  const cur = curTeam();
+  const items = (r.ok ? r.data : []).map((x) => ({
+    label: `${x.id === cur?.id ? '● ' : ''}${x.title}`,
+    hint: `${fmtDate(x.updated)} · ${x.members.join(', ')}`,
+    onClick: () => x.id !== cur?.id && openTeam(state.repo, x.id),
+  }));
+  menuAt(anchor, items.length ? [{ header: '지난 팀 대화 (이 프로젝트)' }, ...items] : [{ header: '저장된 팀 대화가 없습니다' }]);
+}
+
+// 새 팀: 지금 팀은 저장해 두고 닫는다 (지난 팀 대화에서 다시 열 수 있음)
+async function newTeam() {
+  const cur = curTeam();
+  if (cur) {
+    await window.api.team.dispose(cur.id);
+    data.delete(cur.id);
+  }
+  teamOf.delete(key(state.repo));
+  target = null;
+  draw(true);
 }
 
 export function initTeam() {
@@ -40,7 +114,12 @@ export function initTeam() {
 
 export function activateTeam() {
   draw();
+  const t = curTeam();
+  if (t) window.api.team.refreshUsage(t.id);
 }
+
+// 'AI 연결·설정' 창을 닫으면 (설치·로그인 후) 화면을 다시
+window.addEventListener('cf-ai-setup-closed', () => teamShown() && draw());
 
 // ---------- 이벤트 (메인 → 화면) ----------
 function onEvent(teamId, ev) {
@@ -53,6 +132,7 @@ function onEvent(teamId, ev) {
       if (target === ev.member.id) target = null;
     } else if (i >= 0) t.members[i] = ev.member;
     else t.members.push(ev.member);
+    (t.names ||= {})[ev.member.id] = { name: ev.member.name, role: ev.member.role, color: ev.member.color, pm: ev.member.pm };
     if (ev.member.status !== 'busy') streams.delete(`${teamId}:${ev.member.id}`);
     if (curTeam() === t) (drawSide(), drawHead(), drawLive());
   } else if (ev.type === 'message') {
@@ -64,7 +144,10 @@ function onEvent(teamId, ev) {
     streams.set(`${teamId}:${ev.memberId}`, ev.text);
     if (curTeam() === t) drawLive();
   } else if (ev.type === 'team') {
-    Object.assign(t, { paused: ev.team.paused });
+    Object.assign(t, { paused: ev.team.paused, title: ev.team.title, names: ev.team.names || t.names });
+    if (curTeam() === t) drawHead();
+  } else if (ev.type === 'usage') {
+    t.rate = ev.rate;
     if (curTeam() === t) drawHead();
   }
 }
@@ -79,12 +162,17 @@ function markRail(on) {
 }
 
 // ---------- 그리기 ----------
-function draw() {
+function draw(fresh = false) {
   if (!root) return;
   markRail(false);
   root.innerHTML = '';
   const t = curTeam();
-  if (!t) return root.append(emptyState());
+  if (!t) {
+    root.append(emptyState());
+    // 저장된 팀이 있으면 가장 최근 팀을 연다 (새 팀을 누른 경우는 제외)
+    if (!fresh) ensureTeam();
+    return;
+  }
   root.append(
     h(
       'div',
@@ -122,6 +210,10 @@ function emptyState() {
   const syncModel = () => (modelSel.hidden = sel.value !== 'claude');
   sel.addEventListener('change', syncModel);
   syncModel();
+  const emptyHist = h('button', { class: 'tb-btn small', text: '🕘 지난 팀 대화' });
+  emptyHist.onclick = () => openHistory(emptyHist);
+  const emptySetup = h('button', { class: 'tb-btn small', text: '⚙ AI 연결 · 설정', title: 'Claude Code / Codex 설치·로그인, 업데이트, MCP 확인' });
+  emptySetup.onclick = () => openAiSetup(provider);
   const start = h('button', { class: 'btn primary', text: '팀 시작' });
   start.onclick = async () => {
     if (!state.repo) return toast('프로젝트를 먼저 여세요.', 'warn');
@@ -148,14 +240,17 @@ function emptyState() {
     'div',
     { class: 'team-empty' },
     h('div', { class: 'team-empty-box' },
-      h('div', { class: 'team-empty-title', text: 'AI 팀' }),
+      h('div', { class: 'team-empty-title', text: '✦ AI 팀' }),
       h('p', { text: '팀장 PM(오케스트레이터)에게 하고 싶은 일과 필요한 팀원을 말하면, PM 이 기획자·개발자·테스터 같은 팀원 에이전트를 만들고 이름과 역할을 붙여 일을 나눕니다. 팀원끼리 대화하며 일하고, 모든 대화가 이 방에 보입니다.' }),
       h('ul', {},
+        h('li', { text: '혼자 AI 와 대화하고 싶으면 팀원 없이 PM 과만 대화하면 됩니다.' }),
         h('li', { text: '기본은 PM 에게 말합니다. 특정 팀원에게만 말하려면 왼쪽 카드를 누르거나 @이름 으로 시작하세요.' }),
+        h('li', { text: '팀 대화는 저장되어, 다시 열면 팀원이 이전 맥락을 기억한 채 이어서 일합니다.' }),
         h('li', { text: '파일 수정·명령 실행은 이 화면에서 허용/거부를 묻습니다.' }),
         h('li', { text: '에이전트끼리 대화가 너무 길어지면 자동으로 멈추고 묻습니다. 언제든 ‘모두 멈춤’ 으로 멈출 수 있습니다.' })
       ),
       h('div', { class: 'team-empty-row' }, h('label', { text: 'AI' }), sel, modelSel, start),
+      h('div', { class: 'team-empty-row' }, emptyHist, emptySetup),
       h('div', { class: 'team-empty-ex', text: '예) "회원 탈퇴 기능을 만들고 싶어. 기획자, 백엔드 개발자, 테스터가 필요해"' })
     )
   );
@@ -174,13 +269,13 @@ function drawSide() {
   addBtn.onclick = () => addMemberDialog(t);
   const stopBtn = h('button', { class: 'tb-btn small', text: '⏸ 모두 멈춤', title: '모든 팀원의 작업을 멈춤 (팀원은 남음)' });
   stopBtn.onclick = () => window.api.team.stopWork(t.id);
-  const endBtn = h('button', { class: 'tb-btn small danger', text: '팀 해산', title: '모든 에이전트를 끄고 새 팀을 만들 수 있게 합니다' });
+  const endBtn = h('button', { class: 'tb-btn small danger', text: '팀 삭제', title: '모든 에이전트를 끄고 이 팀과 대화 기록을 지웁니다' });
   endBtn.onclick = async () => {
-    if (!(await confirmDialog('모든 에이전트를 끄고 팀을 해산할까요? (대화 기록도 사라집니다)', { title: '팀 해산', okLabel: '해산', danger: true }))) return;
-    await window.api.team.dispose(t.id);
+    if (!(await confirmDialog('모든 에이전트를 끄고 이 팀과 대화 기록을 지울까요? (되돌릴 수 없음)\n지금 팀을 남겨 두고 새로 시작하려면 위쪽 ‘＋ 새 팀’ 을 쓰세요.', { title: '팀 삭제', okLabel: '삭제', danger: true }))) return;
+    await window.api.team.deleteSaved(state.repo, t.id);
     data.delete(t.id);
     teamOf.delete(key(state.repo));
-    draw();
+    draw(true);
   };
   side.append(h('div', { class: 'team-side-head' }, h('b', { text: `팀원 ${t.members.length}` }), h('span', { class: 'tb-spacer' }), addBtn), h('div', { class: 'team-side-acts' }, stopBtn, endBtn));
   const list = h('div', { class: 'team-cards' });
@@ -193,8 +288,9 @@ function drawSide() {
       h('div', { class: 'team-card-body' },
         h('div', { class: 'team-card-name' }, h('b', { text: m.name }), h('span', { class: 'team-card-role', text: m.role })),
         h('div', { class: 'team-card-st' }, h('span', { class: 'team-dot' }), h('span', { text: m.status === 'busy' ? m.activity || '작업 중' : STATUS[m.status] || m.status })),
-        h('div', { class: 'team-card-ai', text: aiLabel(m) })
-      )
+        h('div', { class: 'team-card-ai' }, h('span', { text: aiLabel(m) }), m.ctx?.window ? ctxBar(m) : null)
+      ),
+      m.pm ? null : kickBtn(t, m)
     );
     card.onclick = () => {
       target = m.pm ? null : m.id;
@@ -218,7 +314,7 @@ function drawSide() {
         ...MODELS.map(([v, label]) => ({ label: `${mark('claude', v)}Claude Code · ${label}`, onClick: () => pick('claude', v) })),
         { label: `${mark('codex', '')}Codex (OpenAI)`, onClick: () => pick('codex', null) },
         m.pm ? null : '-',
-        m.pm ? null : { label: '팀에서 내보내기', danger: true, onClick: () => window.api.team.removeMember(t.id, m.id) },
+        m.pm ? null : { label: '강퇴 (팀에서 내보내기)', danger: true, onClick: () => kickBtn(t, m).click() },
       ]);
     };
     list.append(card);
@@ -232,7 +328,21 @@ function drawHead() {
   const t = curTeam();
   if (!head || !t) return;
   head.innerHTML = '';
-  head.append(h('b', { text: `${state.repo.split(/[\\/]/).pop()} · AI 팀` }), h('span', { class: 'team-head-sub', text: `${t.provider === 'codex' ? 'Codex' : 'Claude Code'} · 팀원 ${t.members.length}명` }), h('span', { class: 'tb-spacer' }));
+  const hist = h('button', { class: 'tb-btn small', text: '🕘', title: '지난 팀 대화 (이 프로젝트)' });
+  hist.onclick = () => openHistory(hist);
+  const nw = h('button', { class: 'tb-btn small', text: '＋ 새 팀', title: '새 팀으로 시작 (지금 팀은 저장되어 지난 팀 대화에서 다시 열 수 있음)' });
+  nw.onclick = () => newTeam();
+  const setup = h('button', { class: 'tb-btn small', text: '⚙', title: 'AI 연결 · 설정 (설치·로그인, 업데이트, MCP·커넥터, 로그아웃)' });
+  setup.onclick = () => openAiSetup(t.provider);
+  head.append(
+    h('b', { class: 'team-title', text: t.title || `${state.repo.split(/[\\/]/).pop()} · AI 팀`, title: t.title || '' }),
+    h('span', { class: 'team-head-sub', text: `팀원 ${t.members.length}명` }),
+    h('span', { class: 'tb-spacer' }),
+    h('span', { class: 'ai-meters team-meters' }, ...rateMeters(t)),
+    hist,
+    nw,
+    setup
+  );
   if (t.paused) {
     const go = h('button', { class: 'btn primary small', text: '계속' });
     go.onclick = () => window.api.team.resume(t.id);
@@ -267,7 +377,7 @@ function appendMessage(t, msg, scroll) {
   const log = root?.querySelector('.team-log');
   if (!log) return;
   const near = log.scrollHeight - log.scrollTop - log.clientHeight < 160;
-  const toNames = (msg.to || []).map((id) => (id === 'user' ? '나' : member(t, id)?.name || '?'));
+  const toNames = (msg.to || []).map((id) => (id === 'user' ? '나' : anyMember(t, id)?.name || '?'));
   let el;
   if (msg.from === 'system') {
     el = h('div', { class: `team-sys ${msg.kind === 'pause' ? 'pause' : ''}`, text: msg.text });
@@ -282,7 +392,7 @@ function appendMessage(t, msg, scroll) {
       )
     );
   } else {
-    const m = member(t, msg.from) || { name: msg.from, role: '', color: '#888' };
+    const m = anyMember(t, msg.from) || { name: msg.from, role: '', color: '#888' };
     el = h(
       'div',
       { class: `team-msg agent ${msg.kind === 'dm' ? 'dm' : ''}` },
@@ -401,6 +511,22 @@ function drawTarget() {
   }
   const ta = root.querySelector('.team-input textarea');
   if (ta) ta.placeholder = target ? `${m.name} (${m.role}) 에게만 말합니다 · Esc: PM 에게로` : 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)';
+}
+
+function ctxBar(m) {
+  const pct = Math.min(100, Math.round((m.ctx.used / m.ctx.window) * 100));
+  return h('span', { class: `team-ctx ${pct >= 80 ? 'warn' : ''}`, title: `${m.name} 의 컨텍스트 ${fmtTok(m.ctx.used)} / ${fmtTok(m.ctx.window)} 토큰 (${pct}%)\n가득 차면 AI 가 자동으로 정리(요약)합니다.` }, h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } })), h('span', { text: `${pct}%` }));
+}
+// 강퇴: 카드에 마우스를 올리면 보인다
+function kickBtn(t, m) {
+  const b = h('button', { class: 'team-kick', text: '강퇴', title: `${m.name} 을(를) 팀에서 내보냅니다 (AI 도 종료)` });
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    if (!(await confirmDialog(`${m.name} (${m.role}) 을(를) 팀에서 내보낼까요?\n하던 일은 멈추고, 지난 메시지는 대화방에 남습니다.`, { title: '팀원 강퇴', okLabel: '강퇴', danger: true }))) return;
+    const r = await window.api.team.removeMember(t.id, m.id);
+    if (!r.ok) toast(r.error, 'error', 6000);
+  };
+  return b;
 }
 
 async function addMemberDialog(t) {

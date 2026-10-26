@@ -299,8 +299,8 @@ function render() {
     ].filter(Boolean));
   };
   const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 화면 닫기 — 보던 화면으로 (Ctrl+Shift+A)' });
-  close.onclick = () => setVisible(false);
-  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), phase === 'ready' ? newBtn : null, phase === 'ready' ? histBtn : null, more, close));
+  close.onclick = () => (setupDlg ? setupDlg.close() : setVisible(false));
+  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), more));
 
   const body = h('div', { class: 'ai-body' });
   panel.append(body);
@@ -319,7 +319,45 @@ function render() {
   if (phase === 'error') return body.append(h('div', { class: 'ai-card err', text: info?.error || '오류' }));
   if (phase === 'install' || phase === 'installing') return body.append(installCard());
   if (phase === 'login' || phase === 'logging-in') return body.append(loginCard());
-  body.append(chatView());
+  // 준비 완료: 대화는 팀 채팅방에서 (1:1 대화는 팀장 PM 과 대화하면 된다)
+  body.append(
+    h(
+      'div',
+      { class: 'ai-card' },
+      stepper(3),
+      h('div', { class: 'ai-p', html: `<b>✓ ${esc(aiName())} 사용 준비 완료</b>${info?.version ? ` · 버전 ${esc(info.version)}` : ''}${info?.account ? ` · ${esc(info.account)}` : ''}<br>팀 채팅방에서 팀장 PM 과 대화하거나 팀원에게 이 AI 를 쓸 수 있습니다. 위쪽 <b>⋯</b> 에서 MCP·커넥터 확인, ${provider === 'codex' ? '업데이트, ' : ''}로그아웃을 할 수 있습니다.` })
+    )
+  );
+}
+
+// 'AI 연결·설정' 창: 예전 AI 패널의 설치·로그인·업데이트·MCP 화면을 창으로 띄운다
+let setupDlg = null;
+export function openAiSetup(prov) {
+  if (prov && AIS.some((a) => a.id === prov)) {
+    provider = prov;
+    localStorage.setItem('ai.provider', provider);
+  }
+  setupDlg?.close?.();
+  const home = panel.parentElement;
+  const body = h('div', { class: 'ai-setup' });
+  body.append(panel);
+  panel.hidden = false;
+  visible = true;
+  setupDlg = modal({
+    title: 'AI 연결 · 설정',
+    body,
+    wide: true,
+    buttons: [{ label: '닫기', primary: true }],
+    onClose: () => {
+      setupDlg = null;
+      visible = false;
+      panel.hidden = true;
+      home?.append(panel);
+      window.dispatchEvent(new CustomEvent('cf-ai-setup-closed', { detail: { provider, ready: phase === 'ready' } }));
+    },
+  });
+  refreshStatus();
+  render();
 }
 
 function stepper(active) {
@@ -1043,6 +1081,8 @@ function markReady(c, pr) {
 
 // 지금 보이는 프로젝트의 지금 고른 AI 를 깨운다 (설치·로그인된 경우만)
 async function maybeWarm(force) {
+  return; // 1:1 대화를 없앴다 — 팀원 AI 는 팀 채팅방에서 띄운다
+  // eslint-disable-next-line no-unreachable
   if (phase !== 'ready' || !state.repo) return;
   const c = chatFor(state.repo);
   if (!c.loaded) {
