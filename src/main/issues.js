@@ -137,8 +137,9 @@ async function request(svc, urlPath) {
   const cached = authCache.get(svc.host);
   if (cached) {
     const r = await fetchJson(url, headersFor(svc, cached.token, cached.mode));
-    if (r.status !== 401) return { ...r, source: cached.source };
-    authCache.delete(svc.host);
+    // 404/403 은 '이 로그인으로는 안 보임' 일 수 있으니 다른 로그인 방법(저장한 토큰 / Git 로그인 정보)도 시도
+    if (r.status !== 401 && r.status !== 403 && r.status !== 404) return { ...r, source: cached.source };
+    if (r.status === 401) authCache.delete(svc.host);
   }
   const tries = [];
   const saved = savedToken(svc.host);
@@ -147,16 +148,19 @@ async function request(svc, urlPath) {
   if (cred) tries.push({ token: cred, mode: 'bearer', source: 'git' }, { token: cred, mode: 'private', source: 'git' });
   tries.push({ token: null, mode: null, source: 'none' });
   let last = null;
+  let best = null;
   for (const t of tries) {
     if (svc.kind === 'github' && t.mode === 'private') continue;
     const r = await fetchJson(url, headersFor(svc, t.token, t.mode));
     last = { ...r, source: t.source };
+    if (!best && t.token && r.status !== 401) best = last;
     if (r.status === 200) {
       authCache.set(svc.host, t); // 다음부터는 이 방법으로 바로 (토큰 없이 되는 공개 저장소도 기억)
       return last;
     }
   }
-  return last;
+  // 모두 실패했으면 로그인한 상태로 받은 결과(예: 토큰으로 받은 404 = 로그인은 됐지만 안 보임)가 더 쓸모 있다
+  return best || last;
 }
 
 // ---------- 이슈 목록 / 상세 ----------
@@ -189,6 +193,8 @@ const norm = {
     updated: i.updated_at,
     url: i.web_url,
     body: i.description || '',
+    // 그룹 이슈를 볼 때는 어느 프로젝트의 이슈인지 (예: store-front#12)
+    ref: i.references?.relative && !/^#/.test(i.references.relative) ? i.references.relative : null,
   }),
 };
 
@@ -200,6 +206,33 @@ function errorFor(svc, r) {
   return { error: 'http', message: `이슈를 불러오지 못했습니다 (HTTP ${r.status}).`, service: svc };
 }
 
+const publicSvc = (svc) => ({ kind: svc.kind, host: svc.host, project: svc.project, issuesUrl: svc.issuesUrl, newTokenUrl: svc.newTokenUrl });
+
+// GitLab: 프로젝트 이슈가 안 보일 때 원인을 찾고, 가능하면 상위 그룹의 이슈를 보여 준다
+async function groupFallback(svc, q) {
+  const proj = await request(svc, `/projects/${encodeURIComponent(svc.project)}`);
+  const visible = proj?.status === 200;
+  const reason = visible ? (proj.body?.issues_enabled === false || proj.body?.issues_access_level === 'disabled' ? 'disabled' : 'hidden') : 'no-access';
+  // 상위 그룹부터: laos-corp/hstore/store-front → laos-corp/hstore → laos-corp
+  const parts = svc.project.split('/').slice(0, -1);
+  for (let n = parts.length; n >= 1; n--) {
+    const name = parts.slice(0, n).join('/');
+    const r = await request(svc, `/groups/${encodeURIComponent(name)}/issues?${q}`);
+    if (r?.status === 200 && (r.body.length || n === 1 || reason !== 'no-access')) return { ok: true, r, scope: { kind: 'group', name, reason } };
+  }
+  if (visible) return { why: { error: 'not-found', message: `이 프로젝트(${svc.project})는 이슈 기능이 꺼져 있고, 상위 그룹의 이슈도 볼 수 없습니다.` } };
+  // 프로젝트 자체가 안 보임: 저장된 토큰/로그인 계정에 이 프로젝트 권한이 없음
+  const who = await request(svc, '/user');
+  const user = who?.status === 200 ? who.body?.username : null;
+  return {
+    why: {
+      error: 'no-access',
+      user,
+      message: `${user ? `'${user}' 계정으로는` : '지금 로그인 정보로는'} ${svc.project} 프로젝트가 보이지 않습니다. 이 프로젝트 멤버인 계정의 토큰(read_api)을 넣어 주세요.`,
+    },
+  };
+}
+
 // opts: { state: 'open'|'closed'|'all', search, mine, page }
 async function list(repo, opts = {}) {
   const svc = await serviceFor(repo);
@@ -209,6 +242,7 @@ async function list(repo, opts = {}) {
   let r;
   let items = [];
   let raw = 0; // 서버가 준 개수 (GitHub 는 PR 을 걸러 내므로 '더 있음' 판단은 이걸로)
+  let scope = null; // 그룹 이슈를 보여 줄 때 { kind: 'group', name, reason }
   if (svc.kind === 'github') {
     const st = opts.state || 'open';
     if (opts.search || opts.mine) {
@@ -226,11 +260,24 @@ async function list(repo, opts = {}) {
     if (opts.mine) q.set('scope', 'assigned_to_me');
     r = await request(svc, `/projects/${encodeURIComponent(svc.project)}/issues?${q}`);
     if (r?.status === 200) (items = r.body), (raw = items.length);
+    // 프로젝트에서 이슈가 안 보이면: 이슈 기능이 꺼져 있고 그룹(상위 폴더)에서 이슈를 관리하는 경우가 많다 → 그룹 이슈로
+    if (r && (r.status === 404 || r.status === 403) && r.source !== 'none') {
+      const g = await groupFallback(svc, q);
+      if (g.ok) {
+        r = g.r;
+        items = r.body;
+        raw = items.length;
+        scope = g.scope;
+      } else {
+        return { ...g.why, service: publicSvc(svc) };
+      }
+    }
   }
   if (r?.status !== 200) return errorFor(svc, r);
   const total = Number(r.headers.get('x-total')) || null; // GitLab 은 전체 개수를 알려 줌
   return {
-    service: { kind: svc.kind, host: svc.host, project: svc.project, issuesUrl: svc.issuesUrl, newTokenUrl: svc.newTokenUrl },
+    service: { ...publicSvc(svc), ...(scope ? { issuesUrl: `${svc.web}/groups/${scope.name}/-/issues` } : {}) },
+    scope,
     auth: r.source,
     items: items.map(norm[svc.kind]),
     page,

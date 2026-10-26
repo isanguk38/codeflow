@@ -838,3 +838,8 @@
 .iss-info:hover {
   color: var(--accent2);
 }
+
+.iss-scope {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}

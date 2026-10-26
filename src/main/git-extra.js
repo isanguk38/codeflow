@@ -150,7 +150,7 @@ async function refFilePair(repo, a, b, file) {
     leftLabel: `${short(a)}: ${oldPath}`,
     rightLabel: `${short(b)}: ${file.path}`,
     leftTag: lt?.kind === 'current' ? lt : null,
-    rightTag: rt,
+    rightTag: rt?.kind === 'current' ? rt : null,
   };
 }
 

@@ -1566,8 +1566,7 @@ input[type='checkbox'] {
   color: var(--text2);
 }
 .ver-tag.in {
-  color: var(--c-added);
-  border-color: color-mix(in srgb, var(--c-added) 45%, transparent);
+  color: var(--text3);
 }
 .ver-tag.out {
   color: var(--c-modified);
@@ -1640,4 +1639,12 @@ input[type='checkbox'] {
 }
 .mt-col-title .ver-tag {
   margin-right: 6px;
+}
+.ver-tag.before {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+.ver-tag.after {
+  color: var(--c-added);
+  border-color: color-mix(in srgb, var(--c-added) 45%, transparent);
 }

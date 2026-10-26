@@ -993,6 +993,11 @@ async function showMergedDiff(f) {
   try {
     const file = { path: f.path, orig: f.orig || undefined, status: !from ? 'added' : f.status };
     const pair = await git('refFilePair', from || newest.hash, newest.hash, file);
+    // 선택한 커밋들이 이 파일을 어떻게 바꿨는지 (첫 커밋 직전 → 마지막 커밋). 내 로컬 파일과의 비교가 아님
+    pair.leftLabel = from ? `첫 커밋 이전 ${from.slice(0, 8)}: ${f.orig || f.path}` : '(없음 — 선택한 커밋에서 새로 생김)';
+    pair.rightLabel = `마지막 커밋 ${newest.hash.slice(0, 8)}: ${f.path}`;
+    pair.leftTag = { kind: 'before', text: '수정 전' };
+    pair.rightTag = { kind: 'after', text: `수정 후 (${f.commits.length}개 커밋)` };
     renderDiff($('#logDetailDiff'), pair, { title: `${f.path}  (${f.commits.length}개 커밋 합친 변경)` });
   } catch (e) {
     emptyDiff($('#logDetailDiff'), e.message);

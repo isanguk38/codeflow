@@ -227,7 +227,7 @@ async function headRelation(repo, rev) {
   const hash = r.stdout.trim();
   if (hash === head.stdout.trim()) return { kind: 'current', text: '현재 버전 (HEAD)' };
   const anc = await run(repo, ['merge-base', '--is-ancestor', hash, 'HEAD'], { allowFail: true });
-  return anc.code === 0 ? { kind: 'in', text: '현재 브랜치에 포함' } : { kind: 'out', text: '현재 브랜치에 없음' };
+  return anc.code === 0 ? { kind: 'in', text: '현재 버전 아님 · 이미 반영된 과거 커밋' } : { kind: 'out', text: '현재 버전 아님 · 내 브랜치에 없는 커밋' };
 }
 
 // 커밋 하나에서 변경된 파일의 이전/이후 내용
@@ -240,10 +240,11 @@ async function commitFilePair(repo, hash, file) {
   return {
     left: pack(oldBuf),
     right: pack(newBuf),
-    leftLabel: parent ? `이전 ${parent.slice(0, 8)}: ${oldPath}` : '(없음)',
-    rightLabel: `이 커밋 ${hash.slice(0, 8)}: ${file.path}`,
-    leftTag: parent ? (await headRelation(repo, parent))?.kind === 'current' ? { kind: 'current', text: '현재 버전 (HEAD)' } : null : null,
-    rightTag: await headRelation(repo, hash),
+    leftLabel: parent ? `이전 커밋 ${parent.slice(0, 8)}: ${oldPath}` : '(없음 — 이 커밋에서 새로 생김)',
+    rightLabel: `선택한 커밋 ${hash.slice(0, 8)}: ${file.path}`,
+    // 히스토리: 선택한 커밋이 무엇을 바꿨는지 (이전 커밋 → 선택한 커밋). 내 로컬 파일과의 비교가 아님
+    leftTag: { kind: 'before', text: '수정 전' },
+    rightTag: { kind: 'after', text: '수정 후' },
   };
 }
 

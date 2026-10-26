@@ -150,6 +150,13 @@ function draw() {
   if (c?.error) return list.append(problem(c));
   if (!c && loading) return list.append(h('div', { class: 'iss-note', html: '<span class="spinner"></span> 이슈를 불러오는 중...' }));
   if (!c) return;
+  if (c.scope?.kind === 'group')
+    list.prepend(
+      h('div', {
+        class: 'iss-note iss-scope',
+        text: `${c.scope.reason === 'disabled' ? '이 프로젝트는 이슈 기능이 꺼져 있어' : '이 프로젝트에서 이슈가 보이지 않아'} 그룹 ${c.scope.name} 의 이슈를 보여 줍니다.`,
+      })
+    );
   if (!c.items.length) list.append(h('div', { class: 'iss-note', text: view.search ? '검색 결과가 없습니다.' : view.mine ? '나에게 배정된 열린 이슈가 없습니다.' : view.state === 'open' ? '열린 이슈가 없습니다.' : '닫힌 이슈가 없습니다.' }));
   for (const it of c.items) list.append(row(it, c));
   if (c.hasMore) {
@@ -171,7 +178,7 @@ function row(it, c) {
     'div',
     { class: `iss-row ${it.state}`, title: `#${it.number} ${it.title}
 ${it.body.replace(/\s+/g, ' ').slice(0, 200)}` },
-    h('div', { class: 'iss-l1' }, h('span', { class: 'iss-no', text: `#${it.number}` }), h('span', { class: 'iss-title', text: it.title })),
+    h('div', { class: 'iss-l1' }, h('span', { class: 'iss-no', text: it.ref || `#${it.number}`, title: it.ref || '' }), h('span', { class: 'iss-title', text: it.title })),
     meta.length ? h('div', { class: 'iss-l2' }, ...meta) : null
   );
   // 누르면: 히스토리를 이 이슈의 커밋만 보이게 (다시 누르면 해제). 상세는 두 번 클릭 또는 ⓘ
@@ -200,11 +207,14 @@ function problem(c) {
   const box = h('div', { class: 'iss-problem' });
   if (c.error === 'no-remote') box.append(h('div', { text: '원격 저장소(origin)가 없어 이슈를 표시할 수 없습니다.' }));
   else if (c.error === 'unsupported' || c.error === 'unknown-remote') box.append(h('div', { text: `원격 저장소${c.host ? `(${c.host})` : ''}가 GitHub / GitLab 이 아니어서 이슈를 표시할 수 없습니다.` }));
-  else if (c.error === 'auth') {
+  else if (c.error === 'auth' || c.error === 'no-access') {
     const svc = c.service;
     const name = svc.kind === 'github' ? 'GitHub' : 'GitLab';
+    const how = `${esc(svc.host)} 에서 '${svc.kind === 'github' ? 'repo' : 'read_api'}' 권한의 개인 액세스 토큰을 만들어 붙여 넣으세요. 토큰은 이 PC 의 Windows 계정으로 암호화해 저장합니다.`;
     box.append(
-      h('div', { html: `<b>${name} 이슈를 보려면 토큰이 필요합니다.</b><br><span class="iss-dim">${esc(svc.host)} 에서 '${svc.kind === 'github' ? 'repo' : 'read_api'}' 권한의 개인 액세스 토큰을 만들어 붙여 넣으세요. 토큰은 이 PC 의 Windows 계정으로 암호화해 저장합니다.</span>` })
+      h('div', {
+        html: c.error === 'no-access' ? `<b>${esc(c.message)}</b><br><span class="iss-dim">${how}</span>` : `<b>${name} 이슈를 보려면 토큰이 필요합니다.</b><br><span class="iss-dim">${how}</span>`,
+      })
     );
     const make = h('button', { class: 'tb-btn small', text: '① 토큰 만들기 (브라우저)' });
     make.onclick = () => window.api.openExternal(svc.newTokenUrl);
