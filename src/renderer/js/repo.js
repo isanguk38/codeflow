@@ -252,7 +252,7 @@ function expandGroup(g) {
 // ---------- 끌어 놓기 ----------
 // - 탭을 다른 탭 위에 놓으면 순서만 바뀐다 (놓은 위치의 왼쪽/오른쪽). 다른 그룹의 탭 위면 그 그룹의 앞/뒤로 (그룹에 들어가지 않음)
 // - 그룹 안 탭을 같은 그룹 안에서 끌면 그룹 안 순서만 바뀜. 그룹 밖 탭 위에 놓으면 그룹에서 빠짐
-// - 탭을 그룹 이름표 위에 놓을 때만 그 그룹에 들어감
+// - 탭을 그룹 이름표의 가운데에 놓을 때만 그 그룹에 들어감 (이름표 왼쪽 끝: 그룹 앞, 접힌 그룹의 오른쪽 끝: 그룹 뒤)
 // - 이름표를 끌면 그룹 통째로 옮김
 let dragging = null; // { tab } | { group }
 const sideOf = (e, el) => {
@@ -312,7 +312,16 @@ function dropOnTab(e, target, tg) {
   finishDrop();
 }
 
-// 이름표 위에 놓기: 탭이면 그룹에 넣기, 그룹이면 그룹 순서 바꾸기
+// 탭을 이름표 위에 놓을 때 어디로 갈지: 왼쪽 1/4 = 그룹 앞, (접힌 그룹만) 오른쪽 1/4 = 그룹 뒤, 나머지 = 그룹에 넣기
+function chipZone(e, el, g) {
+  const r = el.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  if (x < 0.25) return 'before';
+  if (g.collapsed && x > 0.75) return 'after';
+  return 'into';
+}
+
+// 이름표 위에 놓기: 탭이면 그룹에 넣기(또는 그룹 앞/뒤로), 그룹이면 그룹 순서 바꾸기
 function dropOnChip(e, g) {
   e.preventDefault();
   e.stopPropagation();
@@ -327,6 +336,13 @@ function dropOnChip(e, g) {
     return finishDrop();
   }
   const moving = d.tab;
+  const zone = chipZone(e, e.currentTarget, g);
+  if (zone !== 'into') {
+    // 그룹에 넣지 않고 그룹 앞/뒤로만
+    setGroup(moving.path, null);
+    moveBlock([moving], blockOf(g), zone);
+    return finishDrop();
+  }
   if (groupOf(moving.path) === g) return;
   setGroup(moving.path, g);
   // 그룹의 맨 뒤로
@@ -341,7 +357,11 @@ function markDrop(e, el, kind) {
   if (!dragging) return;
   e.preventDefault();
   clearDropMarks();
-  if (kind === 'chip' && dragging.tab) return el.classList.add('drop-into');
+  if (kind === 'chip' && dragging.tab) {
+    const g = loadGroups().find((x) => x.id === el.dataset.id);
+    const zone = g ? chipZone(e, el, g) : 'into';
+    return el.classList.add(zone === 'into' ? 'drop-into' : zone === 'before' ? 'drop-before' : 'drop-after');
+  }
   el.classList.add(sideOf(e, el) === 'before' ? 'drop-before' : 'drop-after');
 }
 
@@ -409,7 +429,7 @@ function chipEl(g, count, onClick) {
       'data-id': g.id,
       title: g.closed
         ? `${groupLabel(g)} — 닫힌 그룹 (${g.paths.length}개 프로젝트)\n클릭: 다시 열기 · 우클릭: 이름·색 / 삭제`
-        : `${groupLabel(g)} — 프로젝트 ${count}개\n클릭: ${g.collapsed ? '펼치기' : '접기'} · 우클릭: 이름·색 / 그룹 닫기`,
+        : `${groupLabel(g)} — 프로젝트 ${count}개\n클릭: ${g.collapsed ? '펼치기' : '접기'} · 우클릭: 이름·색 / 그룹 닫기\n탭을 끌어 가운데에 놓으면 그룹에 넣기 · 왼쪽 끝에 놓으면 그룹 앞으로`,
     },
     h('span', { class: 'tg-name', text: g.name || '' })
   );
