@@ -2,6 +2,7 @@
 // 인증(GitHub 로그인 등)은 git 의 credential helper(Git Credential Manager)가 담당한다.
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
@@ -16,7 +17,30 @@ class GitError extends Error {
   }
 }
 
-function run(cwd, args, { allowFail = false, input, raw = false, env: extraEnv } = {}) {
+// Windows 는 명령줄이 약 32,000자를 넘으면 git 을 실행조차 못 한다 (파일 수천 개를 한 번에 커밋할 때 등).
+// 그럴 때는 '--' 뒤의 파일 목록을 표준 입력(--pathspec-from-file)으로 넘긴다.
+const PATHSPEC_CMDS = new Set(['add', 'commit', 'reset', 'restore', 'rm', 'stash', 'checkout']);
+const MAX_CMDLINE = 24000;
+
+function run(cwd, args, opts = {}) {
+  const sep = args.indexOf('--');
+  if (sep < 0 || !PATHSPEC_CMDS.has(args[0]) || args.reduce((n, a) => n + a.length + 3, 0) < MAX_CMDLINE) return runGit(cwd, args, opts);
+  const head = args.slice(0, sep);
+  let tmp = null;
+  if (opts.input !== undefined) {
+    // 표준 입력을 이미 쓰는 경우(커밋 메시지 -F -)에는 메시지를 임시 파일로 넘긴다
+    const fi = head.indexOf('-F');
+    if (fi < 0 || head[fi + 1] !== '-') return runGit(cwd, args, opts);
+    tmp = path.join(os.tmpdir(), `codeflow-msg-${process.pid}-${Date.now()}.txt`);
+    fs.writeFileSync(tmp, opts.input, 'utf8');
+    head[fi + 1] = tmp;
+  }
+  head.push('--pathspec-from-file=-', '--pathspec-file-nul');
+  const done = () => tmp && fs.rm(tmp, { force: true }, () => {});
+  return runGit(cwd, head, { ...opts, input: args.slice(sep + 1).join('\0') }).finally(done);
+}
+
+function runGit(cwd, args, { allowFail = false, input, raw = false, env: extraEnv } = {}) {
   return new Promise((resolve, reject) => {
     const fullArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args];
     let child;
@@ -36,7 +60,7 @@ function run(cwd, args, { allowFail = false, input, raw = false, env: extraEnv }
         },
       });
     } catch (e) {
-      reject(new GitError('git 실행에 실패했습니다. Git이 설치되어 있는지 확인하세요.'));
+      reject(new GitError(e.code === 'ENAMETOOLONG' ? 'git 명령이 너무 깁니다 (파일이 너무 많음).' : `git 실행에 실패했습니다 (${e.code || e.message}). Git이 설치되어 있는지 확인하세요.`));
       return;
     }
     const out = [];
@@ -728,6 +752,14 @@ async function stashList(repo) {
 async function stashSave(repo, message, paths) {
   const args = ['stash', 'push', '-u'];
   if (message) args.push('-m', message);
+  if (paths && paths.length && paths.join(' ').length > MAX_CMDLINE) {
+    // git stash 는 파일 목록을 안에서 다시 명령줄로 넘겨서, 파일이 아주 많으면 Windows 에서 실패한다.
+    // 바뀐 파일을 모두 골랐으면 목록 없이 전체를 보관한다.
+    const changed = (await run(repo, ['status', '--porcelain', '-z', '-uall'])).stdout.split('\0').filter((l) => /^.. /.test(l)).map((l) => l.slice(3));
+    const picked = new Set(paths);
+    if (changed.some((p) => !picked.has(p))) throw new GitError(`파일이 너무 많아(${paths.length}개) 일부만 보관할 수 없습니다. 모두 선택해서 보관하거나, 폴더를 나눠 여러 번 보관하세요.`);
+    paths = null;
+  }
   if (paths && paths.length) args.push('--', ...paths);
   await run(repo, args);
 }
