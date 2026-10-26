@@ -832,7 +832,20 @@ async function selectCommit(hash, scroll = true) {
     d.refs.length ? h('div', { class: 'ci-refs', html: refBadges(d.refs) }) : null,
     d.signature ? h('div', { class: `ci-sig ${d.signature.status === 'G' ? 'good' : 'warn'}`, text: `${d.signature.status === 'G' ? '✔ 서명 확인됨' : `⚠ 서명 상태: ${d.signature.status}`}${d.signature.signer ? ` (${d.signature.signer})` : ''}` }) : null
   );
-  box.append(info, h('div', { class: 'group-header', html: `변경된 파일 <span class="count">${d.files.length}개</span>${d.parents.length > 1 ? ' <span class="count">(첫 번째 부모 기준)</span>' : ''}` }));
+  // 커밋 하나만 골라도 자원 리스트(변경 파일 목록)를 엑셀로 (여러 커밋 선택과 같은 형식)
+  const single = [{ hash: d.hash, parents: d.parents, author: d.author, time: d.time, subject: d.body.split('\n')[0], files: d.files }];
+  const exportOne = () => exportResources(single, mergeFiles(single));
+  const xbtn = h('button', { class: 'tb-btn small', text: '⬇ 엑셀', title: '변경된 파일 목록(자원 리스트)을 엑셀로 저장', onclick: exportOne });
+  box.append(
+    info,
+    h(
+      'div',
+      { class: 'group-header multi-files-head' },
+      h('span', { html: `변경된 파일 <span class="count">${d.files.length}개</span>${d.parents.length > 1 ? ' <span class="count">(첫 번째 부모 기준)</span>' : ''}` }),
+      h('span', { class: 'tb-spacer' }),
+      d.files.length ? xbtn : null
+    )
+  );
   const list = h('div', { class: 'detail-files' });
   const makeRow = (f) => {
     const { dir, name } = splitPath(f.path);
@@ -854,6 +867,8 @@ async function selectCommit(hash, scroll = true) {
         { label: '변경 내용 보기', onClick: () => row.click() },
         { label: '파일 히스토리 보기', onClick: () => showFileHistory(f.path) },
         { label: '이 리비전에서 Blame', disabled: f.status === 'deleted', onClick: async () => (await import('./blame.js')).openBlame(f.path, d.hash) },
+        '-',
+        { label: `엑셀로 내보내기 — 자원 리스트 (${d.files.length}개 파일)`, onClick: exportOne },
         { label: '경로 복사', onClick: () => window.api.copy(f.path) },
       ]);
     };
