@@ -43,11 +43,20 @@ function meter(label, pct, title) {
   return h('span', { class: `ai-meter ${pct >= 80 ? 'warn' : ''}`, title }, h('span', { text: `${label} ${pct}%` }), h('span', { class: 'ai-bar' }, h('i', { style: { width: `${pct}%` } })));
 }
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
+// 마지막으로 받은 계정 사용량 (팀 / 예전 1:1 대화)
+function lastRate() {
+  try {
+    return { ...JSON.parse(localStorage.getItem('ai.rateInfo') || '{}'), ...JSON.parse(localStorage.getItem('team.rate') || '{}') };
+  } catch {
+    return {};
+  }
+}
 function rateMeters(t) {
   const out = [];
   const used = [...new Set(t.members.map((m) => m.provider))];
+  const cached = lastRate();
   for (const prov of used) {
-    for (const w0 of t.rate?.[prov] || []) {
+    for (const w0 of t.rate?.[prov]?.length ? t.rate[prov] : cached[prov] || []) {
       const w = w0.resetsAt && w0.resetsAt * 1000 < Date.now() ? { ...w0, utilization: 0 } : w0;
       const pct = Math.round((w.utilization || 0) * 100);
       const left = w.resetsAt ? Math.max(0, w.resetsAt * 1000 - Date.now()) : 0;
@@ -140,6 +149,8 @@ async function openTeam(sc, id) {
   data.set(r.data.id, r.data);
   teamOf.set(scopeKey(sc), r.data.id);
   target = null;
+  // 보고 있는 화면이면 팀원들을 깨운다
+  if (teamShown()) window.api.team.wake(r.data.id);
   window.api.team.refreshUsage(r.data.id);
   if (scopeKey(curScope()) === scopeKey(sc)) draw();
 }
@@ -191,7 +202,8 @@ export function initTeam() {
 export function activateTeam() {
   draw();
   const t = curTeam();
-  if (t) window.api.team.refreshUsage(t.id);
+  // AI 화면을 여는 순간 팀원들을 깨운다 (바로 대답할 수 있게, 사용량·컨텍스트도 곧바로 표시)
+  if (t) (window.api.team.wake(t.id), window.api.team.refreshUsage(t.id));
 }
 
 // 'AI 연결·설정' 창을 닫으면 (설치·로그인 후) 화면을 다시
@@ -224,6 +236,9 @@ function onEvent(teamId, ev) {
     if (curTeam() === t) drawHead();
   } else if (ev.type === 'usage') {
     t.rate = ev.rate;
+    try {
+      localStorage.setItem('team.rate', JSON.stringify({ ...lastRate(), ...ev.rate }));
+    } catch {}
     if (curTeam() === t) drawHead();
   }
 }

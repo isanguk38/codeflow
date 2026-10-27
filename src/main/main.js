@@ -293,6 +293,7 @@ ipcMain.handle('team:open', aiSafe((_e, repo, id) => team.open(repo, id)));
 ipcMain.handle('team:deleteSaved', aiSafe((_e, repo, id) => team.deleteSaved(repo, id)));
 ipcMain.handle('team:openFor', aiSafe((_e, repo) => team.openFor(repo)));
 ipcMain.handle('team:refreshUsage', aiSafe((_e, id) => team.refreshUsage(id)));
+ipcMain.handle('team:wake', aiSafe((_e, id) => team.wake(id)));
 ipcMain.handle('team:older', aiSafe((_e, id, beforeId, count) => team.older(id, beforeId, count)));
 ipcMain.handle('team:setProjects', aiSafe((_e, id, scope) => team.setProjects(id, scope)));
 app.on('before-quit', () => team.disposeAll());

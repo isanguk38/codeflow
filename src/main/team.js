@@ -717,6 +717,18 @@ function older(teamId, beforeId, count = 200) {
   const start = Math.max(0, end - count);
   return { items: team.log.slice(start, end), more: start > 0 };
 }
+// 깨우기: AI 화면을 열면 쉬는·멈춘 팀원을 모두 미리 띄운다 (이전 대화에 이어 붙임, 질문은 보내지 않아 사용량이 들지 않음)
+// → 바로 대답할 수 있고, 사용량·컨텍스트도 곧바로 표시된다
+function wake(teamId) {
+  const team = teams.get(teamId);
+  if (!team) return;
+  for (const m of team.members) {
+    if (m.status !== 'offline' && m.status !== 'stopped') continue;
+    setStatus(team, m, 'starting', m.sessionId ? '이전 대화 불러오는 중' : '깨우는 중');
+    launch(team, m, { resume: true }).catch(() => {});
+  }
+}
+
 // 사용량을 다시 조회 (팀 화면을 열 때)
 function refreshUsage(teamId) {
   const team = teams.get(teamId);
@@ -742,5 +754,6 @@ module.exports = {
   openFor,
   older,
   setProjects,
+  wake,
   refreshUsage,
 };
