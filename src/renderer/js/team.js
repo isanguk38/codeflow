@@ -687,19 +687,30 @@ export function askTeamApproval(args) {
   const k = `${tm.teamId}:${tm.memberId}`;
   if (always.get(k)?.has(tool)) return Promise.resolve({ allow: true });
   if (/^(Write|Edit|MultiEdit)$/.test(tool) && /[\\/]ai[\\/]drafts[\\/]/i.test(input.file_path || '')) return Promise.resolve({ allow: true });
+  // 요청한 파일·폴더 (Read/Grep/Glob 은 path, 파일 수정은 file_path). 경로가 없으면 그 팀원의 작업 폴더(팀 첫 프로젝트)
+  const fp = String(input.file_path || input.path || input.notebook_path || '');
+  const projects = t?.scope?.projects || [];
+  // \ 와 / 를 같게 보고 비교 (C:\a\b 와 C:/a/b 는 같은 폴더)
+  const norm = (x) => String(x).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const abs = /^([a-z]:[\\/]|[\\/]{2}|\/)/i.test(fp);
+  const outside = !!(abs && projects.length && !projects.some((p) => norm(fp) === norm(p) || norm(fp).startsWith(`${norm(p)}/`)));
+  const where = fp || (/^(Read|Grep|Glob|LS|NotebookRead)$/.test(tool) && projects[0] ? `${projects[0]} (작업 폴더)` : '');
   const what =
     tool === 'Bash' || tool === 'PowerShell' || /run_in_terminal$/.test(tool)
       ? `명령 실행: ${input.command || ''}`
       : /^(Write|Edit|MultiEdit)$/.test(tool)
-        ? `파일 ${tool === 'Write' ? '만들기' : '고치기'}: ${String(input.file_path || '').split(/[\\/]/).slice(-2).join('/')}`
-        : tool.replace(/^mcp__\w+__/, '');
-  const detail = (input.new_string ?? input.content ?? (input.edits || []).map((e) => e.new_string).join('\n---\n') ?? (input.command ? '' : JSON.stringify(input, null, 2)) ?? '').slice(0, 1500);
+        ? `파일 ${tool === 'Write' ? '만들기' : '고치기'}: ${fp.split(/[\\/]/).slice(-2).join('/')}`
+        : tool === 'Read'
+          ? '파일 읽기'
+          : tool === 'Grep'
+            ? `내용 검색: ${input.pattern || ''}${input.glob ? ` (${input.glob})` : ''}`
+            : tool === 'Glob'
+              ? `파일 찾기: ${input.pattern || ''}`
+              : tool.replace(/^mcp__\w+__/, '');
+  const edits = (input.edits || []).map((e) => e.new_string).join('\n---\n');
+  const detail = String(input.new_string ?? input.content ?? (edits || (input.command || fp || input.pattern || !Object.keys(input).length ? '' : JSON.stringify(input, null, 2)))).slice(0, 1500);
   return new Promise((resolve) => {
     let dlg = null;
-    // 팀 프로젝트(그룹 팀이면 그룹의 프로젝트들) 밖의 파일이면 눈에 띄게 알린다
-    const fp = String(input.file_path || input.path || '');
-    const abs = /^([a-z]:[\\/]|[\\/]{2}|\/)/i.test(fp);
-    const outside = abs && t?.scope?.projects?.length && !t.scope.projects.some((p) => fp.toLowerCase().startsWith(p.toLowerCase()));
     const card = h(
       'div',
       { class: `team-approve ${outside ? 'outside' : ''}` },
@@ -710,6 +721,8 @@ export function askTeamApproval(args) {
         h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '허용을 요청합니다' })),
         outside ? h('div', { class: 'team-out', text: `⚠ 이 팀의 프로젝트 밖 파일입니다 (${t.scope.kind === 'group' ? `'${t.scope.name}' 그룹 프로젝트가 아님` : '이 프로젝트 폴더가 아님'}). 꼭 필요한 경우에만 허용하세요.` }) : null,
         h('div', { class: 'team-approve-what', text: what }),
+        where ? h('div', { class: 'team-approve-path', text: `경로: ${where}` }) : null,
+        outside ? h('div', { class: 'team-approve-path', text: `이 팀의 프로젝트: ${projects.join(', ')}` }) : null,
         detail ? h('pre', { class: 'ai-code-block', text: detail }) : null
       )
     );

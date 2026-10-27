@@ -264,6 +264,15 @@
 .team-approve-what {
   font-weight: 600;
   margin: 2px 0 6px;
+  word-break: break-all;
+}
+.team-approve-path {
+  font-family: var(--mono, Consolas, monospace);
+  font-size: 12px;
+  color: var(--text-dim, #888);
+  margin: -2px 0 6px;
+  word-break: break-all;
+  user-select: text;
 }
 /* 아래: 받는 사람 + 입력 */
 .team-input {
