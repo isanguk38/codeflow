@@ -610,3 +610,20 @@
 .team-msg-text {
   cursor: text;
 }
+
+/* MCP 버튼: 실패·인증 필요 커넥터가 있으면 점 */
+.team-mcp {
+  position: relative;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+.team-mcp.has-issue::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d39e00;
+}

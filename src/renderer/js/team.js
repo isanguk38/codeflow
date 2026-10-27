@@ -58,6 +58,62 @@ function rateMeters(t) {
   return out;
 }
 
+// ---------- MCP · 커넥터 (팀원 AI 가 시작할 때 보고한 실제 연결 상태, 없으면 설정 목록) ----------
+const MCP_ICO = { connected: '●', 'needs-auth': '○', failed: '✕', pending: '…', configured: '◇', disabled: '–' };
+const MCP_WORD = { connected: '연결됨', 'needs-auth': '인증 필요', failed: '실패', pending: '연결 중', configured: '설정됨', disabled: '꺼짐' };
+const MCP_RANK = { failed: 0, 'needs-auth': 1, pending: 2, connected: 3, configured: 4, disabled: 5 };
+const isBad = (st) => st === 'failed' || st === 'needs-auth';
+// 떠 있는 팀원 중 하나라도 실패/인증 필요인 커넥터가 있으면 버튼에 점
+const mcpIssue = (t) => t.members.some((m) => (m.mcp || []).some((x) => x.name !== 'codeflow' && isBad(x.status)));
+// AI 별로: 팀원들의 실제 상태를 합친다 (같은 커넥터는 가장 나쁜 상태, 그 팀원 이름도)
+function liveMcp(t, prov) {
+  const by = new Map();
+  const who = [];
+  for (const m of t.members.filter((x) => x.provider === prov && x.mcp)) {
+    who.push(m.name);
+    for (const s of m.mcp) {
+      if (s.name === 'codeflow') continue;
+      const cur = by.get(s.name);
+      if (!cur || (MCP_RANK[s.status] ?? 9) < (MCP_RANK[cur.status] ?? 9)) by.set(s.name, { name: s.name, status: s.status, who: isBad(s.status) ? [m.name] : cur?.who || [] });
+      else if (isBad(s.status) && s.status === cur.status) cur.who.push(m.name);
+    }
+  }
+  return who.length ? { who, list: [...by.values()].sort((a, b) => (MCP_RANK[a.status] ?? 9) - (MCP_RANK[b.status] ?? 9) || a.name.localeCompare(b.name)) } : null;
+}
+async function openMcp(t, anchor) {
+  const provs = [...new Set(t.members.map((m) => m.provider))];
+  const name = (p) => (p === 'codex' ? 'Codex' : 'Claude Code');
+  // 실제 상태가 없는 AI 는 설정 목록을 조회 (Claude 는 연결 확인 때문에 몇 초 걸림)
+  const cfg = {};
+  if (provs.some((p) => !liveMcp(t, p))) {
+    menuAt(anchor, [{ header: 'MCP · 커넥터 확인 중…' }]);
+    for (const p of provs.filter((x) => !liveMcp(t, x))) {
+      const r = await window.api.ai.mcpList(p);
+      cfg[p] = r.ok ? r.data.filter((x) => x.name !== 'codeflow') : [];
+    }
+  }
+  const items = [];
+  for (const p of provs) {
+    const live = liveMcp(t, p);
+    const list = live ? live.list : cfg[p] || [];
+    items.push({ header: `${name(p)} — ${live ? `실제 연결 상태 (${live.who.join(', ')})` : '설정 목록 (팀원 AI 가 뜨면 실제 연결 상태로 바뀝니다)'}` });
+    items.push({ label: '● codeflow — CodeFlow 도구 (팀 메시지·터미널 등, 항상 연결)', disabled: true });
+    for (const s of list) {
+      const claudeAi = /^claude\.ai /.test(s.name) || s.source === 'claudeai';
+      items.push({
+        label: `${MCP_ICO[s.status] || '·'} ${s.name.replace(/^claude\.ai /, '')} — ${MCP_WORD[s.status] || s.status}${claudeAi ? ' (claude.ai 커넥터)' : s.source === 'codex' ? ' (~/.codex 설정)' : ''}${s.who?.length && live.who.length > 1 ? ` · ${s.who.join(', ')}` : ''}`,
+        disabled: !(s.status === 'needs-auth' && claudeAi),
+        onClick: () => window.api.openExternal('https://claude.ai/settings/connectors'),
+      });
+    }
+    if (!list.length) items.push({ label: '연결된 MCP · 커넥터가 없습니다', disabled: true });
+    if (list.some((s) => s.status === 'needs-auth' && (/^claude\.ai /.test(s.name) || s.source === 'claudeai'))) items.push({ header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' });
+    items.push('-');
+  }
+  items.push({ label: '⚙ AI 연결 · 설정 열기 (로그인, MCP 다시 확인)', onClick: () => openAiSetup(t.provider) });
+  menuAt(anchor, items);
+}
+
 // 이 프로젝트의 팀 불러오기: 열려 있는 팀 → 없으면 가장 최근에 저장된 팀
 let loading = null;
 async function ensureTeam() {
@@ -386,6 +442,8 @@ function drawHead() {
   nw.onclick = () => newTeam();
   const setup = h('button', { class: 'tb-btn small', text: '⚙', title: 'AI 연결 · 설정 (설치·로그인, 업데이트, MCP·커넥터, 로그아웃)' });
   setup.onclick = () => openAiSetup(t.provider);
+  const mcpBtn = h('button', { class: `tb-btn small team-mcp ${mcpIssue(t) ? 'has-issue' : ''}`, text: 'MCP', title: '연결된 MCP · 커넥터 (팀원 AI 의 실제 연결 상태)' });
+  mcpBtn.onclick = () => openMcp(t, mcpBtn);
   // (DOM 의 append 는 null 을 "null" 글자로 넣으므로 빈 칸은 걸러 낸다)
   head.append(
     ...[
@@ -393,6 +451,7 @@ function drawHead() {
       t.scope?.kind === 'group' ? h('span', { class: 'team-scope', text: `프로젝트 ${t.scope.projects.length}개`, title: t.scope.projects.join('\n') }) : null,
       h('span', { class: 'team-head-sub', text: `${t.title ? `${t.title} · ` : ''}팀원 ${t.members.length}명`, title: t.title || '' }),
       h('span', { class: 'ai-meters team-meters' }, ...rateMeters(t)),
+      mcpBtn,
       hist,
       nw,
       setup,

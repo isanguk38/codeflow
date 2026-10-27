@@ -173,7 +173,7 @@ ${rosterText(team)}`;
 
 // ---------- 팀 / 팀원 ----------
 function publicMember(m) {
-  return { id: m.id, name: m.name, role: m.role, color: m.color, pm: !!m.pm, status: m.status, activity: m.activity || '', provider: m.provider, model: m.model || null, ctx: m.ctx || null, resumable: !!m.sessionId };
+  return { id: m.id, name: m.name, role: m.role, color: m.color, pm: !!m.pm, status: m.status, activity: m.activity || '', provider: m.provider, model: m.model || null, ctx: m.ctx || null, resumable: !!m.sessionId, mcp: m.mcp || null };
 }
 function publicTeam(t) {
   return {
@@ -474,6 +474,11 @@ function onAgentEvent(team, m, ev) {
       const lab = (w) => (!w.mins ? '사용량' : w.mins <= 300 ? `${Math.round(w.mins / 60)}시간` : w.mins <= 10080 ? '주간' : w.mins <= 44640 ? '월간' : '사용량');
       return setRate(team, 'codex', [ev.windows?.primary, ev.windows?.secondary].filter(Boolean).map((w) => ({ label: lab(w), ...w })));
     }
+    // 이 팀원 AI 의 MCP·커넥터 실제 연결 상태 (Codex)
+    if (ev.kind === 'mcp') {
+      m.mcp = (ev.servers || []).map((x) => ({ name: x.name, status: x.status, error: x.error || null }));
+      return emit(team, { type: 'member', member: publicMember(m) });
+    }
     if (ev.kind === 'ctx' || (ev.kind === 'usage' && ev.used)) {
       m.ctx = { used: ev.used, window: ev.window || m.ctx?.window || 200000 };
       return emit(team, { type: 'member', member: publicMember(m) });
@@ -503,6 +508,11 @@ function onAgentEvent(team, m, ev) {
   if (ev.type === 'system' && ev.subtype === 'init' && ev.session_id) {
     m.sessionId = ev.session_id;
     m.sessionProvider = 'claude';
+    // 이 팀원 AI 의 MCP·커넥터 실제 연결 상태 (Claude Code)
+    if (Array.isArray(ev.mcp_servers)) {
+      m.mcp = ev.mcp_servers.map((x) => ({ name: x.name, status: x.status }));
+      emit(team, { type: 'member', member: publicMember(m) });
+    }
     return scheduleSave(team);
   }
   if (ev.type === 'rate_limit_event') {
