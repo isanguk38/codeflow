@@ -387,6 +387,7 @@ function pump(team, m) {
   }
   if (m.status !== 'idle') return;
   const batch = m.queue.splice(0);
+  m.lastBatch = batch;
   m.turnFrom = batch.map((b) => ({ from: b.from, kind: b.kind }));
   m.turnText = '';
   m.lastText = '';
@@ -424,6 +425,8 @@ function finishTurn(team, m, { error } = {}) {
   m.lastText = '';
   const requesters = [...new Set(m.turnFrom.filter((f) => f.kind === 'request' && f.from !== 'user' && f.from !== m.id).map((f) => f.from))];
   m.turnFrom = [];
+  m.lastBatch = null;
+  if (!error) m.mcpRetry = 0;
   if (text) {
     const to = requesters.length ? requesters : m.pm ? ['user'] : [];
     post(team, { from: m.id, to, text });
@@ -549,6 +552,19 @@ function onAgentEvent(team, m, ev) {
       m.pendingHandoff = handoffText(team, m);
       post(team, { from: 'system', text: `${m.name} 의 이전 대화를 찾지 못해 새로 시작합니다. 대화방의 최근 기록을 넘겨 줍니다.` });
       launch(team, m).catch(() => {});
+      return;
+    }
+    // CodeFlow 도구(MCP) 연결이 끝나기 전에 도구를 쓰려다 종료됨 → 이전 대화에 이어 다시 띄우고 하던 일을 다시 전달 (최대 2번)
+    if (m.status !== 'removed' && /permission-prompt-tool\) not found|mcp__codeflow__approve/.test(String(ev.stderr || '')) && (m.mcpRetry || 0) < 2) {
+      m.mcpRetry = (m.mcpRetry || 0) + 1;
+      if (m.lastBatch) m.queue.unshift(...m.lastBatch);
+      m.lastBatch = null;
+      m.turnText = '';
+      m.lastText = '';
+      m.turnFrom = [];
+      post(team, { from: 'system', text: `${m.name}: CodeFlow 도구 연결이 늦어 다시 시작합니다 (하던 일은 다시 전달합니다)` });
+      setStatus(team, m, 'starting', '다시 시작하는 중');
+      launch(team, m, { resume: true }).catch(() => {});
       return;
     }
     if (m.status !== 'removed') setStatus(team, m, 'stopped', '');

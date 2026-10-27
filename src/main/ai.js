@@ -242,6 +242,9 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
   chats.set(id, { proc, repo, sessionKey, cfgFile, refreshUsage });
   let buf = '';
   let errText = '';
+  let readyModels = null;
+  let readySent = false;
+  let mcpTries = 0;
   proc.stdout.on('data', (d) => {
     buf += d;
     let i;
@@ -256,10 +259,26 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
         send('ai:event', id, { type: 'raw', text: line });
         continue;
       }
-      // 미리 깨우기: initialize 응답이 오면 준비 완료 (질문하면 바로 답할 수 있는 상태)
+      // 미리 깨우기: initialize 응답이 온 뒤, CodeFlow 도구 서버(codeflow MCP)가 연결될 때까지 기다렸다가 준비 완료
+      // (연결 중에 일을 시작하면 승인 도구 mcp__codeflow__approve 가 없어 Claude Code 가 종료된다)
       if (j.type === 'control_response' && j.response?.request_id === 'cf-ready') {
-        send('ai:event', id, { type: 'cf', kind: 'ready', models: j.response?.response?.models || null });
-        chats.get(id)?.refreshUsage(); // 준비되면 바로 사용량·컨텍스트를 알려 준다
+        readyModels = j.response?.response?.models || null;
+        ctrl('mcp_status');
+        continue;
+      }
+      if (j.type === 'control_response' && /^cf-mcp_status-/.test(j.response?.request_id || '')) {
+        const list = (j.response?.subtype === 'success' && j.response?.response?.mcpServers) || null;
+        const cf = list?.find((s) => s.name === 'codeflow');
+        mcpTries++;
+        if (list) send('ai:event', id, { type: 'cf', kind: 'mcp', servers: list.map((s) => ({ name: s.name, status: s.status })) });
+        // 지원하지 않는 버전(목록 없음), codeflow 연결/실패 판정, 또는 20초가 지나면 준비 완료
+        if (!readySent && (!list || !cf || cf.status !== 'pending' || mcpTries >= 50)) {
+          readySent = true;
+          send('ai:event', id, { type: 'cf', kind: 'ready', models: readyModels });
+          chats.get(id)?.refreshUsage(); // 준비되면 바로 사용량·컨텍스트를 알려 준다
+        }
+        // 다른 MCP·커넥터도 연결이 끝날 때까지 상태를 갱신 (최대 30초)
+        if (list && list.some((s) => s.status === 'pending') && mcpTries < 75) setTimeout(() => chats.has(id) && ctrl('mcp_status'), readySent ? 1500 : 400);
         continue;
       }
       if (j.type === 'control_response' && /^cf-get_usage-/.test(j.response?.request_id || '')) {
