@@ -555,7 +555,8 @@ function onAgentEvent(team, m, ev) {
       return;
     }
     // CodeFlow 도구(MCP) 연결이 끝나기 전에 도구를 쓰려다 종료됨 → 이전 대화에 이어 다시 띄우고 하던 일을 다시 전달 (최대 2번)
-    if (m.status !== 'removed' && /permission-prompt-tool\) not found|mcp__codeflow__approve/.test(String(ev.stderr || '')) && (m.mcpRetry || 0) < 2) {
+    const mcpMissing = /permission-prompt-tool\) not found|mcp__codeflow__approve|Available MCP tools:/.test(String(ev.stderr || ''));
+    if (m.status !== 'removed' && mcpMissing && (m.mcpRetry || 0) < 2) {
       m.mcpRetry = (m.mcpRetry || 0) + 1;
       if (m.lastBatch) m.queue.unshift(...m.lastBatch);
       m.lastBatch = null;
@@ -568,7 +569,11 @@ function onAgentEvent(team, m, ev) {
       return;
     }
     if (m.status !== 'removed') setStatus(team, m, 'stopped', '');
-    if (m.status !== 'removed' && ev.code) post(team, { from: 'system', text: `${m.name} 의 AI 가 종료되었습니다${ev.stderr ? `: ${String(ev.stderr).slice(0, 300)}` : ''}` });
+    if (m.status !== 'removed' && ev.code) {
+      // 원문에 붙는 긴 도구 목록은 빼고 보여 준다
+      const why = mcpMissing ? 'CodeFlow 도구(MCP) 연결이 끊겨 다시 시작해도 연결되지 않았습니다' : String(ev.stderr || '').replace(/Available MCP tools:[\s\S]*/, '').trim().slice(0, 300);
+      post(team, { from: 'system', text: `${m.name} 의 AI 가 종료되었습니다${why ? `: ${why}` : ''}. 메시지를 보내면 다시 시작합니다.` });
+    }
     return;
   }
   // Claude 의 준비 완료(initialize 응답)는 ai.js 가 { type: 'cf', kind: 'ready' } 로 보내므로 위 cf 분기에서 처리된다

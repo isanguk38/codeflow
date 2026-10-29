@@ -297,7 +297,15 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
       send('ai:event', id, j);
     }
   });
-  proc.stderr.on('data', (d) => (errText = (errText + d).slice(-4000)));
+  // 오류 원문: 앞부분(무슨 오류인지)과 끝부분을 함께 남긴다. 'MCP 도구 없음' 오류는 뒤에 도구 목록이 길게 붙어 끝만 남기면 원인이 잘린다
+  let errHead = '';
+  let errLen = 0;
+  proc.stderr.on('data', (d) => {
+    d = String(d);
+    errLen += d.length;
+    if (errHead.length < 1500) errHead = (errHead + d).slice(0, 1500);
+    errText = (errText + d).slice(-2500);
+  });
   proc.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'cf-ready', request: { subtype: 'initialize' } })}\n`);
   proc.on('error', (e) => send('ai:event', id, { type: 'exit', code: -1, stderr: e.message }));
   proc.on('exit', (code) => {
@@ -308,7 +316,8 @@ async function startChat({ provider = 'claude', repo, resume, model, addDirs = [
       if (extraPrompt) fs.rm(promptFile, { force: true }, () => {});
     }
     chats.delete(id);
-    send('ai:event', id, { type: 'exit', code, stderr: stripAnsi(errText) });
+    const whole = errLen <= 2500 ? errText : `${errHead}…${errText.slice(-Math.min(2500, errLen - 1500))}`;
+    send('ai:event', id, { type: 'exit', code, stderr: stripAnsi(whole) });
   });
   return { id };
 }

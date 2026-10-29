@@ -243,15 +243,25 @@ async function handle(req, res) {
   }
 }
 
-async function ensureServer() {
-  if (server) return port;
-  server = http.createServer((req, res) => handle(req, res).catch(() => res.writeHead(500).end()));
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve); // 내 PC 에서만 접속 가능
+// 여러 대화가 동시에 시작해도(팀원 여러 명을 한꺼번에 깨울 때) 모두 서버가 다 켜진 뒤의 포트를 받도록 켜는 중인 약속을 같이 기다린다
+// (예전에는 켜는 도중에 부른 쪽이 포트 0 을 받아 CodeFlow 도구 없이 시작됐다)
+let starting = null;
+function ensureServer() {
+  if (starting) return starting;
+  starting = new Promise((resolve, reject) => {
+    const s = http.createServer((req, res) => handle(req, res).catch(() => res.writeHead(500).end()));
+    s.once('error', (e) => {
+      starting = null;
+      reject(e);
+    });
+    s.listen(0, '127.0.0.1', () => {
+      // 내 PC 에서만 접속 가능
+      server = s;
+      port = s.address().port;
+      resolve(port);
+    });
   });
-  port = server.address().port;
-  return port;
+  return starting;
 }
 
 // Claude Code 의 --mcp-config 에 넘길 설정
@@ -263,6 +273,7 @@ async function mcpConfig(sessionKey) {
 function stopServer() {
   server?.close();
   server = null;
+  starting = null;
 }
 
 module.exports = { approve, mcpConfig, registerSession, unregisterSession, setRendererBridge, setTeamHandler, stopServer, TOOLS };
