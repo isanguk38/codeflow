@@ -23,7 +23,7 @@ const baseName = (p) => p.split(/[\\/]/).pop();
 const view = () => {
   let v = repoViews.get(state.repo);
   if (!v) {
-    v = { tabs: [], active: null, expanded: new Set() };
+    v = { tabs: [], active: null, expanded: new Set(), back: [], fwd: [] };
     repoViews.set(state.repo, v);
   }
   return v;
@@ -52,7 +52,7 @@ export function initCode() {
       <div class="code-notice" id="codeNotice" hidden></div>
       <div class="code-editor-wrap">
         <div class="code-editor" id="codeEditor"></div>
-        <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+Shift+F 프로젝트 전체 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Shift+Alt+F 서식 정리</small></div></div>
+        <div class="code-empty" id="codeEmpty"><div><b>파일을 선택하세요</b><br><small>왼쪽 탐색기에서 파일을 열면 VS Code 와 같은 편집기로 수정할 수 있습니다.<br>Ctrl+S 저장 · Ctrl+F 찾기 · Ctrl+Shift+F 프로젝트 전체 찾기 · Ctrl+H 바꾸기 · F12 정의로 이동 · Ctrl+Alt+←/→ 이전/다음 위치 · Shift+Alt+F 서식 정리</small></div></div>
       </div>
       <div class="splitter-y" id="termSplit" hidden></div>
       <div class="term-panel" id="termPanel" hidden></div>
@@ -164,7 +164,13 @@ function setupEditor() {
     const d = activeDoc();
     if (d) saveDoc(d);
   });
-  editor.onDidChangeCursorPosition(updateStatus);
+  editor.onDidChangeCursorPosition((e) => {
+    updateStatus();
+    navOnCursor(e);
+  });
+  // 탐색 기록: 이전 위치로 / 다음 위치로 (IntelliJ 와 같은 키)
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow, () => navGo(-1));
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => navGo(1));
   monaco.editor.onDidChangeMarkers(() => {
     updateStatus();
     renderTabs();
@@ -184,7 +190,68 @@ function setupEditor() {
       const d = activeDoc();
       if (d) saveDoc(d);
     }
+    // 편집기 밖(탐색기 등)에 포커스가 있을 때도 뒤로/앞으로
+    if (e.ctrlKey && e.altKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !editor.hasTextFocus() && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) {
+      e.preventDefault();
+      navGo(e.key === 'ArrowLeft' ? -1 : 1);
+    }
   });
+  // 마우스 뒤로/앞으로 버튼
+  root.addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    navGo(e.button === 3 ? -1 : 1);
+  });
+}
+
+// ---------- 탐색 기록 (Ctrl+Alt+← 이전 위치 / Ctrl+Alt+→ 다음 위치) ----------
+// 다른 파일로 가거나(탭, 탐색기, 정의로 이동, 검색 결과) 한 파일 안에서 멀리 뛸 때 떠나는 위치를 남긴다
+const NAV_JUMP = 10; // 이 줄 수 이상 떨어지면 다른 위치로 본다
+const NAV_MAX = 100;
+let navQuiet = 0; // 뒤로/앞으로 이동 중에는 기록하지 않는다
+let navLast = null; // 마지막으로 본 커서 위치
+
+function curPos() {
+  const d = activeDoc();
+  const p = editor?.getPosition();
+  if (!d || !p || editor.getModel() !== d.model) return null;
+  return { path: d.path, line: p.lineNumber, col: p.column };
+}
+const samePlace = (a, b) => a && b && keyOf(a.path) === keyOf(b.path) && Math.abs(a.line - b.line) < NAV_JUMP;
+
+function navRecord(pos) {
+  if (!pos) return;
+  const v = view();
+  // 바로 앞 기록과 거의 같은 곳이면 새로 쌓지 않고 위치만 바꾼다
+  if (samePlace(v.back.at(-1), pos)) v.back[v.back.length - 1] = pos;
+  else v.back.push(pos);
+  if (v.back.length > NAV_MAX) v.back.shift();
+  v.fwd = [];
+}
+
+function navOnCursor(e) {
+  const pos = curPos();
+  // 같은 파일 안에서 멀리 뜀(같은 파일 안 정의로 이동, 찾기, 줄 이동, 멀리 클릭) → 떠난 위치를 남김. 방향키·PageDown 등 키보드 이동은 제외
+  if (!navQuiet && pos && navLast && keyOf(navLast.path) === keyOf(pos.path) && !samePlace(navLast, pos) && e.source !== 'keyboard') navRecord(navLast);
+  navLast = pos;
+}
+
+async function navGo(dir) {
+  const v = view();
+  const from = dir < 0 ? v.back : v.fwd;
+  const to = dir < 0 ? v.fwd : v.back;
+  const cur = curPos();
+  let target = from.pop();
+  while (target && cur && keyOf(target.path) === keyOf(cur.path) && target.line === cur.line) target = from.pop();
+  if (!target) return;
+  if (cur) to.push(cur);
+  navQuiet++;
+  try {
+    await openFile(target.path, { lineNumber: target.line, column: target.col });
+  } finally {
+    navQuiet--;
+  }
+  navLast = curPos();
 }
 
 // ---------- 저장소(탭) 전환 ----------
@@ -416,19 +483,29 @@ export async function openFile(path, selection, opts = {}) {
   if (!doc) return;
   const v = view();
   if (!v.tabs.some((p) => keyOf(p) === keyOf(path))) v.tabs.push(doc.path);
-  activate(doc.path);
-  showLanguageNotice(doc);
-  if (selection) {
-    const range = selection.startLineNumber ? selection : { startLineNumber: selection.lineNumber, startColumn: selection.column, endLineNumber: selection.lineNumber, endColumn: selection.column };
-    editor.setSelection(range);
-    editor.revealRangeInCenterIfOutsideViewport(range);
+  const before = navQuiet ? null : curPos();
+  navQuiet++;
+  try {
+    activate(doc.path);
+    showLanguageNotice(doc);
+    if (selection) {
+      const range = selection.startLineNumber ? selection : { startLineNumber: selection.lineNumber, startColumn: selection.column, endLineNumber: selection.lineNumber, endColumn: selection.column };
+      editor.setSelection(range);
+      editor.revealRangeInCenterIfOutsideViewport(range);
+    }
+  } finally {
+    navQuiet--;
   }
+  if (before && !samePlace(before, curPos())) navRecord(before);
+  navLast = curPos();
   editor.focus();
 }
 
 function activate(path) {
   const v = view();
   const prev = docs.get(keyOf(v.active || ''));
+  // 탭을 눌러 다른 파일로 갈 때: 떠나는 위치를 기록 (openFile·뒤로/앞으로에서 부를 때는 그쪽에서 처리)
+  if (!navQuiet && prev && prev.model === editor.getModel() && keyOf(prev.path) !== keyOf(path)) navRecord(curPos());
   if (prev && prev.model === editor.getModel()) prev.viewState = editor.saveViewState();
   const doc = docs.get(keyOf(path));
   if (!doc) return showEmpty();
