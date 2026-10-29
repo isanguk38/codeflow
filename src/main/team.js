@@ -363,8 +363,14 @@ const nameOf = (team, id) => (id === 'user' ? '사용자' : id === 'system' ? '�
 
 // ---------- 메시지 전달 ----------
 // kind: 'request' (일을 맡김 → 끝나면 결과를 자동으로 돌려줌) / 'reply' (자동으로 돌아온 결과 → 다시 돌려주지 않음)
-function deliver(team, m, { from, text, kind, attachments = [] }) {
+function deliver(team, m, { from, text, kind, attachments = [], urgent = false, note = '' }) {
   if (m.status === 'removed') return;
+  // 즉시 보내기: 대기열 맨 앞(먼저 온 즉시 메시지 뒤)에 끼운다
+  if (urgent) {
+    const at = m.queue.findIndex((q) => !q.urgent);
+    m.queue.splice(at < 0 ? m.queue.length : at, 0, { from, text, kind, attachments, urgent, note });
+    return pump(team, m);
+  }
   if (from !== 'user') {
     team.hops++;
     if (team.hops > MAX_HOPS && !team.paused) {
@@ -388,13 +394,15 @@ function pump(team, m) {
   if (m.status !== 'idle') return;
   const batch = m.queue.splice(0);
   m.lastBatch = batch;
-  m.turnFrom = batch.map((b) => ({ from: b.from, kind: b.kind }));
+  // 즉시 보내기로 끊긴 일을 맡겼던 팀원에게는 이번 답이 끝나면 결과를 돌려준다
+  m.turnFrom = [...(m.carryFrom || []).map((from) => ({ from, kind: 'request' })), ...batch.map((b) => ({ from: b.from, kind: b.kind }))];
+  m.carryFrom = null;
   m.turnText = '';
   m.lastText = '';
   const body = batch
     .map((b) =>
       b.from === 'user'
-        ? `[사용자 → 나] ${b.text}`
+        ? `[사용자 → 나${b.urgent ? ' · 즉시' : ''}] ${b.text}${b.note ? `\n\n(${b.note})` : ''}`
         : `[팀 메시지${b.kind === 'reply' ? ' · 결과 보고' : ''}] ${nameOf(team, b.from)}(${team.members.find((x) => x.id === b.from)?.role || ''}) → 나: ${b.text}`
     )
     .join('\n\n');
@@ -420,14 +428,21 @@ function pump(team, m) {
 
 // 한 번의 답이 끝났을 때: 대화방에 보이고, 요청한 팀원에게 결과를 돌려준다
 function finishTurn(team, m, { error } = {}) {
-  const text = (m.lastText.trim() || m.turnText.trim()).trim();
+  const cut = m.cut; // 즉시 보내기로 끊긴 답: 'keep' (받는 팀원 — 나중에 이어서) / 'drop' (PM 에게 즉시 보내 멈춘 다른 팀원)
+  m.cut = null;
+  const text = (cut ? m.turnText.trim() : m.lastText.trim() || m.turnText.trim()).trim();
   m.turnText = '';
   m.lastText = '';
   const requesters = [...new Set(m.turnFrom.filter((f) => f.kind === 'request' && f.from !== 'user' && f.from !== m.id).map((f) => f.from))];
   m.turnFrom = [];
   m.lastBatch = null;
   if (!error) m.mcpRetry = 0;
-  if (text) {
+  if (cut) {
+    // 끊긴 중간 글은 대화방에만 남기고, 맡긴 팀원에게는 돌려주지 않는다
+    if (cut === 'keep' && requesters.length) m.carryFrom = requesters;
+    if (text) post(team, { from: m.id, to: [], text: `${text}\n\n— 즉시 보내기로 중단됨`, kind: 'cut' });
+  }
+  if (text && !cut) {
     const to = requesters.length ? requesters : m.pm ? ['user'] : [];
     post(team, { from: m.id, to, text });
     for (const rid of requesters) {
@@ -435,7 +450,7 @@ function finishTurn(team, m, { error } = {}) {
       if (r) deliver(team, r, { from: m.id, text, kind: 'reply' });
     }
   }
-  if (error) post(team, { from: 'system', text: `${m.name}: ${error}` });
+  if (error && !cut) post(team, { from: 'system', text: `${m.name}: ${error}` });
   if (m.status !== 'stopped' && m.status !== 'removed') setStatus(team, m, 'idle', '');
   if (m.needsRelaunch) {
     m.needsRelaunch = false;
@@ -648,7 +663,32 @@ tools.setTeamHandler(async ({ teamId, memberId }, name, args) => {
 });
 
 // ---------- 사용자 동작 ----------
-function userSend(teamId, { to = [], text, attachments = [] }) {
+// 즉시 보내기: 받는 팀원이 하던 답을 끊는다. PM 에게 보내면 다른 팀원의 일도 모두 멈추고 대기열을 비운다
+function cutForUser(team, targets) {
+  const toPm = targets.some((m) => m.pm);
+  const busy = new Set();
+  const stopped = [];
+  for (const m of team.members) {
+    if (m.status === 'removed') continue;
+    const mine = targets.includes(m);
+    if (!mine && !toPm) continue;
+    if (!mine) {
+      const had = m.queue.some((q) => q.from !== 'user');
+      m.queue = m.queue.filter((q) => q.from === 'user');
+      if (had && m.status !== 'busy') stopped.push(`${m.name}(맡은 일 대기 중)`);
+    }
+    if (m.status !== 'busy') continue;
+    m.cut = mine ? 'keep' : 'drop';
+    busy.add(m);
+    if (!mine) stopped.push(`${m.name}(${m.activity || '작업 중'})`);
+    try {
+      ai.interruptChat(m.chatId);
+    } catch {}
+  }
+  return { busy, stopped };
+}
+
+function userSend(teamId, { to = [], text, attachments = [], urgent = false }) {
   const team = teams.get(teamId);
   if (!team) throw new Error('팀이 없습니다.');
   text = String(text || '').trim();
@@ -660,8 +700,19 @@ function userSend(teamId, { to = [], text, attachments = [] }) {
     emit(team, { type: 'team', team: publicTeam(team) });
   }
   const targets = (to.length ? to.map((id) => team.members.find((m) => m.id === id)) : [team.members.find((m) => m.pm)]).filter((m) => m && m.status !== 'removed');
-  post(team, { from: 'user', to: targets.map((m) => m.id), text, attachments: attachments.map((a) => ({ name: a.name, kind: a.kind, path: a.path })) });
-  for (const m of targets) deliver(team, m, { from: 'user', text, kind: 'request', attachments });
+  post(team, { from: 'user', to: targets.map((m) => m.id), text, urgent: urgent || undefined, attachments: attachments.map((a) => ({ name: a.name, kind: a.kind, path: a.path })) });
+  if (urgent) {
+    const { busy, stopped } = cutForUser(team, targets);
+    const cutNames = [...busy].filter((m) => targets.includes(m)).map((m) => m.name);
+    if (cutNames.length || stopped.length) post(team, { from: 'system', text: `즉시 보내기: ${[...cutNames, ...stopped.map((s) => s.replace(/\(.*$/, ''))].join(', ')} 의 작업을 멈췄습니다.` });
+    for (const m of targets) {
+      const note = [
+        busy.has(m) ? '하던 일은 사용자가 즉시 보내기로 중단시켰습니다. 이 메시지를 먼저 처리하고, 사용자가 다르게 말하지 않았다면 그다음 중단된 일을 이어서 마무리하세요.' : '',
+        m.pm && stopped.length ? `사용자가 다른 팀원의 작업도 모두 멈췄습니다: ${stopped.join(', ')}. 그 팀원들이 하던 일의 결과는 돌아오지 않습니다. 이 메시지에 맞게 필요한 일만 다시 맡기세요.` : '',
+      ].filter(Boolean).join(' ');
+      deliver(team, m, { from: 'user', text, kind: 'request', attachments, urgent: true, note });
+    }
+  } else for (const m of targets) deliver(team, m, { from: 'user', text, kind: 'request', attachments });
   // 멈춰 있던 대기열도 다시 흘려보낸다
   for (const m of team.members) pump(team, m);
 }

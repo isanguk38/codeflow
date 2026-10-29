@@ -515,7 +515,7 @@ function appendMessage(t, msg, scroll, into) {
       'div',
       { class: 'team-msg user' },
       h('div', { class: 'team-msg-body' },
-        h('div', { class: 'team-msg-head' }, h('b', { text: '나' }), toNames.length ? h('span', { class: 'team-to', text: `→ ${toNames.join(', ')}` }) : null),
+        h('div', { class: 'team-msg-head' }, h('b', { text: '나' }), toNames.length ? h('span', { class: 'team-to', text: `→ ${toNames.join(', ')}` }) : null, msg.urgent ? h('span', { class: 'team-urgent', text: '⚡ 즉시' }) : null),
         msg.attachments?.length ? h('div', { class: 'team-att-sent' }, ...msg.attachments.map((a) => h('span', { class: 'team-att-name', text: `${a.kind === 'image' ? '🖼' : a.kind === 'pdf' ? '📕' : '📄'} ${a.name}`, title: a.path || a.name }))) : null,
         h('div', { class: 'team-msg-text', text: msg.text })
       )
@@ -551,7 +551,8 @@ function appendMessage(t, msg, scroll, into) {
 // ---------- 입력 ----------
 function inputBox(t) {
   const ta = h('textarea', { rows: '2', placeholder: 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)', spellcheck: 'false' });
-  const send = h('button', { class: 'btn primary', text: '보내기' });
+  const send = h('button', { class: 'btn primary', text: '보내기', title: '하던 일이 끝난 다음 받습니다 (Enter)' });
+  const now = h('button', { class: 'btn team-now', text: '⚡ 즉시', title: '' });
   const chips = h('div', { class: 'ai-attach team-attach' });
   const drawChips = () => {
     chips.innerHTML = '';
@@ -580,7 +581,7 @@ function inputBox(t) {
       add(p ? await attachmentFromPath(p) : await attachmentFromBlob(f, attach.length + 1));
     }
   });
-  const go = async () => {
+  const go = async (urgent = false) => {
     let text = ta.value.trim();
     if (!text && !attach.length) return;
     const cur = curTeam();
@@ -599,21 +600,22 @@ function inputBox(t) {
     ta.value = '';
     const files = attach.splice(0);
     drawChips();
-    const r = await window.api.team.send(cur.id, { to, text, attachments: files });
+    const r = await window.api.team.send(cur.id, { to, text, attachments: files, urgent });
     if (!r.ok) toast(r.error, 'error', 6000);
   };
-  send.onclick = go;
+  send.onclick = () => go();
+  now.onclick = () => go(true);
   ta.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      go();
+      go(e.ctrlKey || e.metaKey);
     } else if (e.key === 'Escape' && target) {
       target = null;
       drawSide();
     }
   };
   drawChips();
-  const box = h('div', { class: 'team-input' }, h('div', { class: 'team-target' }), chips, h('div', { class: 'team-input-row' }, clip, ta, send));
+  const box = h('div', { class: 'team-input' }, h('div', { class: 'team-target' }), chips, h('div', { class: 'team-input-row' }, clip, ta, now, send));
   // 입력 칸 어디에든 끌어다 놓기
   box.ondragover = (e) => {
     e.preventDefault();
@@ -650,7 +652,9 @@ function drawTarget() {
     box.append(x);
   }
   const ta = root.querySelector('.team-input textarea');
-  if (ta) ta.placeholder = target ? `${m.name} (${m.role}) 에게만 말합니다 · Esc: PM 에게로` : 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)';
+  if (ta) ta.placeholder = target ? `${m.name} (${m.role}) 에게만 말합니다 · Ctrl+Enter 즉시 보내기 · Esc: PM 에게로` : 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Ctrl+Enter 즉시 보내기, Shift+Enter 줄바꿈)';
+  const now = root.querySelector('.team-now');
+  if (now) now.title = m.pm ? `즉시 보내기 (Ctrl+Enter)\n모든 팀원의 작업을 멈추고 PM 이 이 메시지를 먼저 처리합니다.` : `즉시 보내기 (Ctrl+Enter)\n${m.name} 이(가) 하던 일을 멈추고 이 메시지를 먼저 처리한 뒤, 하던 일을 이어서 합니다.`;
 }
 
 function ctxBar(m) {
