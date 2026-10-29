@@ -11,8 +11,10 @@ function splitLines(text) {
 }
 
 // jsdiff 결과를 화면용 행으로 변환
+// 줄 끝(CRLF/LF)은 git 처럼 같은 것으로 본다: autocrlf 로 작업 파일만 CRLF 이면 모든 줄이 바뀐 것처럼 보이므로
+const normEol = (t) => t.replace(/\r\n?/g, '\n');
 function buildRows(leftText, rightText) {
-  const chunks = window.Diff.diffLines(leftText, rightText);
+  const chunks = window.Diff.diffLines(normEol(leftText), normEol(rightText));
   const rows = [];
   let ln = 1;
   let rn = 1;
@@ -156,7 +158,7 @@ export function renderDiff(container, pair, { title, actions = [] } = {}) {
   stats.innerHTML = `<span class="plus">+${add}</span> <span class="minus">-${del}</span>`;
 
   if (!add && !del) {
-    scroller.append(h('div', { class: 'empty', text: L.text === R.text ? '내용 변경 없음 (권한/줄바꿈 등 속성만 변경되었을 수 있습니다)' : '차이 없음' }));
+    scroller.append(h('div', { class: 'empty', text: L.text === R.text ? '내용 변경 없음 (권한/줄바꿈 등 속성만 변경되었을 수 있습니다)' : '내용 변경 없음 (줄 끝 문자 CRLF/LF 만 다릅니다)' }));
   }
 
   const table = h('table', { class: `diff-table ${mode}` });
