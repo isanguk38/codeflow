@@ -9,6 +9,7 @@ for (const name of require('./main/channels')) {
 contextBridge.exposeInMainWorld('api', {
   git,
   openRepo: (dir) => ipcRenderer.invoke('repo:open', dir),
+  trustRepo: (dir) => ipcRenderer.invoke('repo:trust', dir),
   initRepo: (dir) => ipcRenderer.invoke('repo:init', dir),
   cloneRepo: (url, dir) => ipcRenderer.invoke('repo:clone', url, dir),
   getSettings: () => ipcRenderer.invoke('settings:get'),

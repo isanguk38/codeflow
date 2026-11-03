@@ -91,10 +91,23 @@ ipcMain.handle('git:rollback', async (_e, repo, files) => {
 
 ipcMain.handle('repo:open', async (_e, dir) => {
   try {
-    const top = await git.topLevel(dir);
+    // git 이 응답하지 않아도(네트워크 드라이브 등) 화면이 그대로 멈춰 있지 않게
+    const top = await Promise.race([
+      git.topLevel(dir),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`30초 동안 Git 의 응답이 없습니다: ${dir}`)), 30000)),
+    ]);
     if (!top) return { ok: false, error: '선택한 폴더는 Git 저장소가 아닙니다.', notRepo: true };
     addRecent(top);
     return { ok: true, data: top };
+  } catch (err) {
+    return { ok: false, error: err.message, dubious: /dubious ownership/i.test(err.stderr || '') };
+  }
+});
+
+ipcMain.handle('repo:trust', async (_e, dir) => {
+  try {
+    await git.trustDir(dir);
+    return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
   }

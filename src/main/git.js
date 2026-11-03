@@ -1,6 +1,6 @@
 // Git CLI 래퍼. 모든 Git 작업은 사용자 PC에 설치된 git 실행 파일을 호출해서 처리한다.
 // 인증(GitHub 로그인 등)은 git 의 credential helper(Git Credential Manager)가 담당한다.
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -70,7 +70,7 @@ function runGit(cwd, args, { allowFail = false, input, raw = false, env: extraEn
     child.on('error', (e) => {
       // 작업 폴더가 없어도 ENOENT 가 난다
       if (e.code === 'ENOENT' && cwd && !fs.existsSync(cwd)) reject(new GitError(`폴더를 찾을 수 없습니다: ${cwd}`));
-      else if (e.code === 'ENOENT') reject(new GitError('git 명령을 찾을 수 없습니다. Git for Windows를 설치하세요.'));
+      else if (e.code === 'ENOENT') reject(new GitError('git 실행 파일(git.exe)을 찾지 못했습니다. PATH 와 흔한 설치 위치에 없습니다.\nGit 이 설치되어 있다면 그 설치 폴더의 cmd 폴더를 PATH 에 추가한 뒤 CodeFlow 를 다시 켜 주세요. 없다면 Git for Windows 를 설치하세요.'));
       else reject(new GitError(e.message));
     });
     child.on('close', (code) => {
@@ -89,10 +89,57 @@ function runGit(cwd, args, { allowFail = false, input, raw = false, env: extraEn
   });
 }
 
+// Git for Windows 설치 프로그램이 레지스트리에 남긴 설치 위치 (다른 드라이브에 설치한 경우)
+function gitFromRegistry() {
+  const reg = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe');
+  for (const key of ['HKLM\\SOFTWARE\\GitForWindows', 'HKCU\\SOFTWARE\\GitForWindows', 'HKLM\\SOFTWARE\\WOW6432Node\\GitForWindows']) {
+    try {
+      const m = execFileSync(reg, ['query', key, '/v', 'InstallPath'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).match(/InstallPath\s+REG_SZ\s+(.+?)\s*$/m);
+      if (m) return path.join(m[1], 'cmd');
+    } catch {}
+  }
+  return null;
+}
+
+// Git 이 PATH 에 없어도(설치 때 'Git Bash 에서만 사용' 을 골랐거나, 앱을 켠 뒤 설치) 설치 위치를 찾아 쓴다
+function ensureGitPath() {
+  if (process.platform !== 'win32') return;
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  // spawn 은 .exe 만 실행한다 (git.cmd 는 있어도 못 씀)
+  if (dirs.some((d) => fs.existsSync(path.join(d, 'git.exe')))) return;
+  const e = process.env;
+  const has = (d) => d && fs.existsSync(path.join(d, 'git.exe'));
+  const found =
+    [
+      e.ProgramW6432 && path.join(e.ProgramW6432, 'Git', 'cmd'),
+      e.ProgramFiles && path.join(e.ProgramFiles, 'Git', 'cmd'),
+      e['ProgramFiles(x86)'] && path.join(e['ProgramFiles(x86)'], 'Git', 'cmd'),
+      e.LOCALAPPDATA && path.join(e.LOCALAPPDATA, 'Programs', 'Git', 'cmd'),
+      e.USERPROFILE && path.join(e.USERPROFILE, 'scoop', 'apps', 'git', 'current', 'cmd'),
+    ].find(has) ||
+    [gitFromRegistry()].find(has) ||
+    ['C', 'D', 'E'].flatMap((x) => [`${x}:\\Program Files\\Git\\cmd`, `${x}:\\Git\\cmd`]).find(has);
+  if (found) process.env.PATH = [found, ...dirs].join(path.delimiter);
+}
+ensureGitPath();
+
+// 저장소의 최상위 폴더. 저장소가 아니면 null, 그 밖의 이유로 못 열면 까닭을 알려 준다
 async function topLevel(dir) {
+  ensureGitPath();
   const r = await run(dir, ['rev-parse', '--show-toplevel'], { allowFail: true });
-  if (r.code !== 0) return null;
-  return path.normalize(r.stdout.trim());
+  if (r.code === 0) return path.normalize(r.stdout.trim());
+  if (/not a git repository/i.test(r.stderr)) return null;
+  if (/dubious ownership/i.test(r.stderr)) throw new GitError('이 폴더의 소유자가 현재 Windows 사용자와 달라 Git 이 열기를 막았습니다.', { stderr: r.stderr, code: r.code });
+  if (/must be run in a work tree/i.test(r.stderr)) throw new GitError('작업 폴더가 없는 저장소입니다 (bare 저장소이거나 .git 폴더 안을 고른 경우). 프로젝트 폴더를 골라 주세요.', { stderr: r.stderr, code: r.code });
+  throw new GitError(r.stderr.trim() || `git rev-parse 실패 (code ${r.code})`, { stderr: r.stderr, code: r.code });
+}
+
+// 소유자가 다른 폴더를 신뢰 목록에 넣는다 (Git 이 알려 주는 경로 그대로)
+async function trustDir(dir) {
+  const r = await run(dir, ['rev-parse', '--show-toplevel'], { allowFail: true });
+  const m = r.stderr.match(/safe\.directory\s+'?([^'\r\n]+?)'?\s*$/m);
+  if (!m) throw new GitError(r.stderr.trim() || '이 폴더는 신뢰 목록에 넣을 수 없습니다.');
+  await run(os.homedir(), ['config', '--global', '--add', 'safe.directory', m[1]]);
 }
 
 async function gitDir(repo) {
@@ -961,6 +1008,7 @@ module.exports = {
   fileHunks,
   buildPatch,
   topLevel,
+  trustDir,
   status,
   workingFilePair,
   headContent,

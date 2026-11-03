@@ -98,7 +98,12 @@ function updateChrome(s) {
 
 async function onOpened() {
   onRepoActivated(state.repo).catch(() => {}); // Java 프로젝트면 Java 언어 서버를 미리 켜 둔다
-  onAiRepoChanged(); // AI 패널: 이 프로젝트의 대화로
+  // AI 패널: 이 프로젝트의 대화로 (여기서 오류가 나도 프로젝트 화면은 열려야 한다)
+  try {
+    onAiRepoChanged();
+  } catch (e) {
+    console.error(e);
+  }
   if (!state.repo) {
     $('#app').classList.add('no-repo');
     $('#repoName').textContent = '저장소 열기';

@@ -709,7 +709,7 @@ export async function switchTab(dir) {
   state.view = t.view || 'code';
   saveTabs();
   renderTabs();
-  onOpened();
+  return Promise.resolve(onOpened()).catch((e) => errorDialog(`프로젝트 화면을 여는 중 오류가 났습니다: ${e.message}`));
 }
 
 export async function closeTab(dir) {
@@ -767,7 +767,15 @@ export async function openRepo(dir, { activate = true } = {}) {
       return;
     }
     // 앱을 켤 때 저장된 탭을 복원하는 중이면 탭마다 창을 띄우지 않는다
-    return activate ? errorDialog(r.error) : undefined;
+    if (!activate) return;
+    if (r.dubious) {
+      const ok = await confirmDialog(`'${dir}'\n\n${r.error}\n(다른 계정에서 받았거나 복사해 온 폴더, 외장 드라이브에서 흔합니다)\n\n믿을 수 있는 프로젝트라면 신뢰 목록에 넣고 열 수 있습니다. Git 전역 설정의 safe.directory 에 이 폴더가 추가됩니다.`, { title: '폴더 소유자가 다릅니다', okLabel: '신뢰하고 열기' });
+      if (!ok) return;
+      const t = await window.api.trustRepo(dir);
+      if (!t.ok) return errorDialog(t.error);
+      return openRepo(dir);
+    }
+    return errorDialog(r.error);
   }
   state.settings = await window.api.getSettings();
   if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'code' });
@@ -778,8 +786,12 @@ export async function openRepo(dir, { activate = true } = {}) {
 
 
 export async function pickAndOpen() {
-  const dir = await window.api.pickFolder('Git 저장소 폴더 선택');
-  if (dir) openRepo(dir);
+  try {
+    const dir = await window.api.pickFolder('Git 저장소 폴더 선택');
+    if (dir) await openRepo(dir);
+  } catch (e) {
+    errorDialog(e.message);
+  }
 }
 
 async function initRepo(dir) {
