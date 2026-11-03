@@ -5,7 +5,7 @@ import { initChanges, focusCommitMessage, showRepoLoading } from './changes.js';
 import { initLog, activateLog } from './log.js';
 import { initStash, activateStash } from './stash.js';
 import { openBranchPopup, newBranch } from './branches.js';
-import { doFetch, doPull, doPush } from './remote.js';
+import { doFetch, doPull, doPush, openRemoteMenu } from './remote.js';
 import { repoMenu, renderWelcome, openRepo, pickAndOpen, openSettings, setOnOpened, renderTabs, cacheTabStatus, cycleTab, closeTab, tabs, openProjectList } from './repo.js';
 import { startUpdateCheck } from './update.js';
 import { initCode, activateCode, closeActiveTab, toggleTerminalPanel, onRepoActivated } from './code.js';
@@ -54,6 +54,8 @@ function updateChrome(s) {
   document.title = `${name} - CodeFlow`;
   $('#branchName').textContent = s.detached ? `HEAD (${s.headShort})` : s.branch || '-';
   $('#branchBtn').classList.toggle('detached', !!s.detached);
+  $('#remoteBtn').hidden = !s.remotes?.length;
+  $('#remoteName').textContent = s.remote || '-';
   const behind = $('#behindBadge');
   const ahead = $('#aheadBadge');
   behind.hidden = !s.behind;
@@ -65,7 +67,7 @@ function updateChrome(s) {
   const count = $('#changeCount');
   count.hidden = !s.files.length;
   count.textContent = s.files.length;
-  const remoteNote = s.unpublished ? `${s.upstream ? ` → ${s.upstream}` : ''} (원격에 아직 없음 · Push 필요)` : s.upstream ? ` → ${s.upstream}` : ' (원격 연결 없음)';
+  const remoteNote = s.unpublished ? `${s.upstream ? ` → ${s.upstream}` : ''} (${s.remote || '원격'}에 아직 없음 · Push 필요)` : s.upstream ? ` → ${s.upstream}` : s.remote ? ` (${s.remote}에 아직 없음 · Push 하면 새로 만듭니다)` : ' (원격 연결 없음)';
   $('#statusPath').textContent = `${state.repo}  ·  ${s.branch || s.headShort || ''}${remoteNote}${s.ahead ? `  ↑${s.ahead}` : ''}${s.behind ? `  ↓${s.behind}` : ''}`;
 
   const banner = $('#opBanner');
@@ -144,6 +146,7 @@ async function main() {
 
   $('#repoBtn').onclick = (e) => repoMenu(e.currentTarget);
   $('#branchBtn').onclick = (e) => state.repo && openBranchPopup(e.currentTarget);
+  $('#remoteBtn').onclick = (e) => state.repo && openRemoteMenu(e.currentTarget);
   $('#fetchBtn').onclick = () => state.repo && doFetch();
   $('#pullBtn').onclick = () => state.repo && doPull();
   $('#pushBtn').onclick = () => state.repo && doPush();

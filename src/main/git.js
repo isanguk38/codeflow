@@ -155,9 +155,23 @@ async function status(repo) {
     }
     result.files.push(file);
   }
+  // 이 프로젝트에서 쓰는 원격: 현재 브랜치가 연결된 원격 → 사용자가 고른 원격(codeflow.remote) → origin → 첫 원격
+  const rc = await run(repo, ['config', '--get-regexp', '^(codeflow\\.remote|remote\\..+\\.url)$'], { allowFail: true });
+  const names = [];
+  let pref = '';
+  for (const l of rc.stdout.split('\n')) {
+    const m = l.match(/^remote\.(.+)\.url /);
+    if (m) names.push(m[1]);
+    else if (l.startsWith('codeflow.remote ')) pref = l.slice(16).trim();
+  }
+  result.remotes = names;
+  result.remote =
+    (result.upstream && names.filter((n) => result.upstream.startsWith(`${n}/`)).sort((a, c) => c.length - a.length)[0]) ||
+    (names.includes(pref) ? pref : names.includes('origin') ? 'origin' : names[0] || '');
   // 원격에 아직 없는 브랜치(처음 Push 전, 또는 원격 브랜치가 지워짐): 어느 원격에도 없는 커밋 수를 'Push 할 커밋' 으로
   if (result.branch && !result.detached && (!result.upstream || result.upstreamGone)) {
-    const n = await run(repo, ['rev-list', '--count', 'HEAD', '--not', '--remotes'], { allowFail: true });
+    // 쓰는 원격 기준 (다른 원격에만 있는 커밋도 이 원격에는 Push 해야 한다)
+    const n = await run(repo, ['rev-list', '--count', 'HEAD', '--not', result.remote ? `--remotes=${result.remote}` : '--remotes'], { allowFail: true });
     if (n.code === 0 && +n.stdout.trim() > 0) {
       result.ahead = +n.stdout.trim();
       result.unpublished = true;
@@ -715,33 +729,55 @@ async function pull(repo, { rebase: useRebase } = {}) {
   return mergeLike(repo, ['pull', useRebase ? '--rebase' : '--no-rebase', '--no-edit']);
 }
 
-async function push(repo, { force, tags } = {}) {
+// 원격 바꾸기: 이 프로젝트에서 쓸 원격을 고른다. 현재 브랜치가 그 원격에도 있으면 그쪽에 연결(Pull/Push 대상이 바뀜),
+// 없으면 연결을 끊어 두고 다음 Push 때 그 원격에 새로 만든다
+async function useRemote(repo, name) {
+  const s = await status(repo);
+  if (!s.remotes.includes(name)) throw new GitError(`'${name}' 원격 저장소가 없습니다.`);
+  if (s.branch && !s.detached) await run(repo, ['fetch', name, '--prune']);
+  await run(repo, ['config', 'codeflow.remote', name]);
+  if (!s.branch || s.detached) return { tracked: null };
+  const has = (await run(repo, ['rev-parse', '--verify', '-q', `refs/remotes/${name}/${s.branch}`], { allowFail: true })).code === 0;
+  if (has) {
+    await run(repo, ['branch', `--set-upstream-to=${name}/${s.branch}`]);
+    return { tracked: `${name}/${s.branch}` };
+  }
+  if (s.upstream) await run(repo, ['branch', '--unset-upstream'], { allowFail: true });
+  return { tracked: null };
+}
+
+// remote: 이번만 다른 원격으로 올릴 때 (연결은 그대로)
+async function push(repo, { force, tags, remote } = {}) {
   const s = await status(repo);
   if (s.detached) throw new GitError('분리된 HEAD 상태에서는 Push 할 수 없습니다. 브랜치를 체크아웃하세요.');
+  if (!s.remotes.length) throw new GitError('원격 저장소(remote)가 없습니다. 설정에서 원격 저장소를 추가하세요.');
   const args = ['push'];
   if (force) args.push('--force-with-lease');
   if (tags) args.push('--tags');
-  if (!s.upstream) {
-    const rs = await remotes(repo);
-    if (!rs.length) throw new GitError('원격 저장소(remote)가 없습니다. 설정에서 원격 저장소를 추가하세요.');
-    const remote = rs.find((x) => x.name === 'origin') ? 'origin' : rs[0].name;
-    args.push('-u', remote, s.branch);
-  }
+  if (remote && remote !== s.remote) args.push(remote, s.branch);
+  else if (!s.upstream) args.push('-u', s.remote, s.branch);
   const r = await run(repo, args);
   return (r.stdout + r.stderr).trim();
 }
 
-// Push 될 커밋 목록
-async function outgoing(repo) {
+// Push 될 커밋 목록 (remote: 그 원격 기준으로)
+async function outgoing(repo, remote) {
   if (!(await hasHead(repo))) return { commits: [], newBranch: true };
   const s = await status(repo);
-  const range = s.upstream && !s.upstreamGone ? [`${s.upstream}..HEAD`] : ['HEAD', '--not', '--remotes'];
+  let range;
+  let target = s.upstream;
+  if (remote && remote !== s.remote) {
+    const ref = `${remote}/${s.branch}`;
+    const has = (await run(repo, ['rev-parse', '--verify', '-q', `refs/remotes/${ref}`], { allowFail: true })).code === 0;
+    target = has ? ref : null;
+    range = has ? [`${ref}..HEAD`] : ['HEAD', '--not', `--remotes=${remote}`];
+  } else range = s.upstream && !s.upstreamGone ? [`${s.upstream}..HEAD`] : ['HEAD', '--not', '--remotes'];
   const r = await run(repo, ['log', `--format=%H${FS}%an${FS}%at${FS}%s`, '-n', '200', ...range]);
   const commits = r.stdout.split('\n').filter(Boolean).map((l) => {
     const [hash, author, at, subject] = l.split(FS);
     return { hash, author, time: +at * 1000, subject };
   });
-  return { commits, newBranch: !s.upstream, upstream: s.upstream, branch: s.branch };
+  return { commits, newBranch: !target, upstream: target, branch: s.branch, remote: remote || s.remote, remotes: s.remotes };
 }
 
 // ---------- 스태시 (IntelliJ 의 Shelve 와 비슷) ----------
@@ -948,6 +984,7 @@ module.exports = {
   operation,
   remotes,
   addRemote,
+  useRemote,
   setRemoteUrl,
   removeRemote,
   fetchAll,

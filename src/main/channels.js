@@ -3,7 +3,7 @@ module.exports = [
   // 기본
   'status', 'workingFilePair', 'commitFilePair', 'commit', 'lastCommitMessage', 'rollback', 'log', 'commitDetails',
   'branches', 'updateBranches', 'commitsFiles', 'checkout', 'checkoutRemote', 'createBranch', 'deleteBranch', 'deleteRemoteBranch', 'renameBranch',
-  'merge', 'mergePreview', 'rebase', 'cherryPick', 'revertCommit', 'reset', 'operation', 'remotes', 'addRemote', 'setRemoteUrl',
+  'merge', 'mergePreview', 'rebase', 'cherryPick', 'revertCommit', 'reset', 'operation', 'remotes', 'addRemote', 'useRemote', 'setRemoteUrl',
   'removeRemote', 'fetchAll', 'pull', 'push', 'outgoing', 'stashList', 'stashSave', 'stashApply', 'stashPop', 'stashDrop',
   'stashFiles', 'conflictInfo', 'conflictSides', 'resolveWithContent', 'resolveSide', 'createTag', 'deleteTag', 'config', 'setConfig',
   'addToGitignore', 'fileHunks', 'headContent',

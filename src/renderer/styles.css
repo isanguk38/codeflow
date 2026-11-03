@@ -177,6 +177,11 @@ pre,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.tb-remote #remoteName {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .tb-branch.detached #branchName {
   color: var(--warn);
 }
@@ -1237,6 +1242,16 @@ input[type='checkbox'] {
 /* ---------- Push ---------- */
 .push-target {
   margin-bottom: 8px;
+}
+.push-remote-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.push-remote-row select {
+  width: auto;
+  min-width: 200px;
 }
 .push-list {
   border: 1px solid var(--border);
