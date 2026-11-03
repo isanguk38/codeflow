@@ -5,6 +5,7 @@ const git = { ...require('./git'), ...require('./git-extra') };
 
 let win;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+git.setGitCacheFile(path.join(app.getPath('userData'), 'git-dir.txt'));
 
 function loadSettings() {
   try {
