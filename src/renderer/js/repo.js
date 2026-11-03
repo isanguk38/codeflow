@@ -766,7 +766,8 @@ export async function openRepo(dir, { activate = true } = {}) {
       if (ok) return initRepo(dir);
       return;
     }
-    return errorDialog(r.error);
+    // 앱을 켤 때 저장된 탭을 복원하는 중이면 탭마다 창을 띄우지 않는다
+    return activate ? errorDialog(r.error) : undefined;
   }
   state.settings = await window.api.getSettings();
   if (!tabs.some((x) => norm(x.path) === norm(r.data))) tabs.push({ path: r.data, view: 'code' });

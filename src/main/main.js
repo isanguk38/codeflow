@@ -90,10 +90,14 @@ ipcMain.handle('git:rollback', async (_e, repo, files) => {
 });
 
 ipcMain.handle('repo:open', async (_e, dir) => {
-  const top = await git.topLevel(dir);
-  if (!top) return { ok: false, error: '선택한 폴더는 Git 저장소가 아닙니다.', notRepo: true };
-  addRecent(top);
-  return { ok: true, data: top };
+  try {
+    const top = await git.topLevel(dir);
+    if (!top) return { ok: false, error: '선택한 폴더는 Git 저장소가 아닙니다.', notRepo: true };
+    addRecent(top);
+    return { ok: true, data: top };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.handle('repo:init', async (_e, dir) => {

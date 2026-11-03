@@ -68,7 +68,9 @@ function runGit(cwd, args, { allowFail = false, input, raw = false, env: extraEn
     child.stdout.on('data', (d) => out.push(d));
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => {
-      if (e.code === 'ENOENT') reject(new GitError('git 명령을 찾을 수 없습니다. Git for Windows를 설치하세요.'));
+      // 작업 폴더가 없어도 ENOENT 가 난다
+      if (e.code === 'ENOENT' && cwd && !fs.existsSync(cwd)) reject(new GitError(`폴더를 찾을 수 없습니다: ${cwd}`));
+      else if (e.code === 'ENOENT') reject(new GitError('git 명령을 찾을 수 없습니다. Git for Windows를 설치하세요.'));
       else reject(new GitError(e.message));
     });
     child.on('close', (code) => {
