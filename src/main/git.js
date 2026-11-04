@@ -692,7 +692,9 @@ async function branches(repo) {
   const tags = [];
   for (const line of r.stdout.split('\n')) {
     if (!line.trim()) continue;
-    const [ref, name, sha, upstream, track, headMark, date] = line.split(FS);
+    const [ref, , sha, upstream, track, headMark, date] = line.split(FS);
+    // %(refname:short) 는 이름이 겹치면 heads/x, tags/x 로 바뀌어 git branch -d 등에서 찾지 못한다. 진짜 이름을 쓴다
+    const name = ref.replace(/^refs\/(heads|remotes|tags)\//, '');
     const item = { ref, name, sha, upstream: upstream || null, track: track || '', current: headMark === '*', date: +date * 1000 };
     if (ref.startsWith('refs/heads/')) local.push(item);
     else if (ref.startsWith('refs/remotes/')) {
@@ -747,6 +749,9 @@ async function checkout(repo, name) {
   await run(repo, ['checkout', name]);
 }
 
+// 사용자가 refs/heads/x 처럼 입력해도 refs/heads/refs/heads/x 라는 이상한 브랜치가 생기지 않게 한다
+const plainBranch = (n) => (n || '').replace(/^(refs\/)?heads\//, '');
+
 // 'second/main' 을 원격 이름과 브랜치 이름으로 나눈다 (원격 이름에 / 가 있어도). 원격 브랜치가 아니면 null
 async function splitRemoteRef(repo, ref) {
   const names = (await run(repo, ['remote'])).stdout.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -781,6 +786,7 @@ async function checkoutRemote(repo, remoteBranch, localName) {
     }
     localName = parts.branch;
   }
+  localName = plainBranch(localName);
   await run(repo, ['checkout', '-b', localName, '--track', remoteBranch]);
   return { local: localName };
 }
@@ -796,6 +802,7 @@ async function fetchRemote(repo, name) {
 }
 
 async function createBranch(repo, { name, start, checkout: co }) {
+  name = plainBranch(name);
   const parts = start ? await splitRemoteRef(repo, start) : null;
   // 이름이 다른 새 브랜치는 원본 원격 브랜치를 추적하지 않는다 (feature 를 Push 했는데 main 이 바뀌면 안 된다).
   // 첫 Push 때 그 원격에 같은 이름으로 만든다
@@ -944,7 +951,7 @@ async function remoteOnly(repo, remote, branch) {
 // Push 대상: 고른 원격(없으면 브랜치의 원격)과 원격 브랜치(없으면 추적 중인 브랜치 이름 → 로컬 브랜치 이름)
 function pushTarget(s, remote, branch) {
   const up = s.upstream && s.remote && s.upstream.startsWith(`${s.remote}/`) ? s.upstream.slice(s.remote.length + 1) : null;
-  return { remote: remote || s.remote, branch: branch || up || s.branch };
+  return { remote: remote || s.remote, branch: plainBranch(branch) || up || s.branch };
 }
 
 // 로컬 브랜치를 Push 한다. 대상은 브랜치의 추적 설정을 따르고, remote·branch 로 이번만 다른 곳에 올릴 수 있다 (추적은 그대로)
