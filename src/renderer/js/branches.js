@@ -1,6 +1,6 @@
 // 브랜치 팝업(IntelliJ 오른쪽 아래 브랜치 메뉴와 비슷) 및 브랜치 관련 작업
-import { $, h, esc, contextMenu, promptDialog, confirmDialog, choiceDialog, toast, closeMenu, registerMenu } from './ui.js';
-import { state, git, op } from './state.js';
+import { $, h, esc, modal, contextMenu, promptDialog, confirmDialog, choiceDialog, toast, closeMenu, registerMenu } from './ui.js';
+import { state, git, op, FAILED } from './state.js';
 
 // 브랜치 목록이 바뀌는 작업 뒤에 히스토리 왼쪽 목록을 즉시 갱신
 const treeNow = async () => (await import('./log.js')).reloadBranchTree();
@@ -21,8 +21,18 @@ export async function newBranch(start, { checkout = true, name: suggested = '' }
 
 export const checkout = (name) => op(`체크아웃 ${name}`, () => git('checkout', name), { success: `'${name}' 로 전환했습니다.` });
 
-export const checkoutRemote = (name) =>
-  op(`체크아웃 ${name}`, () => git('checkoutRemote', name), { success: (local) => `원격 '${name}' 을(를) 추적하는 '${local}' 로 전환했습니다.` });
+// 같은 이름의 로컬 브랜치가 다른 원격을 추적 중이면, 원격별로 로컬 브랜치를 따로 만들도록 새 이름을 묻는다
+export async function checkoutRemote(name) {
+  const done = (x) => `'${x?.local}' → ${name} 로 전환했습니다.`;
+  const r = await op(`체크아웃 ${name}`, () => git('checkoutRemote', name));
+  if (r === FAILED) return r;
+  if (!r?.needName) return toast(done(r), 'ok');
+  const local = await promptDialog(`'${r.local}' 은(는) 이미 ${r.upstream} 을(를) 추적하고 있습니다.\n${name} 용 새 로컬 브랜치 이름:`, { title: '새 로컬 브랜치', value: r.suggest, okLabel: '만들고 체크아웃' });
+  if (!local?.trim()) return;
+  const created = await op('브랜치 생성', () => git('checkoutRemote', name, local.trim().replace(/\s+/g, '-')), { success: done });
+  treeNow();
+  return created;
+}
 
 const MERGE_MODES = [
   { value: 'default', label: '기본', desc: '가능하면 브랜치 포인터만 앞으로 옮기고(fast-forward), 아니면 병합 커밋을 만듭니다.' },
@@ -121,7 +131,33 @@ async function rename(name) {
 
 async function remove(b) {
   const ok = await confirmDialog(`로컬 브랜치 '${b.name}' 을(를) 삭제합니다.`, { title: '브랜치 삭제', okLabel: '삭제', danger: true });
-  if (!ok) return;
+  if (ok) await deleteLocal(b);
+}
+
+// 지금 쓰는 브랜치는 그대로 지울 수 없어서, 옮겨 갈 브랜치를 고르게 한다
+async function removeCurrent(b) {
+  const others = (await git('branches')).local.filter((x) => x.name !== b.name).map((x) => x.name);
+  if (!others.length) return toast(`다른 브랜치가 없어서 '${b.name}' 을(를) 지울 수 없습니다. 먼저 다른 브랜치를 만드세요.`, 'warn', 5000);
+  const pick = h('select', { class: 'input' }, ...others.map((n) => h('option', { value: n, text: n })));
+  pick.value = ['main', 'master', 'develop'].find((n) => others.includes(n)) || others[0];
+  modal({
+    title: '브랜치 삭제',
+    body: h('div', { class: 'form' }, h('label', { class: 'form-label', text: `'${b.name}' 은(는) 지금 쓰는 브랜치라서, 다른 브랜치로 옮긴 뒤 지웁니다.` }), pick),
+    buttons: [
+      { label: '취소' },
+      {
+        label: '옮긴 뒤 삭제',
+        danger: true,
+        onClick: async () => {
+          const r = await checkout(pick.value);
+          if (r !== FAILED) await deleteLocal(b);
+        },
+      },
+    ],
+  });
+}
+
+async function deleteLocal(b) {
   const r = await window.api.git.deleteBranch(state.repo, b.name, false);
   if (r.ok) {
     toast(`'${b.name}' 삭제됨`, 'ok');
@@ -136,7 +172,7 @@ async function remove(b) {
 
 async function removeRemote(b) {
   const ok = await confirmDialog(`원격 저장소에서 '${b.name}' 브랜치를 삭제합니다. 다른 사람에게도 영향을 줍니다.`, { title: '원격 브랜치 삭제', okLabel: '삭제', danger: true });
-  if (ok) await op('원격 브랜치 삭제', () => git('deleteRemoteBranch', b.name), { success: `'${b.name}' 삭제됨` });
+  if (ok) await op('원격 브랜치 삭제', () => git('deleteRemoteBranch', b.name), { success: (x) => (x?.stale ? `'${b.name}' 은(는) 서버에서 이미 지워져 있어 목록에서 정리했습니다.` : `'${b.name}' 삭제됨`) });
   treeNow();
 }
 
@@ -183,6 +219,8 @@ export function branchMenuItems(b, kind) {
       '-',
       { label: 'Pull (업데이트)', disabled: !b.upstream, onClick: async () => (await import('./remote.js')).doPull() },
       { label: 'Push...', onClick: async () => (await import('./remote.js')).doPush() },
+      '-',
+      { label: '삭제...', danger: true, onClick: () => removeCurrent(b) },
     ];
   }
   if (kind === 'local') {
@@ -283,7 +321,14 @@ export async function openBranchPopup(anchor) {
       }
     };
     section('로컬 브랜치', data.local.sort((a, b) => (b.current - a.current) || b.date - a.date), 'local');
-    section('원격 브랜치', data.remote, 'remote');
+    // 원격 저장소별로 나눠 보여 준다
+    const byRemote = new Map();
+    for (const b of data.remote) {
+      const remote = state.status?.remotes?.filter((n) => b.name.startsWith(`${n}/`)).sort((x, y) => y.length - x.length)[0] || b.name.split('/')[0];
+      if (!byRemote.has(remote)) byRemote.set(remote, []);
+      byRemote.get(remote).push(b);
+    }
+    for (const [remote, items] of byRemote) section(`원격: ${remote}`, items, 'remote');
     if (q) section('태그', data.tags, 'tag');
     if (!list.children.length) list.append(h('div', { class: 'empty', text: q ? '일치하는 브랜치 없음' : '브랜치가 없습니다 (첫 커밋 후 생성됩니다)' }));
   };

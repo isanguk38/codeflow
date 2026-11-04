@@ -1000,7 +1000,11 @@ export async function openSettings() {
       if (!url) return;
       const nm = remotes.length ? await promptDialog('원격 이름', { value: 'upstream' }) : 'origin';
       if (!nm) return;
-      await op('원격 추가', () => git('addRemote', nm, url), { success: `'${nm}' 추가됨` });
+      // 추가하자마자 그 원격의 브랜치가 목록에 보이도록 가져온다 (가져오기 실패는 인증·주소 안내로 표시)
+      await op('원격 추가', async () => {
+        await git('addRemote', nm, url);
+        await git('fetchRemote', nm);
+      }, { success: `'${nm}' 추가됨` });
       drawRemotes(await git('remotes'));
     },
   });

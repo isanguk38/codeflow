@@ -1251,7 +1251,21 @@ input[type='checkbox'] {
 }
 .push-remote-row select {
   width: auto;
-  min-width: 200px;
+  min-width: 140px;
+}
+.push-remote-row .push-branch {
+  flex: 1;
+  min-width: 120px;
+}
+.form-hint {
+  color: var(--text2);
+  font-size: 12px;
+  min-height: 16px;
+}
+.push-note {
+  color: var(--text2);
+  font-size: 12px;
+  margin-left: 6px;
 }
 .push-list {
   border: 1px solid var(--border);
