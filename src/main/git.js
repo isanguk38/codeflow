@@ -133,6 +133,8 @@ function quickGitDir() {
     e.ProgramData && path.join(e.ProgramData, 'scoop', 'apps', 'git', 'current', 'cmd'),
     e.ProgramData && path.join(e.ProgramData, 'chocolatey', 'bin'),
     la && path.join(la, 'Atlassian', 'SourceTree', 'git_local', 'bin'),
+    // MSYS2: Windows 용 git 을 먼저, 그다음 MSYS 용 git
+    ...['C:\\msys64', 'D:\\msys64', 'E:\\msys64', 'C:\\msys2', 'C:\\tools\\msys64'].flatMap((r) => ['ucrt64', 'mingw64', 'clang64', 'usr'].map((x) => path.join(r, x, 'bin'))),
   ].find(hasGit);
   if (fixed) return fixed;
   // GitHub Desktop, Fork (버전마다 폴더 이름이 다르다)
@@ -158,8 +160,9 @@ function quickGitDir() {
   return [...roots.flatMap(gitDirsIn), ...saved].find(hasGit) || null;
 }
 
+// PATH 맨 뒤에 붙인다: usr/bin 같은 폴더가 앞에 오면 터미널의 find·sort 등 Windows 명령을 가린다
 function addGitDir(dir) {
-  process.env.PATH = [dir, ...(process.env.PATH || '').split(path.delimiter).filter(Boolean)].join(path.delimiter);
+  process.env.PATH = [...(process.env.PATH || '').split(path.delimiter).filter(Boolean), dir].join(path.delimiter);
 }
 
 function ensureGitPath() {
@@ -212,11 +215,17 @@ function setGitCacheFile(file) {
 }
 ensureGitPath();
 
+// MSYS2·Cygwin 의 git 은 경로를 /c/foo, /cygdrive/c/foo 로 돌려준다
+function toWinPath(p) {
+  if (process.platform !== 'win32') return p;
+  return p.replace(/^(?:\/cygdrive)?\/([a-zA-Z])(?=\/|$)/, (_, d) => `${d.toUpperCase()}:`).replace(/^([A-Z]:)$/, '$1/');
+}
+
 // 저장소의 최상위 폴더. 저장소가 아니면 null, 그 밖의 이유로 못 열면 까닭을 알려 준다
 async function topLevel(dir) {
   await ensureGitFound();
   const r = await run(dir, ['rev-parse', '--show-toplevel'], { allowFail: true });
-  if (r.code === 0) return path.normalize(r.stdout.trim());
+  if (r.code === 0) return path.normalize(toWinPath(r.stdout.trim()));
   if (/not a git repository/i.test(r.stderr)) return null;
   if (/dubious ownership/i.test(r.stderr)) throw new GitError('이 폴더의 소유자가 현재 Windows 사용자와 달라 Git 이 열기를 막았습니다.', { stderr: r.stderr, code: r.code });
   if (/must be run in a work tree/i.test(r.stderr)) throw new GitError('작업 폴더가 없는 저장소입니다 (bare 저장소이거나 .git 폴더 안을 고른 경우). 프로젝트 폴더를 골라 주세요.', { stderr: r.stderr, code: r.code });
@@ -233,7 +242,7 @@ async function trustDir(dir) {
 
 async function gitDir(repo) {
   const r = await run(repo, ['rev-parse', '--absolute-git-dir']);
-  return r.stdout.trim();
+  return toWinPath(r.stdout.trim());
 }
 
 async function hasHead(repo) {
@@ -1100,6 +1109,7 @@ module.exports = {
   trustDir,
   setGitCacheFile,
   scanForGit,
+  toWinPath,
   status,
   workingFilePair,
   headContent,

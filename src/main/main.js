@@ -105,6 +105,34 @@ ipcMain.handle('repo:open', async (_e, dir) => {
   }
 });
 
+// 보고 있는 프로젝트의 파일 변경 감시: 바뀌면 화면이 git status 를 다시 읽는다
+// (.git 은 빼야 한다: git status 가 .git/index 를 고치면 끝없이 반복됨. 빌드 폴더 등은 잦기만 하고 목록에 안 뜬다)
+const WATCH_SKIP = /(^|[\\/])(\.git|node_modules|\.next[^\\/]*|\.nuxt|\.gradle|\.idea|target)([\\/]|$)/;
+let repoWatcher = null;
+let repoWatchTimer = null;
+function stopRepoWatch() {
+  clearTimeout(repoWatchTimer);
+  repoWatchTimer = null;
+  repoWatcher?.close();
+  repoWatcher = null;
+}
+ipcMain.handle('repo:watch', (_e, dir) => {
+  stopRepoWatch();
+  if (!dir) return;
+  try {
+    repoWatcher = fs.watch(dir, { recursive: true }, (_ev, file) => {
+      if ((file && WATCH_SKIP.test(file)) || repoWatchTimer) return;
+      repoWatchTimer = setTimeout(() => {
+        repoWatchTimer = null;
+        if (win && !win.isDestroyed() && !win.isMinimized()) win.webContents.send('repo:changed', dir);
+      }, 1000);
+    });
+    repoWatcher.on('error', stopRepoWatch);
+  } catch {
+    repoWatcher = null; // 감시를 못 하는 폴더(일부 네트워크 드라이브): 창을 클릭할 때 새로 읽는 것으로 충분
+  }
+});
+
 ipcMain.handle('repo:trust', async (_e, dir) => {
   try {
     await git.trustDir(dir);

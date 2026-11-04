@@ -1,6 +1,6 @@
 // 커밋 화면: 변경 파일 목록(체크박스 선택) + 커밋 메시지 + Diff / 줄 단위 선택(부분 커밋)
 import { $, h, splitPath, STATUS_LABEL, contextMenu, confirmDialog, choiceDialog, toast, splitter } from './ui.js';
-import { state, git, op, refresh, onRefresh, FAILED, busy } from './state.js';
+import { state, git, op, refresh, onRefresh, onStatusError, FAILED, busy } from './state.js';
 import { renderDiff, renderHunks, emptyDiff } from './diff.js';
 import { openConflicts, openMergeTool } from './conflicts.js';
 import { doPush } from './remote.js';
@@ -91,6 +91,7 @@ export function initChanges() {
   });
 
   onRefresh(render);
+  onStatusError(render);
 }
 
 const files = () => state.status?.files || [];
@@ -105,6 +106,11 @@ function render() {
   const list = $('#fileList');
   if (!list || !state.repo) return;
   bindRepo();
+  if (state.statusError) {
+    list.innerHTML = '';
+    list.append(h('div', { class: 'empty status-error' }, h('b', { text: '변경 사항을 읽지 못했습니다' }), h('pre', { text: state.statusError }), h('button', { class: 'btn small', text: '다시 시도', onclick: () => refresh() })));
+    return;
+  }
   const all = files();
   const paths = new Set(all.map((f) => f.path));
   for (const p of [...selected]) if (!paths.has(p)) selected.delete(p);

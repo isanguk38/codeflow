@@ -10,6 +10,9 @@ export const state = {
 
 const listeners = new Set();
 export const onRefresh = (fn) => listeners.add(fn);
+// git status 가 실패했을 때 (실패를 '변경 없음' 으로 보이지 않게)
+const statusErrorListeners = new Set();
+export const onStatusError = (fn) => statusErrorListeners.add(fn);
 
 // Git 함수 호출. 실패 시 예외를 던진다.
 export async function git(name, ...args) {
@@ -170,22 +173,47 @@ async function handleKnownError(label, e, fn, smart = true) {
 // 상태 새로고침. 저장소(탭)별로 따로 돌고, 도중에 다른 저장소로 바뀌면 결과를 버린다.
 let refreshing = null;
 let refreshingRepo = null;
+let refreshAgain = null;
+const STATUS_TIMEOUT = 60000; // git 이 응답하지 않아도 새로고침이 영영 막히지 않게
+const LISTENER_TIMEOUT = 5000; // 화면 하나가 끝나지 않아도 다음 새로고침을 막지 않게
+
+function within(promise, ms, message) {
+  let timer;
+  const limit = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)));
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
 export function refresh() {
   if (!state.repo) return Promise.resolve();
-  if (refreshing && refreshingRepo === state.repo) return refreshing;
+  // 읽는 도중에 또 요청이 오면, 그 사이의 변경을 놓치지 않게 끝난 뒤 한 번 더 읽는다
+  if (refreshing && refreshingRepo === state.repo) {
+    if (!refreshAgain) {
+      refreshAgain = refreshing.then(() => {
+        refreshAgain = null;
+        return refresh();
+      });
+    }
+    return refreshAgain;
+  }
   const repo = state.repo;
   const prev = refreshing;
   const p = (async () => {
     if (prev) await prev.catch(() => {});
     if (state.repo !== repo) return;
     try {
-      const st = await git('status');
+      const st = await within(git('status'), STATUS_TIMEOUT, `Git 이 ${STATUS_TIMEOUT / 1000}초 동안 응답하지 않습니다 (git status).`);
       if (state.repo !== repo) return; // 그 사이 탭이 바뀜
       state.status = st;
+      if (state.statusError) setStatusMsg('');
+      state.statusError = null;
       await emitStatus();
     } catch (e) {
       console.error(e);
-      if (state.repo === repo) setStatusMsg(`상태 조회 실패: ${e.message}`);
+      if (state.repo === repo) {
+        setStatusMsg(`상태 조회 실패: ${e.message}`);
+        state.statusError = e.message;
+        statusErrorListeners.forEach((fn) => fn());
+      }
     } finally {
       if (refreshing === p) {
         refreshing = null;
@@ -201,11 +229,12 @@ export function refresh() {
 // 현재 state.status 로 모든 화면을 다시 그린다 (탭 전환 시 기억해 둔 상태로 즉시 표시할 때도 사용)
 export async function emitStatus() {
   if (!state.status) return;
-  for (const fn of listeners) {
+  const all = [...listeners].map(async (fn) => {
     try {
       await fn(state.status);
     } catch (e) {
       console.error(e);
     }
-  }
+  });
+  await within(Promise.all(all), LISTENER_TIMEOUT, 'listeners').catch(() => console.warn('새로고침: 끝나지 않는 화면이 있어 기다리지 않습니다'));
 }

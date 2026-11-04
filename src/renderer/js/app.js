@@ -23,6 +23,7 @@ function setView(view) {
   state.view = view;
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === (view === 'welcome' ? 'welcome' : `view-${view}`)));
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  if (view === 'changes') refresh();
   if (view === 'log') activateLog();
   if (view === 'stash') activateStash();
   if (view === 'code') activateCode();
@@ -97,6 +98,7 @@ function updateChrome(s) {
 }
 
 async function onOpened() {
+  window.api.watchRepo(state.repo || null); // 이 프로젝트의 파일이 바뀌면 목록을 새로 읽는다
   onRepoActivated(state.repo).catch(() => {}); // Java 프로젝트면 Java 언어 서버를 미리 켜 둔다
   // AI 패널: 이 프로젝트의 대화로 (여기서 오류가 나도 프로젝트 화면은 열려야 한다)
   try {
@@ -244,6 +246,10 @@ async function main() {
 
   // 창이 다시 활성화되면(에디터에서 파일 수정 후 돌아오면) 자동 새로고침
   window.api.onFocus(() => refresh());
+  // 앱 밖에서 파일을 추가·수정·덮어쓰면 (히스토리·스태시 화면은 바뀔 때마다 다시 그리면 번쩍이므로 제외)
+  window.api.onRepoChanged((dir) => {
+    if (dir === state.repo && state.view !== 'log' && state.view !== 'stash') refresh();
+  });
   startUpdateCheck();
 
   await renderWelcome();

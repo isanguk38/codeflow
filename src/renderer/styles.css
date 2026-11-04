@@ -1924,3 +1924,12 @@ input[type='checkbox'] {
 .pl-row.closed-tab .pl-sub {
   font-style: italic;
 }
+.status-error pre {
+  margin: 8px 0 10px;
+  color: var(--danger, #e5484d);
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}

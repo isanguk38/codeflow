@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('api', {
   exists: (p) => ipcRenderer.invoke('path:exists', p),
   copy: (text) => clipboard.writeText(text),
   onFocus: (cb) => ipcRenderer.on('window-focus', cb),
+  watchRepo: (dir) => ipcRenderer.invoke('repo:watch', dir),
+  onRepoChanged: (cb) => ipcRenderer.on('repo:changed', (_e, dir) => cb(dir)),
   team: {
     create: (repo, opts) => ipcRenderer.invoke('team:create', repo, opts),
     get: (id) => ipcRenderer.invoke('team:get', id),
