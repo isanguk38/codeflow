@@ -23,6 +23,7 @@ function saveSettings(s) {
 function createWindow() {
   const s = loadSettings();
   win = new BrowserWindow({
+    icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
     width: s.bounds?.width || 1400,
     height: s.bounds?.height || 900,
     x: s.bounds?.x,
