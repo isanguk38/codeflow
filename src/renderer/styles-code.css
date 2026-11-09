@@ -28,6 +28,16 @@
 .ft-row.active {
   background: var(--sel);
 }
+.code-tree:focus {
+  outline: none;
+}
+/* 여러 개 선택 (Ctrl·Shift+클릭) */
+.ft-row.sel {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.code-tree:focus .ft-row.sel {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+}
 .ft-caret {
   width: 10px;
   color: var(--text3);

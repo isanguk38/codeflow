@@ -1450,6 +1450,7 @@ input[type='checkbox'] {
   border-radius: 6px;
   box-shadow: var(--shadow);
   max-width: 420px;
+  white-space: pre-line;
   transition: opacity 0.4s, transform 0.4s;
 }
 .toast.ok {

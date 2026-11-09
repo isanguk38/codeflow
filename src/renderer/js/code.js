@@ -44,7 +44,7 @@ export function initCode() {
         <button class="tb-btn small" id="codeCollapse" title="모두 접기">⊟</button>
         <button class="tb-btn small" id="codeReload" title="새로고침">⟳</button>
       </div>
-      <div class="code-tree" id="codeTree"></div>
+      <div class="code-tree" id="codeTree" tabindex="0"></div>
     </div>
     <div class="splitter-x" id="codeSplit"></div>
     <div class="code-main">
@@ -63,6 +63,7 @@ export function initCode() {
   window.addEventListener('terminal-visibility', () => updateStatus());
   splitter($('#codeSplit'), $('#codeExplorer'), { min: 160, max: 600, key: 'codeExplorer' });
   $('#codeReload').onclick = () => renderTree();
+  $('#codeTree').addEventListener('keydown', onTreeKey);
   $('#codeCollapse').onclick = () => {
     view().expanded.clear();
     renderTree();
@@ -282,7 +283,84 @@ async function renderTree() {
   await renderDir(repo, box, 0, repo);
   if (state.repo !== repo) return;
   el.replaceChildren(box);
+  paintSel();
   decorateTree();
+}
+
+// ---------- 탐색기 선택: Ctrl+클릭 하나씩, Shift+클릭 범위, Ctrl+A 전체. Delete 삭제, F2 이름 변경 ----------
+const treeSel = new Set();
+let treeAnchor = null;
+
+// 접힌 폴더 안의 항목은 빼고, 화면에 보이는 줄만 (위에서 아래 순서)
+const visibleRows = () => [...document.querySelectorAll('#codeTree .ft-row')].filter((r) => r.offsetParent);
+
+function paintSel() {
+  document.querySelectorAll('#codeTree .ft-row').forEach((r) => r.classList.toggle('sel', treeSel.has(keyOf(r.dataset.path))));
+}
+
+function setSel(rows, anchor) {
+  treeSel.clear();
+  for (const r of rows) treeSel.add(keyOf(r.dataset.path));
+  if (anchor) treeAnchor = keyOf(anchor.dataset.path);
+  paintSel();
+}
+
+// true 를 돌려주면 선택만 바꾼 것 (파일을 열거나 폴더를 펼치지 않는다)
+function selectClick(row, ev) {
+  $('#codeTree').focus({ preventScroll: true });
+  const k = keyOf(row.dataset.path);
+  if (ev.shiftKey) {
+    const rows = visibleRows();
+    const b = rows.indexOf(row);
+    let a = rows.findIndex((r) => keyOf(r.dataset.path) === treeAnchor);
+    if (a < 0) a = b;
+    if (!ev.ctrlKey && !ev.metaKey) treeSel.clear();
+    for (const r of rows.slice(Math.min(a, b), Math.max(a, b) + 1)) treeSel.add(keyOf(r.dataset.path));
+    paintSel();
+    return true;
+  }
+  if (ev.ctrlKey || ev.metaKey) {
+    if (treeSel.has(k)) treeSel.delete(k);
+    else treeSel.add(k);
+    treeAnchor = k;
+    paintSel();
+    return true;
+  }
+  setSel([row], row);
+  return false;
+}
+
+function selectedEntries() {
+  return visibleRows()
+    .filter((r) => treeSel.has(keyOf(r.dataset.path)))
+    .map((r) => ({ path: r.dataset.path, name: r.dataset.name, dir: r.dataset.dir === '1' }));
+}
+
+function onTreeKey(ev) {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
+  const list = selectedEntries();
+  if (ev.key === 'Delete' && list.length) {
+    ev.preventDefault();
+    deleteEntries(list);
+  } else if (ev.key === 'F2' && list.length) {
+    ev.preventDefault();
+    renameEntry(list.find((x) => keyOf(x.path) === treeAnchor) || list[0]);
+  } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
+    ev.preventDefault();
+    setSel(visibleRows(), null);
+  } else if (ev.key === 'Escape' && treeSel.size) {
+    setSel([], null);
+  }
+}
+
+function multiMenu(list) {
+  return [
+    { header: `${list.length}개 선택됨` },
+    { label: '삭제 (휴지통으로)', hint: 'Delete', danger: true, onClick: () => deleteEntries(list) },
+    '-',
+    { label: '경로 복사', onClick: () => window.api.copy(list.map((x) => x.path).join('\n')) },
+    { label: '상대 경로 복사', onClick: () => window.api.copy(list.map((x) => relOf(state.repo, x.path)).join('\n')) },
+  ];
 }
 
 async function renderDir(dir, parent, depth, repo) {
@@ -296,7 +374,7 @@ async function renderDir(dir, parent, depth, repo) {
     const open = e.dir && v.expanded.has(keyOf(e.path));
     const row = h(
       'div',
-      { class: `ft-row ${e.dir ? 'dir' : 'file'} ${v.active && keyOf(v.active) === keyOf(e.path) ? 'active' : ''}`, 'data-path': e.path, style: { paddingLeft: `${8 + depth * 14}px` }, title: e.path },
+      { class: `ft-row ${e.dir ? 'dir' : 'file'} ${v.active && keyOf(v.active) === keyOf(e.path) ? 'active' : ''}`, 'data-path': e.path, 'data-name': e.name, 'data-dir': e.dir ? '1' : '', style: { paddingLeft: `${8 + depth * 14}px` }, title: e.path },
       h('span', { class: 'ft-caret', text: e.dir ? (open ? '▾' : '▸') : '' }),
       h('span', { class: `ft-ico ${e.dir ? 'folder' : fileIcon(e.name)}`, text: e.dir ? (open ? '📂' : '📁') : '' }),
       h('span', { class: 'ft-name', text: e.name }),
@@ -307,7 +385,8 @@ async function renderDir(dir, parent, depth, repo) {
       const kids = h('div', { class: 'ft-kids', hidden: !open });
       parent.append(kids);
       if (open) await renderDir(e.path, kids, depth + 1, repo);
-      row.onclick = async () => {
+      row.onclick = async (ev) => {
+        if (selectClick(row, ev)) return;
         const k = keyOf(e.path);
         if (v.expanded.has(k)) {
           v.expanded.delete(k);
@@ -326,11 +405,16 @@ async function renderDir(dir, parent, depth, repo) {
         }
       };
     } else {
-      row.onclick = () => openFile(e.path);
+      // 한 번 클릭: 파일을 열되 탐색기에 남아 있어 Delete·F2 를 바로 쓸 수 있다. 두 번 클릭: 편집기로 이동
+      row.onclick = (ev) => !selectClick(row, ev) && openFile(e.path, null, { keepFocus: true });
+      row.ondblclick = (ev) => !ev.ctrlKey && !ev.shiftKey && !ev.metaKey && openFile(e.path);
     }
     row.oncontextmenu = (ev) => {
       ev.preventDefault();
-      contextMenu(ev.clientX, ev.clientY, treeMenu(e));
+      if (!treeSel.has(keyOf(e.path))) setSel([row], row);
+      $('#codeTree').focus({ preventScroll: true });
+      const many = selectedEntries();
+      contextMenu(ev.clientX, ev.clientY, many.length > 1 ? multiMenu(many) : treeMenu(e));
     };
   }
 }
@@ -375,8 +459,8 @@ function treeMenu(e) {
     { label: '새 파일...', onClick: () => createIn(parentDir, 'file') },
     { label: '새 폴더...', onClick: () => createIn(parentDir, 'folder') },
     '-',
-    { label: '이름 변경...', onClick: () => renameEntry(e) },
-    { label: '삭제 (휴지통으로)', danger: true, onClick: () => deleteEntry(e) },
+    { label: '이름 변경...', hint: 'F2', onClick: () => renameEntry(e) },
+    { label: '삭제 (휴지통으로)', hint: 'Delete', danger: true, onClick: () => deleteEntries([e]) },
     '-',
     e.dir ? { label: '이 폴더에서 찾기... (Ctrl+Shift+F)', onClick: () => window.dispatchEvent(new CustomEvent('cf-open-search', { detail: { dir: relOf(state.repo, e.path) } })) } : null,
     e.dir ? '-' : null,
@@ -414,18 +498,37 @@ async function renameEntry(e) {
   const r = await window.api.fs.rename(e.path, target);
   if (!r.ok) return toast(r.error, 'error');
   for (const d of open) closeDoc(d, { force: true });
+  treeSel.clear();
+  treeSel.add(keyOf(target));
+  treeAnchor = keyOf(target);
   await renderTree();
-  if (!e.dir) openFile(target);
+  if (!e.dir) await openFile(target, null, { keepFocus: true });
+  $('#codeTree').focus({ preventScroll: true });
   refresh();
 }
 
-async function deleteEntry(e) {
-  if (!(await confirmDialog(`'${relOf(state.repo, e.path)}' 을(를) 휴지통으로 옮깁니다.`, { title: '삭제', okLabel: '삭제', danger: true }))) return;
-  const r = await window.api.fs.trash(e.path);
-  if (!r.ok) return toast(r.error, 'error');
-  for (const d of [...docs.values()]) if (keyOf(d.path) === keyOf(e.path) || keyOf(d.path).startsWith(keyOf(e.path) + '\\')) closeDoc(d, { force: true });
+async function deleteEntries(list) {
+  // 함께 고른 폴더 안의 항목은 폴더와 같이 지워지므로 뺀다
+  const keys = list.map((x) => keyOf(x.path));
+  list = list.filter((x) => !keys.some((k) => keyOf(x.path).startsWith(k + '\\')));
+  const names = list.map((x) => relOf(state.repo, x.path) + (x.dir ? '/' : ''));
+  const msg = list.length === 1 ? `'${names[0]}' 을(를) 휴지통으로 옮깁니다.` : `${list.length}개 항목을 휴지통으로 옮깁니다.`;
+  const ok = await confirmDialog(msg, { title: '삭제', okLabel: '삭제', danger: true, detail: list.length > 1 ? names.join('\n') : undefined });
+  if (!ok) return $('#codeTree').focus({ preventScroll: true });
+  const failed = [];
+  for (const x of list) {
+    const r = await window.api.fs.trash(x.path);
+    if (!r.ok) {
+      failed.push(`${relOf(state.repo, x.path)}: ${r.error}`);
+      continue;
+    }
+    for (const d of [...docs.values()]) if (keyOf(d.path) === keyOf(x.path) || keyOf(d.path).startsWith(keyOf(x.path) + '\\')) closeDoc(d, { force: true });
+  }
+  treeSel.clear();
   await renderTree();
+  $('#codeTree').focus({ preventScroll: true });
   refresh();
+  if (failed.length) toast(`삭제하지 못한 항목 ${failed.length}개\n${failed.join('\n')}`, 'error', 8000);
 }
 
 // ---------- 파일 열기 / 탭 ----------
@@ -498,7 +601,7 @@ export async function openFile(path, selection, opts = {}) {
   }
   if (before && !samePlace(before, curPos())) navRecord(before);
   navLast = curPos();
-  editor.focus();
+  if (!opts.keepFocus) editor.focus();
 }
 
 function activate(path) {
