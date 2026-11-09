@@ -307,6 +307,8 @@ function setSel(rows, anchor) {
 
 // true 를 돌려주면 선택만 바꾼 것 (파일을 열거나 폴더를 펼치지 않는다)
 function selectClick(row, ev) {
+  // 편집기에 포커스가 있었으면 먼저 놓게 한다 (안 그러면 파일을 연 뒤 편집기가 포커스를 다시 가져간다)
+  if (editor?.hasTextFocus()) document.activeElement?.blur();
   $('#codeTree').focus({ preventScroll: true });
   const k = keyOf(row.dataset.path);
   if (ev.shiftKey) {
@@ -623,6 +625,35 @@ function activate(path) {
   renderTabs();
   updateStatus();
   document.querySelectorAll('#codeTree .ft-row').forEach((r) => r.classList.toggle('active', keyOf(r.dataset.path) === keyOf(doc.path)));
+  autoReveal(doc.path);
+}
+
+// 열린 파일이 탐색기에 보이도록 그 파일이 있는 폴더까지 펼치고 선택한다 (VS Code 처럼)
+let revealSeq = 0;
+async function autoReveal(p) {
+  const repo = state.repo;
+  if (!repo || !p || p.startsWith('jdt:') || !keyOf(p).startsWith(keyOf(repo) + '\\')) return;
+  const v = view();
+  let dir = p;
+  for (;;) {
+    const i = Math.max(dir.lastIndexOf('\\'), dir.lastIndexOf('/'));
+    if (i <= repo.length) break;
+    dir = dir.slice(0, i);
+    v.expanded.add(keyOf(dir));
+  }
+  const find = () => [...document.querySelectorAll('#codeTree .ft-row')].find((r) => keyOf(r.dataset.path) === keyOf(p));
+  let row = find();
+  if (!row || row.closest('.ft-kids[hidden]')) {
+    // 탐색기를 아직 그리지 않았으면 그릴 때 펼쳐진 채로 나온다
+    if (!document.querySelector('#codeTree .tree-root')) return;
+    const seq = ++revealSeq;
+    await renderTree();
+    if (seq !== revealSeq || keyOf(view().active || '') !== keyOf(p)) return;
+    row = find();
+  }
+  if (!row) return;
+  if (!treeSel.has(keyOf(p))) setSel([row], row);
+  row.scrollIntoView({ block: 'nearest' });
 }
 
 function showEmpty() {
