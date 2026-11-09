@@ -92,7 +92,7 @@ function draw() {
   );
   head.onclick = () => setCollapsed(!collapsed);
   if (!collapsed) {
-    const reload = h('button', { class: 'iss-icon', text: '⟳', title: '새로고침' });
+    const reload = h('button', { class: 'iss-icon ci', text: '\ueb37', title: '새로고침' });
     reload.onclick = (e) => {
       e.stopPropagation();
       load(1);

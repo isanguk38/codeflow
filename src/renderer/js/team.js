@@ -362,7 +362,7 @@ function emptyState() {
     'div',
     { class: 'team-empty' },
     h('div', { class: 'team-empty-box' },
-      h('div', { class: 'team-empty-title', text: curScope()?.kind === 'group' ? `✦ ${curScope().name} AI 팀` : '✦ AI 팀' }),
+      h('div', { class: 'team-empty-title', text: curScope()?.kind === 'group' ? `${curScope().name} AI 팀` : 'AI 팀' }),
       curScope()?.kind === 'group' ? h('p', { class: 'team-empty-scope', text: `'${curScope().name}' 그룹의 프로젝트 ${curScope().projects.length}개(${curScope().projects.map((x) => x.split(/[\\/]/).pop()).join(', ')})를 함께 다루는 그룹 팀입니다. 팀원은 이 프로젝트들만 읽고 고칠 수 있습니다.` }) : null,
       h('p', { text: '팀장 PM(오케스트레이터)에게 하고 싶은 일과 필요한 팀원을 말하면, PM 이 기획자·개발자·테스터 같은 팀원 에이전트를 만들고 이름과 역할을 붙여 일을 나눕니다. 팀원끼리 대화하며 일하고, 모든 대화가 이 방에 보입니다.' }),
       h('ul', {},
@@ -813,7 +813,7 @@ export async function askTeamSave(args) {
     }
     if (!teamShown() || curTeam() !== t) {
       markRail(true);
-      toast(`AI 팀의 ${m.name} 이(가) 만든 문서를 어디에 저장할지 묻고 있습니다. ✦ AI → 팀 에서 골라 주세요.`, 'info', 7000);
+      toast(`AI 팀의 ${m.name} 이(가) 만든 문서를 어디에 저장할지 묻고 있습니다. AI → 팀 에서 골라 주세요.`, 'info', 7000);
     }
   });
 }

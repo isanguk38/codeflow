@@ -300,7 +300,7 @@ function render() {
   };
   const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 화면 닫기 — 보던 화면으로 (Ctrl+Shift+A)' });
   close.onclick = () => (setupDlg ? setupDlg.close() : setVisible(false));
-  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: '✦ AI' }), sel, h('span', { class: 'tb-spacer' }), more));
+  panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: 'AI' }), sel, h('span', { class: 'tb-spacer' }), more));
 
   const body = h('div', { class: 'ai-body' });
   panel.append(body);
@@ -1654,7 +1654,7 @@ async function askSaveLocation(repo, { path: file, title }, { auto = false } = {
   const st = await window.api.file.stat(file);
   if (!st.ok || !st.data.isFile) return { error: `파일을 찾을 수 없습니다: ${file}` };
   const c = chatFor(repo);
-  if (!visible) notifyAi('AI 가 만든 문서를 어디에 저장할지 묻고 있습니다. 왼쪽 ✦ AI 화면에서 골라 주세요.');
+  if (!visible) notifyAi('AI 가 만든 문서를 어디에 저장할지 묻고 있습니다. 왼쪽 AI 화면에서 골라 주세요.');
   if (!auto) setActivity(c, 'waiting');
   (c.fileCards ||= new Map()).set(file.toLowerCase(), { remove() {} }); // 답변 끝의 경로 찾기에서 또 만들지 않게
   const name = file.split(/[\\/]/).pop();
@@ -1740,7 +1740,7 @@ function askApproval(repo, { tool_name: tool, input = {} }) {
     if (!visible || !c.list.isConnected) {
       const body = h('div', { class: 'ai-approve-dlg' }, h('div', { class: 'ai-dim', text: `${(repo || '').split(/[\\/]/).pop()} 프로젝트의 ${aiName()}` }), h('div', { class: 'ai-approve-title', text: describeTool(tool, input) }), detail ? h('pre', { class: 'ai-code-block', text: detail }) : null);
       dlg = modal({
-        title: '✦ AI 가 허용을 요청합니다',
+        title: 'AI 가 허용을 요청합니다',
         body,
         dismissable: false,
         buttons: [

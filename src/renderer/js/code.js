@@ -38,11 +38,11 @@ export function initCode() {
       <div class="panel-bar">
         <span class="panel-title">탐색기</span>
         <span class="tb-spacer"></span>
-        <button class="tb-btn small" id="codeSearch" title="프로젝트에서 찾기 (Ctrl+Shift+F)">🔍</button>
-        <button class="tb-btn small" id="codeNewFile" title="새 파일">＋파일</button>
-        <button class="tb-btn small" id="codeNewFolder" title="새 폴더">＋폴더</button>
-        <button class="tb-btn small" id="codeCollapse" title="모두 접기">⊟</button>
-        <button class="tb-btn small" id="codeReload" title="새로고침">⟳</button>
+        <button class="tb-btn small" id="codeSearch" title="프로젝트에서 찾기 (Ctrl+Shift+F)"><span class="ci">&#xea6d;</span></button>
+        <button class="tb-btn small" id="codeNewFile" title="새 파일"><span class="ci">&#xea7f;</span></button>
+        <button class="tb-btn small" id="codeNewFolder" title="새 폴더"><span class="ci">&#xea80;</span></button>
+        <button class="tb-btn small" id="codeCollapse" title="모두 접기"><span class="ci">&#xeac5;</span></button>
+        <button class="tb-btn small" id="codeReload" title="새로고침"><span class="ci">&#xeb37;</span></button>
       </div>
       <div class="code-tree" id="codeTree" tabindex="0"></div>
     </div>
@@ -365,6 +365,12 @@ function multiMenu(list) {
   ];
 }
 
+// 탐색기 아이콘 (codicon)
+const CHEV_RIGHT = '\ueab6';
+const CHEV_DOWN = '\ueab4';
+const FOLDER = '\uea83';
+const FOLDER_OPEN = '\ueaf7';
+
 async function renderDir(dir, parent, depth, repo) {
   const r = await window.api.fs.list(dir);
   if (!r.ok) {
@@ -377,8 +383,8 @@ async function renderDir(dir, parent, depth, repo) {
     const row = h(
       'div',
       { class: `ft-row ${e.dir ? 'dir' : 'file'} ${v.active && keyOf(v.active) === keyOf(e.path) ? 'active' : ''}`, 'data-path': e.path, 'data-name': e.name, 'data-dir': e.dir ? '1' : '', style: { paddingLeft: `${8 + depth * 14}px` }, title: e.path },
-      h('span', { class: 'ft-caret', text: e.dir ? (open ? '▾' : '▸') : '' }),
-      h('span', { class: `ft-ico ${e.dir ? 'folder' : fileIcon(e.name)}`, text: e.dir ? (open ? '📂' : '📁') : '' }),
+      h('span', { class: 'ft-caret ci', text: e.dir ? (open ? CHEV_DOWN : CHEV_RIGHT) : '' }),
+      h('span', { class: `ft-ico ${e.dir ? 'folder ci' : fileIcon(e.name)}`, text: e.dir ? (open ? FOLDER_OPEN : FOLDER) : '' }),
       h('span', { class: 'ft-name', text: e.name }),
       h('span', { class: 'ft-badge' })
     );
@@ -393,13 +399,13 @@ async function renderDir(dir, parent, depth, repo) {
         if (v.expanded.has(k)) {
           v.expanded.delete(k);
           kids.hidden = true;
-          row.querySelector('.ft-caret').textContent = '▸';
-          row.querySelector('.ft-ico').textContent = '📁';
+          row.querySelector('.ft-caret').textContent = CHEV_RIGHT;
+          row.querySelector('.ft-ico').textContent = FOLDER;
         } else {
           v.expanded.add(k);
           kids.hidden = false;
-          row.querySelector('.ft-caret').textContent = '▾';
-          row.querySelector('.ft-ico').textContent = '📂';
+          row.querySelector('.ft-caret').textContent = CHEV_DOWN;
+          row.querySelector('.ft-ico').textContent = FOLDER_OPEN;
           if (!kids.childElementCount) {
             await renderDir(e.path, kids, depth + 1, repo);
             decorateTree();
@@ -1263,7 +1269,7 @@ async function openJdkPicker(anchor, repo, info, level, proj) {
     javaPack.jdks.length ? null : { label: 'PC 에 설치된 JDK 를 찾지 못했습니다', disabled: true },
     '-',
     {
-      label: '📁 폴더에서 JDK 선택...',
+      label: '폴더에서 JDK 선택...',
       onClick: async () => {
         const home = await pickJdkFolder();
         if (home) choose(home);
@@ -1320,7 +1326,7 @@ export async function openProjectStructure(repo) {
   };
   fillJdks();
   jdkSel.onchange = () => (st.jdk = jdkSel.value || null);
-  const jdkAdd = h('button', { class: 'tb-btn small', text: '📁 폴더에서 추가...' });
+  const jdkAdd = h('button', { class: 'tb-btn small', text: '폴더에서 추가...' });
   jdkAdd.onclick = async () => {
     const home = await pickJdkFolder();
     if (!home) return;
@@ -1354,7 +1360,7 @@ export async function openProjectStructure(repo) {
         st.srcManual = true;
         drawSrc();
       };
-      srcList.append(h('div', { class: 'ps-item' }, h('span', { class: 'ps-ico', text: '📂' }), h('span', { class: 'ps-path', text: s }), x));
+      srcList.append(h('div', { class: 'ps-item' }, h('span', { class: 'ps-ico ci', text: '\ueaf7' }), h('span', { class: 'ps-path', text: s }), x));
     });
   };
   const srcAdd = h('button', { class: 'tb-btn small', text: '+ 소스 폴더 추가...' });

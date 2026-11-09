@@ -197,7 +197,7 @@ function rowEl(i) {
   const r = rows[i];
   let el;
   if (r.kind === 'name') {
-    el = h('div', { class: `fs-item name ${i === sel ? 'sel' : ''}`, title: r.dir ? `${r.rel}/\n클릭: 이 폴더 안에서만 찾기` : r.rel }, h('span', { class: 'fs-ico', text: r.dir ? '📁' : '📄' }), h('span', { class: 'fs-text', text: baseOf(r.rel) + (r.dir ? '/' : '') }), h('span', { class: 'fs-file', text: dirOf(r.rel) }));
+    el = h('div', { class: `fs-item name ${i === sel ? 'sel' : ''}`, title: r.dir ? `${r.rel}/\n클릭: 이 폴더 안에서만 찾기` : r.rel }, h('span', { class: 'fs-ico ci', text: r.dir ? '\uea83' : '\uea7b' }), h('span', { class: 'fs-text', text: baseOf(r.rel) + (r.dir ? '/' : '') }), h('span', { class: 'fs-file', text: dirOf(r.rel) }));
   } else {
     const lead = r.text.match(/^\s*/)[0].length;
     const text = r.text.slice(lead);

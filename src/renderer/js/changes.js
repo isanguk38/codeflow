@@ -45,8 +45,8 @@ export function initChanges() {
         <label class="check" title="전체 선택"><input type="checkbox" id="chkAll"></label>
         <span class="panel-title">변경 사항</span>
         <span class="tb-spacer"></span>
-        <button class="tb-btn small" id="btnRollback" title="선택한 파일의 변경 내용 되돌리기 (Ctrl+Alt+Z)">↶ 되돌리기</button>
-        <button class="tb-btn small" id="btnStash" title="변경 사항 임시 보관">⧉ 보관</button>
+        <button class="tb-btn small" id="btnRollback" title="선택한 파일의 변경 내용 되돌리기 (Ctrl+Alt+Z)"><span class="ico ci">&#xeae2;</span>되돌리기</button>
+        <button class="tb-btn small" id="btnStash" title="변경 사항 임시 보관"><span class="ico ci">&#xea98;</span>보관</button>
       </div>
       <div class="file-list" id="fileList"></div>
       <div class="commit-box">
@@ -267,7 +267,7 @@ async function showDiff(f, keepScroll = false) {
     : null;
   const actions = [
     lineBtn,
-    h('button', { class: 'tb-btn small', text: '↶ 되돌리기', title: '이 파일의 변경 내용 되돌리기', onclick: () => rollbackFiles([f]) }),
+    h('button', { class: 'tb-btn small', title: '이 파일의 변경 내용 되돌리기', onclick: () => rollbackFiles([f]) }, h('span', { class: 'ico ci', text: '\ueae2' }), '되돌리기'),
     h('button', { class: 'tb-btn small', text: '열기', title: '파일 열기', onclick: () => window.api.openPath(`${state.repo}/${f.path}`) }),
   ].filter(Boolean);
   const slow = setTimeout(() => {

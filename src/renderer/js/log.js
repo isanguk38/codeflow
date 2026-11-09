@@ -54,9 +54,9 @@ export function initLog() {
         <span id="logFilterInfo" class="filter-chip" hidden></span>
         <span class="tb-spacer"></span>
         <span class="hint-sel" id="logMultiInfo"></span>
-        <button class="tb-btn small" id="logView" title="정렬 / 강조 방식">👁 보기 ▾</button>
-        <button class="tb-btn small" id="logReflog" title="HEAD 이동 기록 (실수로 잃어버린 커밋 찾기)">↺ Reflog</button>
-        <button class="tb-btn small" id="logReload" title="새로고침">⟳</button>
+        <button class="tb-btn small" id="logView" title="정렬 / 강조 방식"><span class="ico ci">&#xea70;</span>보기<span class="caret ci">&#xeab4;</span></button>
+        <button class="tb-btn small" id="logReflog" title="HEAD 이동 기록 (실수로 잃어버린 커밋 찾기)"><span class="ico ci">&#xea82;</span>Reflog</button>
+        <button class="tb-btn small" id="logReload" title="새로고침"><span class="ci">&#xeb37;</span></button>
       </div>
       <div class="log-table-wrap" id="logTableWrap">
         <div class="log-table" id="logTable"></div>
@@ -293,7 +293,7 @@ function renderBranches(br) {
       'div',
       { class: `tree-item ${selected && !filter.file ? 'active' : ''} ${opts.current ? 'current' : ''}`, title: opts.title || label },
       chk,
-      h('span', { class: 'ti-ico', text: opts.ico || '⑂' }),
+      h('span', { class: 'ti-ico ci', text: opts.ico || '\uea68' }),
       h('span', { class: 'ti-name', text: label }),
       opts.hint ? h('span', { class: `ti-hint ${opts.hintClass || ''}`, text: opts.hint, title: opts.hintTitle || '' }) : null
     );
@@ -369,7 +369,7 @@ function renderBranches(br) {
     'div',
     { class: `tree-item all-row ${isAll() && !filter.file ? 'active' : ''}`, title: '모든 브랜치의 이력을 함께 봅니다' },
     selectMode ? h('input', { type: 'checkbox', checked: isAll() }) : null,
-    h('span', { class: 'ti-ico', text: '◎' }),
+    h('span', { class: 'ti-ico ci', text: '\ueb86' }),
     h('span', { class: 'ti-name', text: '모든 브랜치' }),
     pickBtn
   );
@@ -380,7 +380,7 @@ function renderBranches(br) {
     load();
   };
   el.prepend(allRow);
-  if (state.status?.detached) el.append(item(`HEAD (${state.status.headShort})`, CUR, { ico: '●', current: true, title: '분리된 HEAD (특정 커밋을 체크아웃한 상태)' }));
+  if (state.status?.detached) el.append(item(`HEAD (${state.status.headShort})`, CUR, { ico: '\uea71', current: true, title: '분리된 HEAD (특정 커밋을 체크아웃한 상태)' }));
   const localKeys = br.local.map((b) => (b.current ? CUR : b.name));
   group(
     '로컬',
@@ -390,7 +390,7 @@ function renderBranches(br) {
         branch: b,
         current: b.current,
         groupKeys: localKeys,
-        ico: b.current ? '★' : '⑂',
+        ico: b.current ? '\ueb59' : '\uea68',
         ...trackHint(b),
         title: `${b.name}${b.upstream ? ` → ${b.upstream}` : ''}\n우클릭: 체크아웃·업데이트(Pull) 등\nCtrl+클릭 / Shift+클릭: 여러 개 선택`,
       })
@@ -407,7 +407,7 @@ function renderBranches(br) {
   }
   group(
     '태그',
-    br.tags.map((b) => item(b.name, b.name, { kind: 'tag', branch: b, ico: '⌂' }))
+    br.tags.map((b) => item(b.name, b.name, { kind: 'tag', branch: b, ico: '\uea66' }))
   );
 }
 

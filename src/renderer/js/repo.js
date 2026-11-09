@@ -915,14 +915,14 @@ export async function renderWelcome() {
     h(
       'div',
       { class: 'welcome-box' },
-      h('div', { class: 'logo', html: '<span>Code</span>Flow' }),
+      h('div', { class: 'logo' }, h('img', { class: 'logo-mark', src: 'icon.png', alt: '' }), h('span', { text: 'CodeFlow' })),
       h('p', { class: 'sub', text: '보기 쉽고 간편한 Git 형상관리 도구' }),
       h(
         'div',
         { class: 'welcome-actions' },
-        h('button', { class: 'big-btn', onclick: pickAndOpen }, h('span', { class: 'ico', text: '▣' }), h('b', { text: '저장소 열기' }), h('small', { text: '내 PC의 Git 폴더 열기' })),
-        h('button', { class: 'big-btn', onclick: cloneDialog }, h('span', { class: 'ico', text: '⇣' }), h('b', { text: '복제 (Clone)' }), h('small', { text: 'GitHub 등에서 내려받기' })),
-        h('button', { class: 'big-btn', onclick: () => initRepo() }, h('span', { class: 'ico', text: '＋' }), h('b', { text: '새 저장소' }), h('small', { text: '폴더를 Git 저장소로 만들기' }))
+        h('button', { class: 'big-btn', onclick: pickAndOpen }, h('span', { class: 'ico ci', text: '\uea62' }), h('b', { text: '저장소 열기' }), h('small', { text: '내 PC의 Git 폴더 열기' })),
+        h('button', { class: 'big-btn', onclick: cloneDialog }, h('span', { class: 'ico ci', text: '\ueac2' }), h('b', { text: '복제 (Clone)' }), h('small', { text: 'GitHub 등에서 내려받기' })),
+        h('button', { class: 'big-btn', onclick: () => initRepo() }, h('span', { class: 'ico ci', text: '\uea60' }), h('b', { text: '새 저장소' }), h('small', { text: '폴더를 Git 저장소로 만들기' }))
       ),
       recent.length
         ? h(

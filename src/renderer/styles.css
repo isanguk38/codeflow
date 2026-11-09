@@ -1,3 +1,18 @@
+/* 아이콘: VS Code 의 codicon 한 벌로 통일 (monaco-editor 에 들어 있는 글꼴) */
+@font-face {
+  font-family: codicon;
+  src: url(../../node_modules/monaco-editor/min/vs/base/browser/ui/codicons/codicon/codicon.ttf) format('truetype');
+  font-display: block;
+}
+.ci {
+  font-family: codicon;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+  -webkit-font-smoothing: antialiased;
+}
+
 :root,
 [data-theme='dark'] {
   --bg: #1e1f22;
@@ -149,7 +164,11 @@ pre,
 }
 .tb-btn.icon {
   font-size: 16px;
-  padding: 2px 8px;
+  padding: 4px 8px;
+  color: var(--text2);
+}
+.tb-btn.icon:hover {
+  color: var(--text);
 }
 .tb-btn.small {
   padding: 1px 7px;
@@ -163,11 +182,14 @@ pre,
 }
 .tb-btn .ico {
   color: var(--text2);
+  font-size: 16px;
+}
+.tb-btn.small .ico {
   font-size: 14px;
 }
 .tb-btn .caret {
   color: var(--text3);
-  font-size: 10px;
+  font-size: 12px;
 }
 .tb-repo {
   font-weight: 600;
@@ -274,7 +296,9 @@ pre,
   font-size: 11px;
 }
 .rail-btn .ico {
-  font-size: 18px;
+  font-size: 20px;
+  height: 24px;
+  line-height: 24px;
 }
 .rail-btn:hover {
   background: var(--bg3);
@@ -743,7 +767,7 @@ input[type='checkbox'] {
 }
 .ti-ico {
   color: var(--text3);
-  width: 12px;
+  width: 16px;
   text-align: center;
 }
 .tree-item.current .ti-ico {
@@ -972,12 +996,16 @@ input[type='checkbox'] {
   padding: 40px 0;
 }
 .logo {
-  font-size: 40px;
-  font-weight: 700;
-  letter-spacing: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
-.logo span {
-  color: var(--accent2);
+.logo-mark {
+  width: 40px;
+  height: 40px;
 }
 .sub {
   color: var(--text2);
@@ -1005,7 +1033,13 @@ input[type='checkbox'] {
   background: var(--bg3);
 }
 .big-btn .ico {
-  font-size: 26px;
+  font-size: 24px;
+  height: 32px;
+  line-height: 32px;
+  color: var(--text2);
+  transition: color 0.15s;
+}
+.big-btn:hover .ico {
   color: var(--accent2);
 }
 .big-btn small {
@@ -1822,7 +1856,8 @@ input[type='checkbox'] {
 }
 .fs-ico {
   flex: none;
-  font-size: 12px;
+  font-size: 14px;
+  color: var(--text3);
 }
 .fs-text {
   flex: 1;
