@@ -71,8 +71,36 @@ function rename(from, to) {
   fs.renameSync(from, to);
 }
 
+// 폴더를 자기 자신이나 그 안으로 넣으려는지
+function insideSelf(from, toDir) {
+  const a = path.resolve(from).toLowerCase() + path.sep;
+  const b = path.resolve(toDir).toLowerCase() + path.sep;
+  return b.startsWith(a);
+}
+
+// toDir 안으로 복사한다. 같은 이름이 있으면 'a - 복사본.txt', 'a - 복사본 (2).txt' 처럼 새 이름을 붙인다. 만든 경로를 돌려준다
+function copy(from, toDir) {
+  if (!fs.existsSync(from)) throw new Error('복사할 항목을 찾을 수 없습니다.');
+  if (insideSelf(from, toDir)) throw new Error('폴더를 자기 자신 안으로 복사할 수 없습니다.');
+  const ext = fs.statSync(from).isDirectory() ? '' : path.extname(from);
+  const base = path.basename(from, ext);
+  let to = path.join(toDir, base + ext);
+  for (let i = 1; fs.existsSync(to); i++) to = path.join(toDir, `${base} - 복사본${i > 1 ? ` (${i})` : ''}${ext}`);
+  fs.cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
+  return to;
+}
+
+// toDir 안으로 옮긴다. 옮긴 뒤의 경로를 돌려준다
+function move(from, toDir) {
+  if (insideSelf(from, toDir)) throw new Error('폴더를 자기 자신 안으로 옮길 수 없습니다.');
+  const to = path.join(toDir, path.basename(from));
+  if (fs.existsSync(to)) throw new Error(`'${path.basename(from)}' 이(가) 그 폴더에 이미 있습니다.`);
+  fs.renameSync(from, to);
+  return to;
+}
+
 async function trash(p) {
   await shell.trashItem(p);
 }
 
-module.exports = { list, read, write, stat, createFile, createFolder, rename, trash };
+module.exports = { list, read, write, stat, createFile, createFolder, rename, copy, move, trash };

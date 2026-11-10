@@ -206,7 +206,7 @@ ipcMain.on('search:cancel', (_e, id) => {
 
 // 코드 화면: 파일 작업
 const files = require('./files');
-for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash']) {
+for (const name of ['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'copy', 'move', 'trash']) {
   ipcMain.handle(`fs:${name}`, async (_e, ...args) => {
     try {
       return { ok: true, data: await files[name](...args) };

@@ -187,6 +187,19 @@ pre,
 .tb-btn.small .ico {
   font-size: 14px;
 }
+/* 글자 없이 아이콘만 있는 버튼 */
+.tb-btn.icon-only {
+  color: var(--text2);
+  font-size: 16px;
+  padding: 4px 6px;
+}
+.tb-btn.small.icon-only {
+  font-size: 14px;
+  padding: 3px 6px;
+}
+.tb-btn.icon-only:hover {
+  color: var(--text);
+}
 .tb-btn .caret {
   color: var(--text3);
   font-size: 12px;

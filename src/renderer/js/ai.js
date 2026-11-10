@@ -8,6 +8,9 @@ import { activateCode, openFile } from './code.js';
 import { runInTerminal, readTerminal, listTerminals } from './terminal.js';
 import { tabs, switchTab } from './repo.js';
 import { fileCard } from './preview.js';
+import { md, bindLinks, describeTool, FILE_TOOLS } from './ai-format.js';
+import { attachmentFromPath, attachmentFromBlob, attachChip } from './ai-attach.js';
+import { ico } from './icons.js';
 
 const openDirs = () => tabs.map((t) => t.path);
 const dirsKey = () => openDirs().map((d) => d.toLowerCase()).sort().join('|');
@@ -252,9 +255,9 @@ function render() {
     if (c?.conv.entries.length) toast(`다음 질문부터 ${aiName()} 가 지금 대화를 이어서 답합니다.`, 'info', 4000);
     refreshStatus().then(() => phase === 'ready' && (maybeWarm(), loadMcp(provider)));
   };
-  const newBtn = h('button', { class: 'tb-btn small', text: '＋', title: '새 대화 (지금 대화는 기록에 남음)' });
+  const newBtn = h('button', { class: 'tb-btn small icon-only', title: '새 대화 (지금 대화는 기록에 남음)' }, ico('add'));
   newBtn.onclick = () => newChat();
-  const histBtn = h('button', { class: 'tb-btn small', text: '🕘', title: '지난 대화 (이 프로젝트)' });
+  const histBtn = h('button', { class: 'tb-btn small icon-only', title: '지난 대화 (이 프로젝트)' }, ico('history'));
   histBtn.onclick = () => openHistory(histBtn);
   const more = h('button', { class: 'tb-btn small', text: '⋯', title: '더 보기' });
   more.onclick = async () => {
@@ -280,9 +283,9 @@ function render() {
             codexUpdating
               ? { label: 'Codex 업데이트 중…', disabled: true }
               : codexUpd.hasUpdate
-                ? { label: `⬆ Codex ${codexUpd.latest} 으로 업데이트 (지금 ${codexUpd.current})`, onClick: doCodexUpdate }
+                ? { label: `Codex ${codexUpd.latest} 으로 업데이트 (지금 ${codexUpd.current})`, onClick: doCodexUpdate }
                 : { label: `✓ Codex 최신 버전 (${codexUpd.current})`, disabled: true },
-            codexUpd.previous ? { label: `↩ 이전 버전 ${codexUpd.previous} 으로 되돌리기`, onClick: doCodexRollback } : null,
+            codexUpd.previous ? { label: `이전 버전 ${codexUpd.previous} 으로 되돌리기`, onClick: doCodexRollback } : null,
             { label: '업데이트 다시 확인', onClick: () => checkCodexUpdate(true).then(() => toast(codexUpd?.hasUpdate ? `새 버전 ${codexUpd.latest} 이 있습니다.` : '최신 버전입니다.', 'info')) },
           ]
         : []),
@@ -295,10 +298,10 @@ function render() {
         onClick: () => window.api.openExternal('https://claude.ai/settings/connectors'),
       })),
       mcp.some((m) => m.status === 'needs-auth' && m.source === 'claudeai') ? { header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' } : null,
-      { label: '↻ 다시 확인', onClick: async () => (delete mcpBy[p], await loadMcp(p, true), toast('MCP 상태를 다시 확인했습니다. ⋯ 를 다시 눌러 보세요.', 'info')) },
+      { label: '다시 확인', onClick: async () => (delete mcpBy[p], await loadMcp(p, true), toast('MCP 상태를 다시 확인했습니다. ⋯ 를 다시 눌러 보세요.', 'info')) },
     ].filter(Boolean));
   };
-  const close = h('button', { class: 'tb-btn small', text: '✕', title: 'AI 화면 닫기 — 보던 화면으로 (Ctrl+Shift+A)' });
+  const close = h('button', { class: 'tb-btn small icon-only', title: 'AI 화면 닫기 — 보던 화면으로 (Ctrl+Shift+A)' }, ico('close'));
   close.onclick = () => (setupDlg ? setupDlg.close() : setVisible(false));
   panel.append(h('div', { class: 'ai-head' }, h('span', { class: 'ai-title', text: 'AI' }), sel, h('span', { class: 'tb-spacer' }), more));
 
@@ -534,7 +537,7 @@ function chatView() {
   if (!c.list.childElementCount) c.list.append(welcomeNote());
   const strip = h('div', { class: 'ai-attach', id: 'aiAttach' });
   const input = h('textarea', { class: 'ai-input', id: 'aiInput', rows: 3, placeholder: '무엇을 도와드릴까요? (Enter 보내기, Shift+Enter 줄바꿈)\n예) 이 프로젝트 실행시켜줘 / CodeFlow 에서 브랜치 합치려면?' });
-  const send = h('button', { class: 'btn primary small', id: 'aiSend', text: c.busy ? '■ 중지' : '보내기' });
+  const send = h('button', { class: 'btn primary small', id: 'aiSend', text: c.busy ? '중지' : '보내기' });
   send.onclick = () => (c.busy ? stopChat(c) : submit(c, input));
   input.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -549,7 +552,7 @@ function chatView() {
     e.preventDefault();
     for (const f of files) addFileObject(c, f);
   };
-  const clip = h('button', { class: 'tb-btn small', text: '📎', title: '파일·이미지 첨부 (붙여넣기 Ctrl+V, 끌어다 놓기도 가능)' });
+  const clip = h('button', { class: 'tb-btn small icon-only', title: '파일·이미지 첨부 (붙여넣기 Ctrl+V, 끌어다 놓기도 가능)' }, ico('attach'));
   clip.onclick = async () => {
     const files = await window.api.pickFiles('AI 에게 보낼 파일 선택', [{ name: '모든 파일', extensions: ['*'] }], state.repo);
     for (const f of files) await addPath(c, f);
@@ -659,7 +662,7 @@ function drawConv(c) {
   c.conv.entries.forEach((e, i) => {
     if (e.role === 'user') {
       const bubble = h('div', { class: 'ai-msg user' });
-      if (e.attachments?.length) bubble.append(h('div', { class: 'ai-attach in-msg' }, ...e.attachments.map((n) => h('div', { class: 'ai-chip', text: `📎 ${n}` }))));
+      if (e.attachments?.length) bubble.append(h('div', { class: 'ai-attach in-msg' }, ...e.attachments.map((n) => h('div', { class: 'ai-chip' }, ico('attach'), n))));
       bubble.append(h('div', { text: e.text }));
       c.list.append(bubble);
       return;
@@ -697,7 +700,7 @@ function ensureLoaded(c) {
         c.list.innerHTML = '';
         c.list.append(welcomeNote());
         drawConv(c);
-        c.list.append(h('div', { class: 'ai-foot', text: `가장 최근 대화를 이어서 보여 줍니다 (${ago(last.updated)}). 새로 시작하려면 ＋ 를 누르세요.` }));
+        c.list.append(h('div', { class: 'ai-foot', text: `가장 최근 대화를 이어서 보여 줍니다 (${ago(last.updated)}). 새로 시작하려면 위쪽의 새 대화 버튼을 누르세요.` }));
       }
     }
     c.loaded = true;
@@ -845,7 +848,7 @@ function compact(c) {
 function updateSendButton(c) {
   if (repoKey(c.repo) !== repoKey(state.repo)) return;
   const b = $('#aiSend');
-  if (b) b.textContent = c.busy ? '■ 중지' : '보내기';
+  if (b) b.textContent = c.busy ? '중지' : '보내기';
 }
 
 function scrollDown(c) {
@@ -912,64 +915,6 @@ async function submit(c, input) {
 
 // ---------- 첨부 ----------
 
-const MAX_SIDE = 1568; // 이보다 큰 이미지는 줄여서 보낸다 (AI 가 어차피 줄여서 보고, 전송·토큰도 아낌)
-const OK_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('이미지를 읽지 못했습니다.'));
-    img.src = src;
-  });
-}
-
-// 크기를 줄이거나 지원하지 않는 형식(bmp 등)을 png/jpeg 로 바꾼다
-async function normalizeImage(mime, data) {
-  const img = await loadImage(`data:${mime};base64,${data}`);
-  const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
-  if (scale === 1 && OK_MIME.includes(mime) && data.length < 4.5e6) return { mime, data, w: img.width, h: img.height };
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(img.width * scale);
-  cv.height = Math.round(img.height * scale);
-  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-  let url = cv.toDataURL('image/png');
-  if (url.length > 4.5e6) url = cv.toDataURL('image/jpeg', 0.85);
-  return { mime: url.slice(5, url.indexOf(';')), data: url.slice(url.indexOf(',') + 1), w: cv.width, h: cv.height };
-}
-
-// 파일 경로 → 첨부 (이미지는 AI 가 받을 수 있는 크기로 줄임). 팀 화면도 같이 쓴다
-export async function attachmentFromPath(file) {
-  const r = await window.api.ai.readAttachment(file);
-  if (!r.ok) {
-    toast(r.error, 'error', 5000);
-    return null;
-  }
-  const a = r.data;
-  if (a.kind === 'image') Object.assign(a, await normalizeImage(a.mime, a.data).catch(() => ({})));
-  return a;
-}
-// 붙여넣기한 이미지(파일 경로가 없는 것) → 첨부
-export function attachmentFromBlob(f, n = 1) {
-  if (!f.type.startsWith('image/')) {
-    toast('붙여넣은 내용을 첨부할 수 없습니다. 📎 로 파일을 고르세요.', 'warn');
-    return Promise.resolve(null);
-  }
-  return new Promise((resolve) => {
-    const rd = new FileReader();
-    rd.onload = async () => {
-      const url = String(rd.result);
-      const img = await normalizeImage(url.slice(5, url.indexOf(';')), url.slice(url.indexOf(',') + 1)).catch(() => null);
-      if (!img) {
-        toast('이미지를 읽지 못했습니다.', 'error');
-        return resolve(null);
-      }
-      resolve({ kind: 'image', name: f.name && f.name !== 'image.png' ? f.name : `붙여넣은 이미지 ${n}.png`, ...img, size: Math.round((img.data.length * 3) / 4) });
-    };
-    rd.readAsDataURL(f);
-  });
-}
-
 async function addPath(c, file) {
   const a = await attachmentFromPath(file);
   if (a) pushAttach(c, a);
@@ -987,21 +932,6 @@ function pushAttach(c, a) {
   c.attach.push(a);
   drawAttach(c);
   $('#aiInput')?.focus();
-}
-
-const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
-
-export function attachChip(a, onRemove) {
-  const chip = h('div', { class: `ai-chip ${a.kind}`, title: `${a.path || a.name} · ${fmtSize(a.size || 0)}${a.kind === 'file' ? '\nAI 가 경로로 직접 읽습니다' : ''}` });
-  if (a.kind === 'image') chip.append(h('img', { src: `data:${a.mime};base64,${a.data}` }));
-  else chip.append(h('span', { class: 'ai-chip-ico', text: a.kind === 'pdf' ? '📕' : '📄' }));
-  chip.append(h('span', { class: 'ai-chip-name', text: a.name }));
-  if (onRemove) {
-    const x = h('button', { class: 'ai-chip-x', text: '✕', title: '빼기' });
-    x.onclick = onRemove;
-    chip.append(x);
-  }
-  return chip;
 }
 
 function drawAttach(c) {
@@ -1121,160 +1051,6 @@ function stopChat(c) {
   c.stopped = true;
 }
 
-// 아주 작은 마크다운: 코드 블록, 인라인 코드, 굵게, 제목, 목록, 링크
-// 마크다운 → HTML (AI 답변, 이슈 본문): 코드 블록, 표, 제목, 목록(들여쓰기), 인용, 구분선, 굵게·기울임·취소선·인라인 코드·링크
-function mdInline(s) {
-  const codes = [];
-  s = esc(s).replace(/`([^`\n]+)`/g, (_, c) => (codes.push(`<code>${c}</code>`), `\u0001${codes.length - 1}\u0001`));
-  s = s
-    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-    .replace(/__([^_\n]+)__/g, '<b>$1</b>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<i>$2</i>')
-    .replace(/~~([^~\n]+)~~/g, '<s>$1</s>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="#" data-url="$2">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="#" data-url="$2">$2</a>');
-  return s.replace(/\u0001(\d+)\u0001/g, (_, i) => codes[+i]);
-}
-
-const splitRow = (line) =>
-  line
-    .trim()
-    .replace(/^\||\|$/g, '')
-    .split(/(?<!\\)\|/)
-    .map((c) => c.trim().replace(/\\\|/g, '|'));
-
-export function md(text) {
-  const out = [];
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
-  let para = [];
-  const flush = () => {
-    if (para.length) out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
-    para = [];
-  };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // 코드 블록
-    const fence = line.match(/^\s*```(\w*)\s*$/);
-    if (fence) {
-      flush();
-      const code = [];
-      for (i++; i < lines.length && !/^\s*```\s*$/.test(lines[i]); i++) code.push(lines[i]);
-      out.push(`<pre class="ai-code-block"><code>${esc(code.join('\n'))}</code></pre>`);
-      continue;
-    }
-    // 표: | a | b |  다음 줄이 |---|---|
-    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1] || '')) {
-      flush();
-      const head = splitRow(line);
-      const align = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : ''));
-      const rows = [];
-      for (i += 2; i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]); i++) rows.push(splitRow(lines[i]));
-      i--;
-      const td = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ''}>${mdInline(c)}</${tag}>`;
-      out.push(
-        `<div class="ai-table-wrap"><table class="ai-table"><thead><tr>${head.map((c, k) => td('th', c, k)).join('')}</tr></thead><tbody>${rows
-          .map((r) => `<tr>${head.map((_, k) => td('td', r[k] ?? '', k)).join('')}</tr>`)
-          .join('')}</tbody></table></div>`
-      );
-      continue;
-    }
-    // 제목
-    const hd = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
-    if (hd) {
-      flush();
-      out.push(`<div class="ai-h ai-h${Math.min(hd[1].length, 4)}">${mdInline(hd[2])}</div>`);
-      continue;
-    }
-    // 구분선
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      flush();
-      out.push('<hr class="ai-hr">');
-      continue;
-    }
-    // 인용
-    if (/^\s*>/.test(line)) {
-      flush();
-      const q = [];
-      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) q.push(lines[i].replace(/^\s*>\s?/, ''));
-      i--;
-      out.push(`<blockquote class="ai-quote">${md(q.join('\n'))}</blockquote>`);
-      continue;
-    }
-    // 목록 (들여쓰기 수준 유지)
-    const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
-    if (li) {
-      flush();
-      const depth = Math.min(4, Math.floor(li[1].replace(/\t/g, '  ').length / 2));
-      const mark = /\d/.test(li[2]) ? li[2].replace(')', '.') : '•';
-      const task = li[3].match(/^\[( |x|X)\]\s+(.*)$/);
-      const body = task ? `${task[1] === ' ' ? '☐' : '☑'} ${mdInline(task[2])}` : mdInline(li[3]);
-      out.push(`<div class="ai-li" style="padding-left:${10 + depth * 16}px"><span class="ai-li-mark">${mark}</span><span>${body}</span></div>`);
-      continue;
-    }
-    if (!line.trim()) {
-      flush();
-      continue;
-    }
-    para.push(line);
-  }
-  flush();
-  return out.join('');
-}
-
-export function bindLinks(el) {
-  el.querySelectorAll('a[data-url]').forEach((a) => (a.onclick = (e) => (e.preventDefault(), window.api.openExternal(a.dataset.url))));
-}
-
-// 도구 호출을 사람이 읽기 쉬운 한 줄로
-function describeTool(name, input = {}) {
-  const short = (s, n = 90) => (String(s || '').length > n ? `${String(s).slice(0, n)}…` : String(s || ''));
-  const rel = (p) => short(String(p || '').replace(state.repo || '', '').replace(/^[\\/]/, ''));
-  switch (name) {
-    case 'Bash':
-    case 'PowerShell':
-      return `명령 실행: ${short(input.command)}`;
-    case 'Read':
-      return `파일 읽기: ${rel(input.file_path)}`;
-    case 'Edit':
-    case 'MultiEdit':
-      return `파일 수정: ${rel(input.file_path)}`;
-    case 'Write':
-      return `파일 쓰기: ${rel(input.file_path)}`;
-    case 'Grep':
-      return `검색: ${short(input.pattern)}`;
-    case 'Glob':
-      return `파일 찾기: ${short(input.pattern)}`;
-    case 'WebFetch':
-      return `웹 페이지 읽기: ${short(input.url)}`;
-    case 'WebSearch':
-      return `웹 검색: ${short(input.query)}`;
-    case 'TodoWrite':
-      return '할 일 목록 정리';
-    case 'mcp__codeflow__run_in_terminal':
-      return `CodeFlow 터미널에서 실행: ${short(input.command)}`;
-    case 'mcp__codeflow__read_terminal':
-      return 'CodeFlow 터미널 출력 확인';
-    case 'mcp__codeflow__list_terminals':
-      return 'CodeFlow 터미널 목록 확인';
-    case 'mcp__codeflow__open_file':
-      return `파일 열기: ${rel(input.path)}${input.line ? `:${input.line}` : ''}`;
-    case 'mcp__codeflow__show_view':
-      return `화면 이동: ${{ changes: '커밋', log: '히스토리', stash: '스태시', code: '코드' }[input.view] || input.view}`;
-    case 'mcp__codeflow__git_status':
-      return `Git 상태 확인${input.path ? `: ${input.path.split(/[\\/]/).pop()}` : ''}`;
-    case 'mcp__codeflow__save_document':
-      return `문서 저장 위치 묻기: ${String(input.path || '').split(/[\\/]/).pop()}`;
-    case 'mcp__codeflow__list_projects':
-      return '열린 프로젝트 탭 확인';
-    case 'mcp__codeflow__switch_project':
-      return `프로젝트 탭 전환: ${String(input.path || '').split(/[\\/]/).pop()}`;
-    default:
-      return `${name.replace(/^mcp__/, '').replace(/__/g, ' · ')}`;
-  }
-}
-
-// AI 가 파일을 만들거나 고치면 그 도구 표시 아래에 파일 카드 (이미지는 미리보기) — 같은 파일은 마지막 것만
-const FILE_TOOLS = { Write: '만듦/덮어씀', Edit: '수정함', MultiEdit: '수정함', NotebookEdit: '수정함' };
 function addFileCard(c, toolId) {
   const name = c.toolNames.get(toolId);
   const p = c.toolInputs?.get(toolId)?.file_path || c.toolInputs?.get(toolId)?.notebook_path;
@@ -1660,7 +1436,7 @@ async function askSaveLocation(repo, { path: file, title }, { auto = false } = {
   const name = file.split(/[\\/]/).pop();
   const downloads = await window.api.file.appPath('downloads');
   return new Promise((resolve) => {
-    const box = h('div', { class: 'ai-save' }, h('div', { class: 'ai-approve-title', text: `📄 ${title || name} — 어디에 저장할까요?` }));
+    const box = h('div', { class: 'ai-save' }, h('div', { class: 'ai-approve-title' }, ico('file'), `${title || name} — 어디에 저장할까요?`));
     const card = fileCard(file, { verb: '새 문서', openFile: (f) => window.api.openPath(f) });
     const row = h('div', { class: 'ai-row' });
     const note = h('div', { class: 'ai-dim' });

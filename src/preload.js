@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('api', {
     onFound: (cb) => ipcRenderer.on('search:found', (_e, d) => cb(d)),
     onDone: (cb) => ipcRenderer.on('search:done', (_e, d) => cb(d)),
   },
-  fs: Object.fromEntries(['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'trash'].map((n) => [n, (...a) => ipcRenderer.invoke(`fs:${n}`, ...a)])),
+  fs: Object.fromEntries(['list', 'read', 'write', 'stat', 'createFile', 'createFolder', 'rename', 'copy', 'move', 'trash'].map((n) => [n, (...a) => ipcRenderer.invoke(`fs:${n}`, ...a)])),
   file: {
     preview: (p) => ipcRenderer.invoke('file:preview', p),
     saveCopy: (p) => ipcRenderer.invoke('file:saveCopy', p),

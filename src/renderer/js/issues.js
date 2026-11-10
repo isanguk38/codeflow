@@ -4,7 +4,7 @@
 // - 이슈를 누르면 상세(번호, 제목, 상태, 작성자·담당자, 라벨, 본문) + 웹에서 열기 / 이 이슈로 브랜치 만들기 / 커밋 메시지에 번호 넣기
 import { $, h, esc, toast, modal, fmtDate, splitter } from './ui.js';
 import { state } from './state.js';
-import { md, bindLinks } from './ai.js';
+import { md, bindLinks } from './ai-format.js';
 import { newBranch } from './branches.js';
 import { filterByIssue, currentIssueFilter } from './log.js';
 
@@ -86,7 +86,7 @@ function draw() {
   const head = h(
     'div',
     { class: 'iss-head', title: collapsed ? '이슈 펼치기' : '이슈 접기' },
-    h('span', { text: `${collapsed ? '▸' : '▾'} 이슈` }),
+    h('span', { class: 'iss-title' }, h('span', { class: 'ci', text: collapsed ? '\ueab6' : '\ueab4' }), '이슈'),
     count !== '' && !c?.error ? h('span', { class: 'iss-count', text: String(count) }) : null,
     h('span', { class: 'tb-spacer' })
   );
@@ -99,7 +99,7 @@ function draw() {
     };
     head.append(reload);
     if (c?.service?.issuesUrl) {
-      const web = h('button', { class: 'iss-icon', text: '↗', title: `웹에서 이슈 보드 열기 (${c.service.host})` });
+      const web = h('button', { class: 'iss-icon ci', text: '\ueb14', title: `웹에서 이슈 보드 열기 (${c.service.host})` });
       web.onclick = (e) => {
         e.stopPropagation();
         window.api.openExternal(c.service.issuesUrl);
@@ -172,7 +172,7 @@ function draw() {
 function row(it, c) {
   // 좁은 사이드바: 1줄 = 번호 + 제목(가능한 한 길게), 2줄 = 라벨·담당자·댓글 (작게)
   const labels = it.labels.slice(0, 2).map((l) => h('span', { class: 'iss-label', text: l.name, style: l.color ? { borderColor: l.color, color: l.color } : null }));
-  const meta = [...labels, it.assignees.length ? h('span', { class: 'iss-cmt', text: `@${it.assignees[0]}` }) : null, it.comments ? h('span', { class: 'iss-cmt', text: `💬${it.comments}` }) : null].filter(Boolean);
+  const meta = [...labels, it.assignees.length ? h('span', { class: 'iss-cmt', text: `@${it.assignees[0]}` }) : null, it.comments ? h('span', { class: 'iss-cmt' }, h('span', { class: 'ci', text: '\uea6b' }), String(it.comments)) : null].filter(Boolean);
   const r = h(
     'div',
     { class: `iss-row ${it.state}`, title: `#${it.number} ${it.title}
@@ -183,7 +183,7 @@ ${it.body.replace(/\s+/g, ' ').slice(0, 200)}` },
   // 누르면: 히스토리를 이 이슈의 커밋만 보이게 (다시 누르면 해제). 상세는 두 번 클릭 또는 ⓘ
   const sel = currentIssueFilter()?.number === it.number;
   r.classList.toggle('selected', sel);
-  r.title = `${r.title}\n\n클릭: 이 이슈의 커밋만 히스토리에 보기 · 두 번 클릭(또는 ⓘ): 이슈 내용`;
+  r.title = `${r.title}\n\n클릭: 이 이슈의 커밋만 히스토리에 보기 · 두 번 클릭(또는 정보 버튼): 이슈 내용`;
   r.onclick = () => {
     filterByIssue(currentIssueFilter()?.number === it.number ? null : it);
     draw();
@@ -192,7 +192,7 @@ ${it.body.replace(/\s+/g, ' ').slice(0, 200)}` },
     e.preventDefault();
     openIssue(it, c.service);
   };
-  const info = h('button', { class: 'iss-info', text: 'ⓘ', title: '이슈 내용 보기' });
+  const info = h('button', { class: 'iss-info ci', text: '\uea74', title: '이슈 내용 보기' });
   info.onclick = (e) => {
     e.stopPropagation();
     openIssue(it, c.service);

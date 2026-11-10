@@ -71,7 +71,9 @@
       "node_modules/@lydell/**",
       "node_modules/pyright/**",
       "src/main/search.js",
-      "src/main/git.js"
+      "src/main/git.js",
+      "src/main/git-find.js",
+      "src/main/git-branch.js"
     ]
   }
 }

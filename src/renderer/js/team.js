@@ -3,7 +3,10 @@
 // 실제 에이전트 실행과 메시지 전달은 메인 프로세스(src/main/team.js)가 한다
 import { $, h, esc, toast, modal, promptDialog, confirmDialog, contextMenu, menuAt, fmtDate } from './ui.js';
 import { state } from './state.js';
-import { md, attachmentFromPath, attachmentFromBlob, attachChip, openAiSetup } from './ai.js';
+import { openAiSetup } from './ai.js';
+import { ico, fileKindIcon } from './icons.js';
+import { md } from './ai-format.js';
+import { attachmentFromPath, attachmentFromBlob, attachChip } from './ai-attach.js';
 import { teamScopeFor, teamScopeOfGroup } from './repo.js';
 import { fileCard } from './preview.js';
 
@@ -119,7 +122,7 @@ async function openMcp(t, anchor) {
     if (list.some((s) => s.status === 'needs-auth' && (/^claude\.ai /.test(s.name) || s.source === 'claudeai'))) items.push({ header: '인증 필요 커넥터를 누르면 claude.ai 커넥터 설정이 열립니다' });
     items.push('-');
   }
-  items.push({ label: '⚙ AI 연결 · 설정 열기 (로그인, MCP 다시 확인)', onClick: () => openAiSetup(t.provider) });
+  items.push({ label: 'AI 연결 · 설정 열기 (로그인, MCP 다시 확인)', onClick: () => openAiSetup(t.provider) });
   menuAt(anchor, items);
 }
 
@@ -331,9 +334,9 @@ function emptyState() {
   const syncModel = () => (modelSel.hidden = sel.value !== 'claude');
   sel.addEventListener('change', syncModel);
   syncModel();
-  const emptyHist = h('button', { class: 'tb-btn small', text: '🕘 지난 팀 대화' });
+  const emptyHist = h('button', { class: 'tb-btn small' }, ico('history', 'ico'), '지난 팀 대화');
   emptyHist.onclick = () => openHistory(emptyHist);
-  const emptySetup = h('button', { class: 'tb-btn small', text: '⚙ AI 연결 · 설정', title: 'Claude Code / Codex 설치·로그인, 업데이트, MCP 확인' });
+  const emptySetup = h('button', { class: 'tb-btn small', title: 'Claude Code / Codex 설치·로그인, 업데이트, MCP 확인' }, ico('gear', 'ico'), 'AI 연결 · 설정');
   emptySetup.onclick = () => openAiSetup(provider);
   const start = h('button', { class: 'btn primary', text: '팀 시작' });
   start.onclick = async () => {
@@ -380,7 +383,9 @@ function emptyState() {
 }
 
 function avatar(m, size = '') {
-  return h('span', { class: `team-av ${size}`, text: m.pm ? 'PM' : (m.name || '?').slice(0, 1), style: { background: m.color } });
+  const el = h('span', { class: `team-av ${size}`, text: m.pm ? 'PM' : (m.name || '?').slice(0, 1) });
+  el.style.setProperty('--mc', m.color || '');
+  return el;
 }
 
 function drawSide() {
@@ -388,13 +393,13 @@ function drawSide() {
   const t = curTeam();
   if (!side || !t) return;
   side.innerHTML = '';
-  const addBtn = h('button', { class: 'tb-btn small', text: '＋ 팀원', title: '팀원을 직접 추가 (보통은 PM 에게 부탁하면 됩니다)' });
+  const addBtn = h('button', { class: 'tb-btn small', title: '팀원을 직접 추가 (보통은 PM 에게 부탁하면 됩니다)' }, ico('add', 'ico'), '팀원');
   addBtn.onclick = () => addMemberDialog(t);
-  const stopBtn = h('button', { class: 'tb-btn small', text: '⏸ 모두 멈춤', title: '모든 팀원의 작업을 멈춤 (팀원은 남음)' });
+  const stopBtn = h('button', { class: 'tb-btn small', title: '모든 팀원의 작업을 멈춤 (팀원은 남음)' }, ico('pause', 'ico'), '모두 멈춤');
   stopBtn.onclick = () => window.api.team.stopWork(t.id);
   const endBtn = h('button', { class: 'tb-btn small danger', text: '팀 삭제', title: '모든 에이전트를 끄고 이 팀과 대화 기록을 지웁니다' });
   endBtn.onclick = async () => {
-    if (!(await confirmDialog('모든 에이전트를 끄고 이 팀과 대화 기록을 지울까요? (되돌릴 수 없음)\n지금 팀을 남겨 두고 새로 시작하려면 위쪽 ‘＋ 새 팀’ 을 쓰세요.', { title: '팀 삭제', okLabel: '삭제', danger: true }))) return;
+    if (!(await confirmDialog('모든 에이전트를 끄고 이 팀과 대화 기록을 지울까요? (되돌릴 수 없음)\n지금 팀을 남겨 두고 새로 시작하려면 위쪽 ‘새 팀’ 을 쓰세요.', { title: '팀 삭제', okLabel: '삭제', danger: true }))) return;
     await window.api.team.deleteSaved(t.scope || curScope(), t.id);
     data.delete(t.id);
     teamOf.delete(scopeKey(curScope()));
@@ -451,11 +456,11 @@ function drawHead() {
   const t = curTeam();
   if (!head || !t) return;
   head.innerHTML = '';
-  const hist = h('button', { class: 'tb-btn small', text: '🕘', title: '지난 팀 대화 (이 프로젝트)' });
+  const hist = h('button', { class: 'tb-btn small icon-only', title: '지난 팀 대화 (이 프로젝트)' }, ico('history'));
   hist.onclick = () => openHistory(hist);
-  const nw = h('button', { class: 'tb-btn small', text: '＋ 새 팀', title: '새 팀으로 시작 (지금 팀은 저장되어 지난 팀 대화에서 다시 열 수 있음)' });
+  const nw = h('button', { class: 'tb-btn small', title: '새 팀으로 시작 (지금 팀은 저장되어 지난 팀 대화에서 다시 열 수 있음)' }, ico('add', 'ico'), '새 팀');
   nw.onclick = () => newTeam();
-  const setup = h('button', { class: 'tb-btn small', text: '⚙', title: 'AI 연결 · 설정 (설치·로그인, 업데이트, MCP·커넥터, 로그아웃)' });
+  const setup = h('button', { class: 'tb-btn small icon-only', title: 'AI 연결 · 설정 (설치·로그인, 업데이트, MCP·커넥터, 로그아웃)' }, ico('gear'));
   setup.onclick = () => openAiSetup(t.provider);
   const mcpBtn = h('button', { class: `tb-btn small team-mcp ${mcpIssue(t) ? 'has-issue' : ''}`, text: 'MCP', title: '연결된 MCP · 커넥터 (팀원 AI 의 실제 연결 상태)' });
   mcpBtn.onclick = () => openMcp(t, mcpBtn);
@@ -475,7 +480,7 @@ function drawHead() {
   if (t.paused) {
     const go = h('button', { class: 'btn primary small', text: '계속' });
     go.onclick = () => window.api.team.resume(t.id);
-    head.append(h('span', { class: 'team-paused', text: '⏸ 멈춤' }), go);
+    head.append(h('span', { class: 'team-paused' }, ico('pause'), '멈춤'), go);
   }
 }
 
@@ -515,8 +520,8 @@ function appendMessage(t, msg, scroll, into) {
       'div',
       { class: 'team-msg user' },
       h('div', { class: 'team-msg-body' },
-        h('div', { class: 'team-msg-head' }, h('b', { text: '나' }), toNames.length ? h('span', { class: 'team-to', text: `→ ${toNames.join(', ')}` }) : null, msg.urgent ? h('span', { class: 'team-urgent', text: '⚡ 즉시' }) : null),
-        msg.attachments?.length ? h('div', { class: 'team-att-sent' }, ...msg.attachments.map((a) => h('span', { class: 'team-att-name', text: `${a.kind === 'image' ? '🖼' : a.kind === 'pdf' ? '📕' : '📄'} ${a.name}`, title: a.path || a.name }))) : null,
+        h('div', { class: 'team-msg-head' }, h('b', { text: '나' }), toNames.length ? h('span', { class: 'team-to', text: `→ ${toNames.join(', ')}` }) : null, msg.urgent ? h('span', { class: 'team-urgent' }, ico('zap'), '즉시') : null),
+        msg.attachments?.length ? h('div', { class: 'team-att-sent' }, ...msg.attachments.map((a) => h('span', { class: 'team-att-name', title: a.path || a.name }, ico(fileKindIcon(a.kind)), a.name))) : null,
         h('div', { class: 'team-msg-text', text: msg.text })
       )
     );
@@ -552,7 +557,7 @@ function appendMessage(t, msg, scroll, into) {
 function inputBox(t) {
   const ta = h('textarea', { rows: '2', placeholder: 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)', spellcheck: 'false' });
   const send = h('button', { class: 'btn primary', text: '보내기', title: '하던 일이 끝난 다음 받습니다 (Enter)' });
-  const now = h('button', { class: 'btn team-now', text: '⚡ 즉시', title: '' });
+  const now = h('button', { class: 'btn team-now', title: '' }, ico('zap', 'ico'), '즉시');
   const chips = h('div', { class: 'ai-attach team-attach' });
   const drawChips = () => {
     chips.innerHTML = '';
@@ -567,7 +572,7 @@ function inputBox(t) {
     drawChips();
     ta.focus();
   };
-  const clip = h('button', { class: 'tb-btn', text: '📎', title: '파일·이미지 첨부 (붙여넣기 Ctrl+V, 끌어다 놓기도 가능)' });
+  const clip = h('button', { class: 'tb-btn icon-only', title: '파일·이미지 첨부 (붙여넣기 Ctrl+V, 끌어다 놓기도 가능)' }, ico('attach'));
   clip.onclick = async () => {
     const files = await window.api.pickFiles('팀에게 보낼 파일 선택', [{ name: '모든 파일', extensions: ['*'] }], state.repo);
     for (const f of files || []) add(await attachmentFromPath(f));
@@ -642,9 +647,9 @@ function drawTarget() {
   const m = target ? member(t, target) : pmOf(t);
   box.innerHTML = '';
   if (!m) return;
-  box.append(h('span', { class: 'team-target-label', text: '받는 사람' }), h('span', { class: 'team-chip', style: { background: m.color } }, `${m.name}${m.pm ? ' (PM)' : ` · ${m.role}`}`));
+  box.append(h('span', { class: 'team-target-label', text: '받는 사람' }), h('span', { class: 'team-chip' }, m.pm ? (m.name === 'PM' ? 'PM' : `${m.name} (PM)`) : `${m.name} · ${m.role}`));
   if (target) {
-    const x = h('button', { class: 'chip-x', text: '✕', title: 'PM 에게로 되돌리기 (Esc)' });
+    const x = h('button', { class: 'chip-x ci', text: '\uea76', title: 'PM 에게로 되돌리기 (Esc)' });
     x.onclick = () => {
       target = null;
       drawSide();
@@ -723,7 +728,7 @@ export function askTeamApproval(args) {
         'div',
         { class: 'team-msg-body' },
         h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '허용을 요청합니다' })),
-        outside ? h('div', { class: 'team-out', text: `⚠ 이 팀의 프로젝트 밖 파일입니다 (${t.scope.kind === 'group' ? `'${t.scope.name}' 그룹 프로젝트가 아님` : '이 프로젝트 폴더가 아님'}). 꼭 필요한 경우에만 허용하세요.` }) : null,
+        outside ? h('div', { class: 'team-out', text: `이 팀의 프로젝트 밖 파일입니다 (${t.scope.kind === 'group' ? `'${t.scope.name}' 그룹 프로젝트가 아님` : '이 프로젝트 폴더가 아님'}). 꼭 필요한 경우에만 허용하세요.` }) : null,
         h('div', { class: 'team-approve-what', text: what }),
         where ? h('div', { class: 'team-approve-path', text: `경로: ${where}` }) : null,
         outside ? h('div', { class: 'team-approve-path', text: `이 팀의 프로젝트: ${projects.join(', ')}` }) : null,
@@ -778,7 +783,7 @@ export async function askTeamSave(args) {
   const name = file.split(/[\\/]/).pop();
   const downloads = await window.api.file.appPath('downloads');
   return new Promise((resolve) => {
-    const body = h('div', { class: 'team-msg-body' }, h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '문서를 만들었습니다 — 어디에 저장할까요?' })), h('div', { class: 'team-approve-what', text: `📄 ${title || name}` }));
+    const body = h('div', { class: 'team-msg-body' }, h('div', { class: 'team-msg-head' }, h('b', { text: m.name }), h('span', { class: 'team-msg-role', text: '문서를 만들었습니다 — 어디에 저장할까요?' })), h('div', { class: 'team-approve-what' }, ico('file'), title || name));
     const card = h('div', { class: 'team-approve save' }, avatar(m, 'sm'), body);
     body.append(fileCard(file, { verb: '새 문서', openFile: (f) => window.api.openPath(f) }));
     const row = h('div', { class: 'ai-row' });

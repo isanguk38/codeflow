@@ -25,11 +25,26 @@
 .ft-row:hover {
   background: var(--hover);
 }
+/* 편집기에 열려 있는 파일: 선택(배경색)과 헷갈리지 않게 왼쪽 선으로만 표시 */
 .ft-row.active {
-  background: var(--sel);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.ft-row.active .ft-name {
+  color: var(--text);
 }
 .code-tree:focus {
   outline: none;
+}
+/* 잘라낸 항목, 끌어서 놓을 폴더 */
+.ft-row.cut {
+  opacity: 0.5;
+}
+.ft-row.drop,
+.ft-row.drop + .ft-kids {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.code-tree.drop-root {
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 /* 여러 개 선택 (Ctrl·Shift+클릭) */
 .ft-row.sel {

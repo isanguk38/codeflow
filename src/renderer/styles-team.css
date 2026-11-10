@@ -645,3 +645,217 @@
   border-radius: 50%;
   background: #d39e00;
 }
+
+/* ---------- 다듬기: 차분한 기록(스레드) 모양 ----------
+   - 말풍선·색 배경을 없애고, 팀원 색은 메시지 왼쪽 줄 하나로만 쓴다 (히스토리 그래프의 줄 색과 같은 역할)
+   - 강조색은 '보내기' 와 받는 사람 선택에만 쓴다 */
+.team-side {
+  width: 248px;
+}
+.team-side-head {
+  padding: 12px 12px 4px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.team-side-acts {
+  padding: 4px 8px 8px;
+}
+.team-cards {
+  padding: 8px;
+  gap: 2px;
+}
+.team-card {
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+}
+.team-card.target {
+  background: var(--bg3);
+  border-color: transparent;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.team-card-name b {
+  font-weight: 600;
+}
+.team-card-role,
+.team-card-st,
+.team-card-ai {
+  font-size: 12px;
+}
+/* 아바타: 색을 채우지 않고, 팀원 색을 옅게 깐 네모 */
+.team-av {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--mc, var(--text3)) 24%, var(--bg3));
+  color: color-mix(in srgb, var(--mc, var(--text)) 45%, var(--text));
+}
+.team-av.sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.team-log {
+  padding: 16px 24px 8px;
+  gap: 16px;
+}
+.team-live {
+  padding: 0 24px;
+}
+.team-live:not(:empty) {
+  padding: 8px 24px;
+  border-top: 1px solid var(--border);
+}
+.team-msg {
+  gap: 12px;
+  max-width: 880px;
+}
+.team-msg-head {
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  align-items: center;
+}
+.team-msg-head b {
+  font-weight: 600;
+}
+.team-msg-role,
+.team-to {
+  font-size: 12px;
+  color: var(--text3);
+}
+/* 에이전트 메시지: 테두리 없는 본문 + 팀원 색 왼쪽 줄 */
+.team-msg-text {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  border-left: 2px solid color-mix(in srgb, var(--mc, var(--border)) 70%, transparent);
+  padding: 0 0 0 12px;
+  line-height: 1.6;
+}
+.team-msg.dm .team-msg-text {
+  background: none;
+  border-left-width: 2px;
+  color: var(--text2);
+}
+/* 내 메시지: 오른쪽 말풍선 대신, 같은 줄에 맞춘 조용한 상자 */
+.team-msg.user {
+  align-self: stretch;
+  max-width: 880px;
+  padding-left: 36px;
+}
+.team-msg.user .team-msg-head {
+  justify-content: flex-start;
+}
+.team-msg.user .team-msg-text {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.team-att-sent {
+  justify-content: flex-start;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.team-att-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.team-att-name .ci {
+  color: var(--text3);
+  font-size: 14px;
+}
+.team-urgent,
+.team-paused {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--warn);
+}
+/* 시스템 알림: 알약 모양 대신 작은 회색 글 */
+.team-sys {
+  align-self: flex-start;
+  margin-left: 36px;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.team-sys.pause {
+  background: none;
+  color: var(--warn);
+}
+.team-approve {
+  border-radius: 8px;
+  padding: 12px;
+  gap: 12px;
+}
+.team-input {
+  padding: 8px 24px 16px;
+}
+.team-target {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+/* 받는 사람: 색을 채운 알약 대신 조용한 표시 */
+.team-chip {
+  background: var(--bg3);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-weight: 400;
+}
+.team-input textarea {
+  min-height: 48px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg2);
+}
+.team-input-row > .tb-btn {
+  height: 36px;
+}
+.team-input-row > .btn {
+  height: 36px;
+}
+.team-input-row > .team-now {
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.team-input-row > .team-now .ico {
+  color: var(--text2);
+  font-size: 14px;
+}
+.team-head {
+  gap: 8px;
+}
+.team-head .team-title {
+  font-weight: 600;
+}
+.team-mcp {
+  font-weight: 400;
+  font-size: 12px;
+}
+/* 시작 화면 */
+.team-empty-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+.team-empty-row {
+  gap: 8px;
+}

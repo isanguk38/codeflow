@@ -41,7 +41,7 @@ export function fileCard(p, { verb = '파일', openFile } = {}) {
   const head = h(
     'div',
     { class: 'fc-head' },
-    h('span', { class: 'fc-ico', text: isImg ? '🖼' : /\.(xlsx?|xlsm|csv|ods)$/i.test(p) ? '📊' : /\.(pptx?|odp)$/i.test(p) ? '📽' : /\.pdf$/i.test(p) ? '📕' : '📄' }),
+    h('span', { class: 'fc-ico ci', text: isImg ? '\ueaea' : /\.(xlsx?|xlsm|csv|ods)$/i.test(p) ? '\uebb7' : /\.(pptx?|odp)$/i.test(p) ? '\ueb2f' : /\.pdf$/i.test(p) ? '\ueaeb' : '\uea7b' }),
     h('span', { class: 'fc-name', text: baseName(p), title: p }),
     h('span', { class: 'fc-verb', text: verb })
   );

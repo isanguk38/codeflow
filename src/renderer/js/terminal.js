@@ -22,9 +22,9 @@ export function initTerminal(container, handle) {
       <span class="term-title">터미널</span>
       <div class="term-tabs" id="termTabs"></div>
       <span class="tb-spacer"></span>
-      <button class="tb-btn small" id="termNew" title="새 터미널 (셸 선택)">＋ ▾</button>
-      <button class="tb-btn small" id="termKill" title="현재 터미널 종료">🗑</button>
-      <button class="tb-btn small" id="termHide" title="패널 닫기 (Ctrl+\`)">✕</button>
+      <button class="tb-btn small" id="termNew" title="새 터미널 (셸 선택)"><span class="ci">&#xea60;</span><span class="caret ci">&#xeab4;</span></button>
+      <button class="tb-btn small" id="termKill" title="현재 터미널 종료"><span class="ci">&#xea81;</span></button>
+      <button class="tb-btn small" id="termHide" title="패널 닫기 (Ctrl+\`)"><span class="ci">&#xea76;</span></button>
     </div>
     <div class="term-body" id="termBody"></div>`;
   splitter(handle, panel, { axis: 'y', min: 90, max: 900, invert: true, key: 'termPanel' });
@@ -227,7 +227,7 @@ function renderTabs() {
       'div',
       { class: `term-tab ${t.id === activeByRepo.get(state.repo) ? 'active' : ''} ${t.exited ? 'exited' : ''}`, title: `${t.shell.name}${t.exited ? ' (종료됨)' : ''}` },
       h('span', { text: `${i + 1}: ${t.shell.name}` }),
-      h('button', { class: 'term-tab-x', text: '✕', title: '이 터미널 종료', onclick: (e) => (e.stopPropagation(), killTerm(t)) })
+      h('button', { class: 'term-tab-x ci', text: '\uea76', title: '이 터미널 종료', onclick: (e) => (e.stopPropagation(), killTerm(t)) })
     );
     tab.onclick = () => {
       activate(t.id);
