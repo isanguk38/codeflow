@@ -745,23 +745,28 @@
   border-left-width: 2px;
   color: var(--text2);
 }
-/* 내 메시지: 오른쪽 말풍선 대신, 같은 줄에 맞춘 조용한 상자 */
+/* 내 메시지: 대화처럼 오른쪽에 붙인다. 색은 강조색을 옅게만 깔아 AI 답과 구분한다 */
 .team-msg.user {
-  align-self: stretch;
-  max-width: 880px;
-  padding-left: 36px;
+  align-self: flex-end;
+  max-width: min(720px, 80%);
+  padding-left: 0;
+}
+.team-msg.user .team-msg-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 .team-msg.user .team-msg-head {
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 .team-msg.user .team-msg-text {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg2));
+  border: 0;
+  border-radius: 12px 12px 4px 12px;
   padding: 8px 12px;
 }
 .team-att-sent {
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 4px;
   margin-bottom: 4px;
 }
