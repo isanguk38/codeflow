@@ -824,11 +824,22 @@
   padding: 2px 8px;
   font-weight: 400;
 }
+/* 입력 칸: 한 줄 높이로 시작하고 내용에 맞춰 커진다 (team.js 의 fit) */
 .team-input textarea {
-  min-height: 48px;
-  padding: 12px;
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  max-height: 240px;
+  padding: 7px 12px;
+  line-height: 20px;
   border-radius: 8px;
   background: var(--bg2);
+  overflow-y: auto;
+}
+.team-input textarea::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .team-input-row > .tb-btn {
   height: 36px;

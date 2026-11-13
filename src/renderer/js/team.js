@@ -555,7 +555,13 @@ function appendMessage(t, msg, scroll, into) {
 
 // ---------- 입력 ----------
 function inputBox(t) {
-  const ta = h('textarea', { rows: '2', placeholder: 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)', spellcheck: 'false' });
+  const ta = h('textarea', { rows: '1', placeholder: 'PM 에게 할 일을 말하세요 · 특정 팀원에게만: 왼쪽 카드 클릭 또는 @이름 (Enter 보내기, Shift+Enter 줄바꿈)', spellcheck: 'false' });
+  // 한 줄로 시작해서, 줄이 늘어나면 입력 칸도 따라 커진다 (끝까지 커지면 그 안에서 스크롤)
+  const fit = () => {
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight + 2}px`;
+  };
+  ta.addEventListener('input', fit);
   const send = h('button', { class: 'btn primary', text: '보내기', title: '하던 일이 끝난 다음 받습니다 (Enter)' });
   const now = h('button', { class: 'btn team-now', title: '' }, ico('zap', 'ico'), '즉시');
   const chips = h('div', { class: 'ai-attach team-attach' });
@@ -603,6 +609,7 @@ function inputBox(t) {
       to = ids;
     }
     ta.value = '';
+    fit();
     const files = attach.splice(0);
     drawChips();
     const r = await window.api.team.send(cur.id, { to, text, attachments: files, urgent });
